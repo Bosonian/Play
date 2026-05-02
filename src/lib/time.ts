@@ -7,6 +7,12 @@ export function todayISO(): ISODate {
   return format(new Date(), 'yyyy-MM-dd');
 }
 
+// Monday of the current ISO week as an ISO date string in LOCAL time.
+// Used as the unique key for WeeklyReflection rows.
+export function weekStartISO(date: Date = new Date()): ISODate {
+  return format(startOfISOWeek(date), 'yyyy-MM-dd');
+}
+
 // True if the given timestamp falls within the current ISO week (Monday-start
 // per CLAUDE.md). Null counts as "not this week" — used to mean unseen.
 export function isThisWeek(isoDateTime: ISODateTime | null): boolean {
