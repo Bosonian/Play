@@ -32,16 +32,19 @@ const MODES: ReadonlyArray<{ mode: ReframeMode; label: string; sub: string }> = 
 // a signal that it shouldn't be done at all, and the UI must make releasing
 // it as easy as reframing it. Same button structure, three lines per option,
 // same hover treatment.
+//
+// The ▸ arrows are the one place clay-accent color shows up consistently —
+// gives a small warm pulse to the option list without affecting readability.
 export function ReframeFlow({ task, onChose, onDropped }: Props) {
   const reframes = getReframesFor(task.title);
 
   return (
     <section className="flex flex-col gap-5">
-      <p className="text-base text-neutral-800">
-        <span className="text-neutral-500">You&apos;ve been avoiding: </span>
+      <p className="text-base text-ink">
+        <span className="text-ink-mute">You&apos;ve been avoiding: </span>
         <span className="font-medium">{task.title}</span>
       </p>
-      <p className="text-sm text-neutral-500">What now?</p>
+      <p className="text-sm text-ink-mute">What now?</p>
       <ul className="flex flex-col gap-5">
         {MODES.map(({ mode, label, sub }) => (
           <li key={mode}>
@@ -51,11 +54,13 @@ export function ReframeFlow({ task, onChose, onDropped }: Props) {
                 await reframeTask(task.id, reframes[mode], mode);
                 onChose();
               }}
-              className="w-full flex flex-col items-start gap-1 text-left text-neutral-700 hover:text-neutral-900"
+              className="w-full flex flex-col items-start gap-1 text-left text-ink-soft hover:text-ink"
             >
-              <span className="text-base font-medium text-neutral-800">▸ {label}</span>
-              <span className="text-xs italic text-neutral-500">{sub}</span>
-              <span className="text-sm text-neutral-700">{reframes[mode]}</span>
+              <span className="text-base font-medium text-ink">
+                <span className="text-clay">▸</span> {label}
+              </span>
+              <span className="text-xs italic text-ink-mute">{sub}</span>
+              <span className="text-sm text-ink-soft">{reframes[mode]}</span>
             </button>
           </li>
         ))}
@@ -66,13 +71,15 @@ export function ReframeFlow({ task, onChose, onDropped }: Props) {
               await dropTask(task.id);
               onDropped();
             }}
-            className="w-full flex flex-col items-start gap-1 text-left text-neutral-700 hover:text-neutral-900"
+            className="w-full flex flex-col items-start gap-1 text-left text-ink-soft hover:text-ink"
           >
-            <span className="text-base font-medium text-neutral-800">▸ Drop it</span>
-            <span className="text-xs italic text-neutral-500">
+            <span className="text-base font-medium text-ink">
+              <span className="text-clay">▸</span> Drop it
+            </span>
+            <span className="text-xs italic text-ink-mute">
               release mode — some things don&apos;t need doing
             </span>
-            <span className="text-sm text-neutral-700">
+            <span className="text-sm text-ink-soft">
               Marks the task abandoned. No questions asked.
             </span>
           </button>

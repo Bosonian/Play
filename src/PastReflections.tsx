@@ -10,35 +10,35 @@ export function PastReflections({ onBack }: { onBack: () => void }) {
   const reflections = useLiveQuery(() => listReflections(), []);
 
   return (
-    <main className="min-h-dvh max-w-xl mx-auto px-6 py-12 text-neutral-700">
+    <main className="min-h-dvh max-w-xl mx-auto px-6 py-12 text-ink-soft">
       <button
         type="button"
         onClick={onBack}
-        className="mb-8 text-sm text-neutral-500 hover:text-neutral-800"
+        className="mb-8 text-sm text-ink-mute hover:text-ink"
       >
         ← back
       </button>
 
       {reflections === undefined ? (
-        <p className="text-sm text-neutral-400">…</p>
+        <p className="text-sm text-ink-fade">…</p>
       ) : reflections.length === 0 ? (
-        <p className="text-sm text-neutral-500">No reflections yet.</p>
+        <p className="text-sm text-ink-mute">No reflections yet.</p>
       ) : (
         <ul className="flex flex-col gap-8">
           {reflections.map((r) => (
             <li key={r.id} className="flex flex-col gap-2">
-              <h3 className="text-xs uppercase tracking-wide text-neutral-400">
+              <h3 className="text-xs uppercase tracking-wide text-ink-fade">
                 Week of {format(new Date(r.weekStartDate), 'd MMM yyyy')}
               </h3>
               {r.didYouPlay && (
-                <p className="text-base text-neutral-800">
-                  <span className="text-neutral-500">Played: </span>
+                <p className="text-base text-ink">
+                  <span className="text-ink-mute">Played: </span>
                   {r.didYouPlay}
                 </p>
               )}
               {r.nextWeekScene && (
-                <p className="text-base text-neutral-800">
-                  <span className="text-neutral-500">Next week: </span>
+                <p className="text-base text-ink">
+                  <span className="text-ink-mute">Next week: </span>
                   {r.nextWeekScene}
                 </p>
               )}

@@ -5,7 +5,7 @@
 export function SkippedNotice({ count }: { count: number }) {
   if (count < 3) return null;
   return (
-    <p className="mb-8 text-xs italic text-neutral-500">
+    <p className="mb-8 text-xs italic text-ink-mute">
       You&apos;ve skipped reflection three Sundays running. That&apos;s data — not a
       problem.
     </p>

@@ -35,61 +35,60 @@ export function TodaysScene() {
 
   if (overlay) {
     return (
-      <section className="text-base font-semibold italic text-neutral-800">
+      <section className="text-base font-semibold italic text-ink">
         {overlay}
       </section>
     );
   }
 
   if (!scene) {
-    // Brief flicker on first paint while the row is created.
-    return <section className="text-sm text-neutral-400">…</section>;
+    return <section className="text-sm text-ink-fade">…</section>;
   }
 
   if (scene.outcome === 'done') {
     return (
-      <section className="text-sm text-neutral-500">Today&apos;s scene is done.</section>
+      <section className="text-sm text-ink-mute">Today&apos;s scene is done.</section>
     );
   }
 
   if (scene.outcome === 'skipped') {
-    return <section className="text-sm text-neutral-500">Skipped today.</section>;
+    return <section className="text-sm text-ink-mute">Skipped today.</section>;
   }
 
   const { prop, sceneTitle } = currentDisplay(scene);
 
   return (
     <section className="flex flex-col gap-3">
-      <p className="text-base text-neutral-800">
-        <span className="text-neutral-500">Today&apos;s prop: </span>
+      <p className="text-base text-ink">
+        <span className="text-ink-mute">Today&apos;s prop: </span>
         <span className="font-medium">{prop}</span>
       </p>
-      <p className="text-base text-neutral-800">
-        <span className="text-neutral-500">Today&apos;s scene: </span>
+      <p className="text-base text-ink">
+        <span className="text-ink-mute">Today&apos;s scene: </span>
         <span className="font-medium">{sceneTitle}</span>
       </p>
-      <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm text-neutral-600">
+      <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm text-ink-soft">
         <button
           type="button"
           onClick={async () => {
             await recordOutcome('done');
             setOverlay('Phone down. Go.');
           }}
-          className="hover:text-neutral-900"
+          className="hover:text-ink"
         >
           Already did this ✓
         </button>
         <button
           type="button"
           onClick={() => recordOutcome('skipped')}
-          className="hover:text-neutral-900"
+          className="hover:text-ink"
         >
           Skip today ✗
         </button>
         <button
           type="button"
           onClick={() => rotate()}
-          className="hover:text-neutral-900"
+          className="hover:text-ink"
         >
           Show me a different one ↻
         </button>

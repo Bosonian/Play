@@ -34,7 +34,7 @@ export function App() {
   if (view === 'past') return <PastReflections onBack={() => setView('today')} />;
 
   return (
-    <main className="min-h-dvh max-w-xl mx-auto px-6 py-12 text-neutral-700">
+    <main className="min-h-dvh max-w-xl mx-auto px-6 py-12 text-ink-soft">
       <SkippedNotice count={profile?.consecutiveSkippedReflections ?? 0} />
       <div className="flex flex-col gap-12">
         <TodaysScene />
@@ -43,7 +43,7 @@ export function App() {
         <button
           type="button"
           onClick={() => setView('past')}
-          className="self-start text-xs text-neutral-400 hover:text-neutral-600"
+          className="self-start text-xs text-ink-fade hover:text-ink-mute"
         >
           see past reflections
         </button>

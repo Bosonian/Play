@@ -1,3 +1,11 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  body {
+    /* Mirror tailwind.config.ts colors.paper.DEFAULT and ink.soft. */
+    background-color: #faf7f2;
+    color: #5a4f46;
+  }
+}
