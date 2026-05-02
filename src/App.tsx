@@ -4,21 +4,24 @@ import { Capture } from './Capture';
 import { db } from './db/db';
 import { weekStartISO } from './lib/time';
 import { PastReflections } from './PastReflections';
+import { Settings } from './Settings';
 import { SkippedNotice } from './SkippedNotice';
 import { SundayReflection } from './SundayReflection';
 import { TodaysScene } from './TodaysScene';
 import type { UserProfile } from './db/types';
 import { WhatsBeenSitting } from './WhatsBeenSitting';
 
-// Three top-level views — Today (default), Sunday Reflection (auto-triggered
-// when due), Past Reflections (opt-in via the tiny link). Reflection due
-// always wins; if the user is in the middle of viewing past reflections and
-// the clock crosses 19:00 on Sunday, they'll get the dialog on next reload.
+type View = 'today' | 'past' | 'settings';
+
+// Top-level views — Today (default), Sunday Reflection (auto-triggered when
+// due), Past Reflections (opt-in), Settings (opt-in). Reflection due always
+// wins; the opt-in views are reached via the tiny links at the bottom of
+// Today.
 //
-// No router — two views and a modal-ish overlay don't justify the dependency,
-// and there's no use case for deep links in a single-device, no-sync app.
+// No router — none of these views need deep links in a single-device,
+// no-sync app.
 export function App() {
-  const [view, setView] = useState<'today' | 'past'>('today');
+  const [view, setView] = useState<View>('today');
 
   const profile = useLiveQuery(() => db.userProfile.toCollection().first());
   const reflectionThisWeekCount = useLiveQuery(() =>
@@ -32,6 +35,7 @@ export function App() {
 
   if (reflectionDue) return <SundayReflection />;
   if (view === 'past') return <PastReflections onBack={() => setView('today')} />;
+  if (view === 'settings') return <Settings onBack={() => setView('today')} />;
 
   return (
     <main className="min-h-dvh max-w-xl mx-auto px-6 py-12 text-ink-soft">
@@ -40,13 +44,22 @@ export function App() {
         <TodaysScene />
         <Capture />
         <WhatsBeenSitting />
-        <button
-          type="button"
-          onClick={() => setView('past')}
-          className="self-start text-xs text-ink-fade hover:text-ink-mute"
-        >
-          see past reflections
-        </button>
+        <div className="flex gap-5 text-xs text-ink-fade">
+          <button
+            type="button"
+            onClick={() => setView('past')}
+            className="hover:text-ink-mute"
+          >
+            see past reflections
+          </button>
+          <button
+            type="button"
+            onClick={() => setView('settings')}
+            className="hover:text-ink-mute"
+          >
+            settings
+          </button>
+        </div>
       </div>
     </main>
   );

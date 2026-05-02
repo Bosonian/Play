@@ -11,10 +11,13 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      // Make sure the SVG icon is precached by the service worker — the
+      // manifest references it but the SW won't otherwise know to cache it.
+      includeAssets: ['pwa-icon.svg'],
       // start_url and scope mirror `base` — they must include the subpath
       // for the installed PWA to navigate correctly.
-      // theme_color / background_color match the warm palette (tailwind.config.ts
-      // colors.paper.DEFAULT) so install splash + chrome blend in.
+      // theme_color / background_color match the warm palette so install
+      // splash and Android Chrome chrome blend in.
       manifest: {
         name: 'PlayDHD',
         short_name: 'PlayDHD',
@@ -24,8 +27,18 @@ export default defineConfig({
         display: 'standalone',
         start_url: '/Play/',
         scope: '/Play/',
-        // Real icons land in §9 step 10 of the brief.
-        icons: [],
+        icons: [
+          {
+            // Single SVG icon — Android Chrome supports SVG icons in
+            // manifests and scales as needed. `purpose: 'any maskable'`
+            // means it doubles as the maskable adaptive icon (content is
+            // safely within the inner 80% safe zone).
+            src: 'pwa-icon.svg',
+            sizes: 'any',
+            type: 'image/svg+xml',
+            purpose: 'any maskable',
+          },
+        ],
       },
     }),
   ],
