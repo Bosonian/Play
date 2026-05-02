@@ -13,17 +13,18 @@ export default defineConfig({
       registerType: 'autoUpdate',
       // start_url and scope mirror `base` — they must include the subpath
       // for the installed PWA to navigate correctly.
+      // theme_color / background_color match the warm palette (tailwind.config.ts
+      // colors.paper.DEFAULT) so install splash + chrome blend in.
       manifest: {
         name: 'PlayDHD',
         short_name: 'PlayDHD',
         description: 'Protect time for play.',
-        theme_color: '#ffffff',
-        background_color: '#ffffff',
+        theme_color: '#faf7f2',
+        background_color: '#faf7f2',
         display: 'standalone',
         start_url: '/Play/',
         scope: '/Play/',
-        // Real icons land in §9 step 10 of the brief. Keeping this empty for now
-        // so the build doesn't fail on missing assets; vite-plugin-pwa will warn.
+        // Real icons land in §9 step 10 of the brief.
         icons: [],
       },
     }),

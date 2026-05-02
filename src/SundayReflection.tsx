@@ -20,12 +20,12 @@ export function SundayReflection() {
   }
 
   return (
-    <main className="min-h-dvh max-w-xl mx-auto px-6 py-12 text-neutral-700">
+    <main className="min-h-dvh max-w-xl mx-auto px-6 py-12 text-ink-soft">
       <div className="flex flex-col gap-8">
-        <h1 className="text-base font-medium text-neutral-800">Two questions.</h1>
+        <h1 className="text-base font-medium text-ink">Two questions.</h1>
 
         <div className="flex flex-col gap-2">
-          <label htmlFor="reflection-q1" className="text-sm text-neutral-600">
+          <label htmlFor="reflection-q1" className="text-sm text-ink-mute">
             1. What did you notice playfully this week?
           </label>
           <textarea
@@ -33,14 +33,14 @@ export function SundayReflection() {
             value={didYouPlay}
             onChange={(e) => setDidYouPlay(e.target.value)}
             rows={3}
-            className="w-full resize-none border-b border-neutral-200 bg-transparent px-1 py-2 text-base text-neutral-800 placeholder:text-neutral-400 focus:border-neutral-400 focus:outline-none"
+            className="w-full resize-none border-b border-ink-ghost bg-transparent px-1 py-2 text-base text-ink placeholder:text-ink-fade focus:border-clay focus:outline-none"
             autoCorrect="off"
             spellCheck={false}
           />
         </div>
 
         <div className="flex flex-col gap-2">
-          <label htmlFor="reflection-q2" className="text-sm text-neutral-600">
+          <label htmlFor="reflection-q2" className="text-sm text-ink-mute">
             2. What&apos;s one scene you&apos;d be glad to live next week?
           </label>
           <textarea
@@ -48,24 +48,24 @@ export function SundayReflection() {
             value={nextWeekScene}
             onChange={(e) => setNextWeekScene(e.target.value)}
             rows={3}
-            className="w-full resize-none border-b border-neutral-200 bg-transparent px-1 py-2 text-base text-neutral-800 placeholder:text-neutral-400 focus:border-neutral-400 focus:outline-none"
+            className="w-full resize-none border-b border-ink-ghost bg-transparent px-1 py-2 text-base text-ink placeholder:text-ink-fade focus:border-clay focus:outline-none"
             autoCorrect="off"
             spellCheck={false}
           />
         </div>
 
-        <div className="flex gap-6 text-sm text-neutral-600">
+        <div className="flex gap-6 text-sm text-ink-soft">
           <button
             type="button"
             onClick={() => saveReflection(didYouPlay, nextWeekScene)}
-            className="hover:text-neutral-900"
+            className="hover:text-ink"
           >
             Save
           </button>
           <button
             type="button"
             onClick={() => skipReflection()}
-            className="hover:text-neutral-900"
+            className="hover:text-ink"
           >
             Skip this week
           </button>
@@ -74,7 +74,7 @@ export function SundayReflection() {
         <button
           type="button"
           onClick={() => setViewingPast(true)}
-          className="mt-4 self-start text-xs text-neutral-400 hover:text-neutral-600"
+          className="mt-4 self-start text-xs text-ink-fade hover:text-ink-mute"
         >
           see past reflections
         </button>

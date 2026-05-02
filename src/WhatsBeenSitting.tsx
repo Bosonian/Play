@@ -29,7 +29,7 @@ export function WhatsBeenSitting() {
 
   if (overlay) {
     return (
-      <section className="text-base font-semibold italic text-neutral-800">
+      <section className="text-base font-semibold italic text-ink">
         {overlay}
       </section>
     );
@@ -59,7 +59,7 @@ export function WhatsBeenSitting() {
 
   return (
     <section className="flex flex-col gap-4">
-      <h2 className="text-xs uppercase tracking-wide text-neutral-400">
+      <h2 className="text-xs uppercase tracking-wide text-ink-fade">
         What&apos;s been sitting
       </h2>
       <ul className="flex flex-col gap-6">
@@ -93,19 +93,19 @@ function SurfacedItem({ task, onDone, onDrop, onReframe, onSnooze }: ItemProps) 
   const canSnooze = task.snoozeCount < SNOOZE_CAP;
   return (
     <li className="flex flex-col gap-2">
-      <p className="text-base text-neutral-800">{task.title}</p>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-neutral-600">
-        <button type="button" onClick={onDone} className="hover:text-neutral-900">
+      <p className="text-base text-ink">{task.title}</p>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink-soft">
+        <button type="button" onClick={onDone} className="hover:text-ink">
           Done
         </button>
-        <button type="button" onClick={onDrop} className="hover:text-neutral-900">
+        <button type="button" onClick={onDrop} className="hover:text-ink">
           Drop it
         </button>
-        <button type="button" onClick={onReframe} className="hover:text-neutral-900">
+        <button type="button" onClick={onReframe} className="hover:text-ink">
           Reframe
         </button>
         {canSnooze && (
-          <button type="button" onClick={onSnooze} className="hover:text-neutral-900">
+          <button type="button" onClick={onSnooze} className="hover:text-ink">
             Snooze 3 days
           </button>
         )}
