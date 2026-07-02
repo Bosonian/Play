@@ -1,88 +1,102 @@
-// ISO 8601 timestamp string, e.g. "2026-05-02T11:08:00.000Z".
-// Stored as strings (not Date objects) per CLAUDE.md's storage convention.
-// Convert to Date only when arithmetic is needed; convert back to ISO for write.
-export type ISODateTime = string;
+// IndexedDB record types (persisted via Dexie in ./db.ts). Everything is local
+// and offline — there is no backend (design doc §11).
 
-// ISO 8601 date-only string, e.g. "2026-05-02".
-export type ISODate = string;
+import type { Side } from '../content/types';
 
-// Frozen per brief §2 (and §11: no re-prompting in v1). Director exists in the
-// general framework but is deliberately absent from the seeded profile —
-// brief is explicit that the app should not lean into Director mode.
-export type PlayPersonalityRole = 'storyteller' | 'self_competitor' | 'kinesthete';
+// The five Bloom rungs a structure can be climbed through (design doc §2b).
+export type Rung = 'locate' | 'name' | 'connect' | 'localize' | 'master';
+export const RUNGS: Rung[] = [
+  'locate',
+  'name',
+  'connect',
+  'localize',
+  'master',
+];
 
-export interface PlayPersonality {
-  primary: PlayPersonalityRole;
-  secondary: PlayPersonalityRole;
-  tertiary: PlayPersonalityRole;
+// ---------------------------------------------------------------------------
+// Settings — a single row, id === 'settings'.
+// ---------------------------------------------------------------------------
+export type ThemePreference = 'system' | 'light' | 'dark';
+
+export interface Settings {
+  id: 'settings';
+  theme: ThemePreference;
+  // Daily review is time-capped so a missed week never becomes a wall of due
+  // cards (design doc §4a). Minutes, user-adjustable.
+  dailyQueueMinutes: number;
+  onboardingComplete: boolean;
+  // Accessibility overrides (default: follow the OS / off).
+  highContrast: boolean;
+  reduceMotionOverride: boolean;
 }
 
-export interface UserProfile {
-  id: string;
-  playPersonality: PlayPersonality;
-  // 0 = Sunday, 1 = Monday ... 6 = Saturday. Default 0 per brief §8.
-  // Note: this is the only place Sunday-as-0 leaks; the rest of the app uses
-  // ISO week (Monday start) per CLAUDE.md.
-  reflectionDayOfWeek: number;
-  // 24-hour "HH:MM", e.g. "19:00". Default per brief §5.4.
-  reflectionTime: string;
-  consecutiveSkippedReflections: number;
-  createdAt: ISODateTime;
+export const DEFAULT_SETTINGS: Settings = {
+  id: 'settings',
+  theme: 'system',
+  dailyQueueMinutes: 15,
+  onboardingComplete: false,
+  highContrast: false,
+  reduceMotionOverride: false,
+};
+
+// ---------------------------------------------------------------------------
+// SRS cards — SM-2 scheduling state, one per (fact, skin-independent) item.
+// The scheduler decides *what* is due; the skin layer decides *how* it's shown
+// (design doc §4). Not exercised in Increment 1; defined so Increment 3 fills it.
+// ---------------------------------------------------------------------------
+export interface SrsCard {
+  id: string; // typically the fact id
+  factId: string;
+  // SM-2 state.
+  ease: number; // ease factor, starts ~2.5
+  intervalDays: number;
+  reps: number;
+  lapses: number;
+  // ISO-8601 date (YYYY-MM-DD) in Europe/Berlin — the day boundary is fixed to
+  // the user's timezone so "due today" is stable offline (design doc §4a).
+  dueOn: string;
+  lastReviewedOn?: string;
 }
 
-export type ReframeMode = 'joker' | 'kinesthete' | 'ninety_second';
-export type TaskStatus = 'pending' | 'complete' | 'abandoned';
-
-export interface Task {
-  id: string;
-  // Current title — post-reframe text if the task was reframed.
-  title: string;
-  // Original title preserved on reframe so the user can see what they captured.
-  originalTitle: string | null;
-  reframedAs: ReframeMode | null;
-  status: TaskStatus;
-  createdAt: ISODateTime;
-  completedAt: ISODateTime | null;
-  abandonedAt: ISODateTime | null;
-  // Capped at 2 per brief §5.3 — enforced at the snooze action site, not in DB.
-  snoozeCount: number;
-  lastSurfacedAt: ISODateTime | null;
+// ---------------------------------------------------------------------------
+// Mastery — per-structure progression state. `learned` and `retained` bars are
+// computed from this + SRS state (design doc §5a). Keyed by structureId.
+// ---------------------------------------------------------------------------
+export interface RungProgress {
+  attempts: number;
+  correct: number;
+  // The last few results, for the "3 of last 4 correct" unlock rule (§5a).
+  recent: boolean[];
 }
 
-export type SceneOutcome = 'done' | 'skipped' | 'rotated' | 'no_response';
-
-export interface DailyScene {
-  id: string;
-  // Unique date-only string. One row per day, even if skipped (brief §8).
-  date: ISODate;
-  propTitle: string;
-  sceneTitle: string;
-  outcome: SceneOutcome;
-  rotatedToProp: string | null;
-  rotatedToScene: string | null;
+export interface Mastery {
+  structureId: string;
+  rungs: Partial<Record<Rung, RungProgress>>;
 }
 
-export interface PropSeed {
-  id: string;
-  title: string;
-  // Booleans aren't IndexedDB-indexable — kept as a TS boolean and filtered in
-  // memory. Seed list is small (~15) so this is trivial.
-  active: boolean;
-  lastShownAt: ISODateTime | null;
+// ---------------------------------------------------------------------------
+// Attempt log — one row per answered question. Stats, the weak-spots list, and
+// the retention-over-time chart are all views over this table (design doc §9).
+// A single append-only log is simpler and more flexible than maintaining
+// several derived tables; those are computed on read.
+// ---------------------------------------------------------------------------
+export interface Attempt {
+  id: string; // uuid
+  factId: string;
+  mode: 'atlas' | 'drill' | 'cases' | 'timeAttack' | 'rideTheTract';
+  rung?: Rung;
+  correct: boolean;
+  // For Cases, localization is multi-axis; record which axes were right.
+  axes?: { level: boolean; side: boolean; structure: boolean };
+  side?: Side;
+  at: string; // ISO-8601 datetime
 }
 
-export interface SceneSeed {
+// ---------------------------------------------------------------------------
+// Achievements — earned badges. Definition lives in code; this row records the
+// unlock. Keyed by achievement id.
+// ---------------------------------------------------------------------------
+export interface AchievementUnlock {
   id: string;
-  title: string;
-  active: boolean;
-  lastShownAt: ISODateTime | null;
-}
-
-export interface WeeklyReflection {
-  id: string;
-  // Monday of the week (ISO week start), per CLAUDE.md "week starts Monday".
-  weekStartDate: ISODate;
-  didYouPlay: string;
-  nextWeekScene: string;
-  submittedAt: ISODateTime;
+  unlockedAt: string; // ISO-8601 datetime
 }

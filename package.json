@@ -1,5 +1,5 @@
 {
-  "name": "playdhd",
+  "name": "head-in",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -13,7 +13,9 @@
     "react-dom": "^18.3.1",
     "dexie": "^4.0.10",
     "dexie-react-hooks": "^1.1.7",
-    "date-fns": "^4.1.0"
+    "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

@@ -2,10 +2,112 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Design tokens — the single source of truth for colour. Tailwind
+ * (tailwind.config.ts) references these via var(); switching themes is just
+ * flipping data-theme on <html>, which repoints every token at once.
+ *
+ * Two full sets: light (:root default) and dark ([data-theme="dark"]). The
+ * runtime theme controller (src/ui/theme.ts) sets data-theme to 'light',
+ * 'dark', or follows the OS when the user hasn't chosen.
+ *
+ * Contrast: body text on bg ≈ 15:1, muted ≈ 5.6:1, accent ≈ 5:1 (all WCAG AA+).
+ */
+:root {
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --surface-soft: #eef1f5;
+  --line: #d6dbe2;
+  --fg: #161a20;
+  --fg-muted: #5a6472;
+  --fg-faint: #8a93a3;
+
+  --accent: #2b6cb0;
+  --accent-soft: #dce8f4;
+
+  --correct: #1b7f79; /* teal-green, paired with ✓ */
+  --incorrect: #c4661f; /* amber-orange, paired with ✗ */
+  --partial: #8a6d1f; /* ochre, paired with ◌ */
+
+  /* Diagram-only semantic colours (used inside SVG cross-sections, kept
+     apart from the UI accent). Violet is the neutral "this is the target"
+     highlight — distinct from the correct/incorrect judgement colours. */
+  --dia-stroke: #3a424e;
+  --dia-highlight: #7c3aed;
+
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  --bg: #0e1116;
+  --surface: #161b22;
+  --surface-soft: #1f2630;
+  --line: #2c3542;
+  --fg: #e8ecf1;
+  --fg-muted: #9aa5b3;
+  --fg-faint: #5f6a78;
+
+  --accent: #5b9bd5;
+  --accent-soft: #1b2c3d;
+
+  --correct: #3fa79f;
+  --incorrect: #e08a45;
+  --partial: #c0a050;
+
+  --dia-stroke: #b8c0cc;
+  --dia-highlight: #a985f0;
+
+  color-scheme: dark;
+}
+
 @layer base {
-  body {
-    /* Mirror tailwind.config.ts colors.paper.DEFAULT and ink.soft. */
-    background-color: #faf7f2;
-    color: #5a4f46;
+  html,
+  body,
+  #root {
+    height: 100%;
   }
+
+  body {
+    background-color: var(--bg);
+    color: var(--fg);
+    /* Prevent iOS/Android rubber-band from revealing a mismatched colour
+       behind the app; the app owns the full viewport. */
+    overscroll-behavior: none;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Respect reduced-motion globally: kill decorative transitions/animation.
+     Functional state changes still happen instantly, so nothing depends on
+     motion (design doc §8.6/§8.7). */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* Visible focus ring for keyboard users (Mac), invisible to mouse/touch. */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+/* Screen-reader-only utility — for the aria-live feedback region (§8.6) and
+   any label we want announced but not shown. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

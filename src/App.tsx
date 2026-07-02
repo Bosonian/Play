@@ -1,79 +1,36 @@
-import { useLiveQuery } from 'dexie-react-hooks';
+// App root: owns the active tab and the due-card count that badges Today, and
+// renders the shell around whichever screen is active. Navigation is simple
+// local state (not a router) — there are four destinations and the app is a
+// single installed PWA, so a router would be overhead. Deep-linking isn't a
+// v1 need.
+
 import { useState } from 'react';
-import { Capture } from './Capture';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from './db/db';
-import { weekStartISO } from './lib/time';
-import { PastReflections } from './PastReflections';
-import { Settings } from './Settings';
-import { SkippedNotice } from './SkippedNotice';
-import { SundayReflection } from './SundayReflection';
-import { TodaysScene } from './TodaysScene';
-import type { UserProfile } from './db/types';
-import { WhatsBeenSitting } from './WhatsBeenSitting';
+import { AppShell } from './ui/AppShell';
+import type { Tab } from './ui/BottomNav';
+import { JourneyMap } from './screens/JourneyMap';
+import { Today } from './screens/Today';
+import { Stats } from './screens/Stats';
+import { More } from './screens/More';
 
-type View = 'today' | 'past' | 'settings';
-
-// Top-level views — Today (default), Sunday Reflection (auto-triggered when
-// due), Past Reflections (opt-in), Settings (opt-in). Reflection due always
-// wins; the opt-in views are reached via the tiny links at the bottom of
-// Today.
-//
-// No router — none of these views need deep links in a single-device,
-// no-sync app.
 export function App() {
-  const [view, setView] = useState<View>('today');
+  const [tab, setTab] = useState<Tab>('map');
 
-  const profile = useLiveQuery(() => db.userProfile.toCollection().first());
-  const reflectionThisWeekCount = useLiveQuery(() =>
-    db.weeklyReflections.where('weekStartDate').equals(weekStartISO()).count(),
-  );
-
-  const reflectionDue =
-    profile != null &&
-    reflectionThisWeekCount === 0 &&
-    isReflectionTime(profile);
-
-  if (reflectionDue) return <SundayReflection />;
-  if (view === 'past') return <PastReflections onBack={() => setView('today')} />;
-  if (view === 'settings') return <Settings onBack={() => setView('today')} />;
+  // Due count badges the Today tab. No SRS cards exist in Increment 1, so this
+  // resolves to 0 (the query is here so it's live-correct once the SRS engine
+  // starts creating cards in Increment 3).
+  const dueCount =
+    useLiveQuery(() => db.srsCards.count(), [], 0) ?? 0;
 
   return (
-    <main className="min-h-dvh max-w-xl mx-auto px-6 py-12 text-ink-soft">
-      <SkippedNotice count={profile?.consecutiveSkippedReflections ?? 0} />
-      <div className="flex flex-col gap-12">
-        <TodaysScene />
-        <Capture />
-        <WhatsBeenSitting />
-        <div className="flex gap-5 text-xs text-ink-fade">
-          <button
-            type="button"
-            onClick={() => setView('past')}
-            className="hover:text-ink-mute"
-          >
-            see past reflections
-          </button>
-          <button
-            type="button"
-            onClick={() => setView('settings')}
-            className="hover:text-ink-mute"
-          >
-            settings
-          </button>
-        </div>
-      </div>
-    </main>
+    <AppShell active={tab} onTabChange={setTab} dueCount={dueCount}>
+      {tab === 'map' && (
+        <JourneyMap dueCount={dueCount} onGoToday={() => setTab('today')} />
+      )}
+      {tab === 'today' && <Today onGoMap={() => setTab('map')} />}
+      {tab === 'stats' && <Stats />}
+      {tab === 'more' && <More />}
+    </AppShell>
   );
-}
-
-// True if the wall clock is at or past the configured reflection time on the
-// configured reflection day. Uses LOCAL time — the configured time is a
-// wall-clock time, not a UTC offset.
-function isReflectionTime(profile: UserProfile): boolean {
-  const now = new Date();
-  if (now.getDay() !== profile.reflectionDayOfWeek) return false;
-
-  const [hh, mm] = profile.reflectionTime.split(':').map(Number);
-  const due = new Date(now);
-  due.setHours(hh ?? 0, mm ?? 0, 0, 0);
-  return now >= due;
 }

@@ -19,11 +19,14 @@ export default defineConfig({
       // theme_color / background_color match the warm palette so install
       // splash and Android Chrome chrome blend in.
       manifest: {
-        name: 'PlayDHD',
-        short_name: 'PlayDHD',
-        description: 'Protect time for play.',
-        theme_color: '#faf7f2',
-        background_color: '#faf7f2',
+        name: 'Head-in',
+        short_name: 'Head-in',
+        description: 'Learn the nervous system, in depth, by travelling it.',
+        // Light-mode neutrals (--bg). A manifest carries a single theme/background
+        // colour; the install splash uses these. The in-app dark theme is handled
+        // at runtime via CSS tokens, independent of the manifest.
+        theme_color: '#F7F8FA',
+        background_color: '#F7F8FA',
         display: 'standalone',
         start_url: '/Play/',
         scope: '/Play/',

@@ -1,46 +1,55 @@
 import Dexie, { type EntityTable } from 'dexie';
 import type {
-  UserProfile,
-  Task,
-  DailyScene,
-  PropSeed,
-  SceneSeed,
-  WeeklyReflection,
+  Settings,
+  SrsCard,
+  Mastery,
+  Attempt,
+  AchievementUnlock,
 } from './types';
+import { DEFAULT_SETTINGS } from './types';
 
-// Single Dexie database for the whole app. Database name 'playdhd' is the
-// IndexedDB database identifier — changing it would orphan all existing local
-// data, so don't.
+// The single Dexie database for Head-in. All data is local/offline.
 //
-// Schema versioning: bump version() and add a new .stores() block (or
-// .upgrade() callback) when changing schema. Dexie handles additive changes
-// automatically; field renames or data migrations need an explicit upgrade.
-export class PlayDHDDatabase extends Dexie {
-  // The `!` tells TS these are initialized by Dexie's stores() call.
-  userProfile!: EntityTable<UserProfile, 'id'>;
-  tasks!: EntityTable<Task, 'id'>;
-  dailyScenes!: EntityTable<DailyScene, 'id'>;
-  propSeeds!: EntityTable<PropSeed, 'id'>;
-  sceneSeeds!: EntityTable<SceneSeed, 'id'>;
-  weeklyReflections!: EntityTable<WeeklyReflection, 'id'>;
+// Schema versioning: bump version() and add a new .stores() block (plus an
+// .upgrade() callback for any non-additive change) when the schema changes.
+// Dexie handles additive changes (new tables, new indexes) automatically.
+export class HeadInDatabase extends Dexie {
+  settings!: EntityTable<Settings, 'id'>;
+  srsCards!: EntityTable<SrsCard, 'id'>;
+  mastery!: EntityTable<Mastery, 'structureId'>;
+  attempts!: EntityTable<Attempt, 'id'>;
+  achievements!: EntityTable<AchievementUnlock, 'id'>;
 
   constructor() {
-    super('playdhd');
-    // Schema strings: `&` = unique index; plain field = regular index;
-    // `[a+b]` = compound index (queryable as a single key).
-    //
-    // active and lastShownAt on seed tables are intentionally NOT indexed —
-    // IndexedDB rejects boolean and null index values, and with ~15-20 rows
-    // an in-memory filter is faster than working around that limitation.
+    super('head-in');
+    // Index strings: `&` = unique/primary key; plain field = secondary index;
+    // `[a+b]` = compound index. `dueOn` is indexed so the daily due query is a
+    // range scan; `at`/`factId` on attempts support the stats/weak-spot views.
     this.version(1).stores({
-      userProfile: '&id',
-      tasks: '&id, status, createdAt, [status+createdAt]',
-      dailyScenes: '&id, &date',
-      propSeeds: '&id',
-      sceneSeeds: '&id',
-      weeklyReflections: '&id, &weekStartDate',
+      settings: '&id',
+      srsCards: '&id, factId, dueOn',
+      mastery: '&structureId',
+      attempts: '&id, factId, at, mode',
+      achievements: '&id',
     });
   }
 }
 
-export const db = new PlayDHDDatabase();
+export const db = new HeadInDatabase();
+
+// Read the settings row, creating it with defaults on first run. Idempotent.
+export async function getSettings(): Promise<Settings> {
+  const existing = await db.settings.get('settings');
+  if (existing) return existing;
+  await db.settings.put(DEFAULT_SETTINGS);
+  return DEFAULT_SETTINGS;
+}
+
+// Patch settings. Ensures the row exists first so early calls (before any
+// getSettings) still work.
+export async function updateSettings(
+  patch: Partial<Omit<Settings, 'id'>>,
+): Promise<void> {
+  const current = await getSettings();
+  await db.settings.put({ ...current, ...patch, id: 'settings' });
+}
