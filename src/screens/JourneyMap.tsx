@@ -22,7 +22,7 @@ import {
   type NodeState,
 } from '../engine/progression';
 import { tr } from '../lib/text';
-import { NodeSheet } from '../ui/NodeSheet';
+import { NodeSheet, type ModeKey } from '../ui/NodeSheet';
 import { ArrowIcon, LockIcon } from '../ui/icons';
 
 // One node circle on the spine. State drives fill/stroke/glyph — and crucially
@@ -69,9 +69,11 @@ function MapNode({ state }: { state: NodeState }) {
 export function JourneyMap({
   dueCount,
   onGoToday,
+  onLaunch,
 }: {
   dueCount: number;
   onGoToday: () => void;
+  onLaunch: (mode: ModeKey, act: Act, chapter: Chapter) => void;
 }) {
   // Mastery drives node state. Empty in Increment 1 → all-locked-but-frontier.
   const mastery = useLiveQuery(() => db.mastery.toArray(), [], [] as Mastery[]);
@@ -197,6 +199,10 @@ export function JourneyMap({
           state={nodeByChapter.get(selected.chapter.id)?.state ?? 'locked'}
           learned={nodeByChapter.get(selected.chapter.id)?.learned ?? 0}
           retained={nodeByChapter.get(selected.chapter.id)?.retained ?? 0}
+          onLaunch={(mode, act, chapter) => {
+            setSelected(null);
+            onLaunch(mode, act, chapter);
+          }}
           onClose={() => setSelected(null)}
         />
       )}

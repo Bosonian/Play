@@ -33,6 +33,7 @@
      apart from the UI accent). Violet is the neutral "this is the target"
      highlight — distinct from the correct/incorrect judgement colours. */
   --dia-stroke: #3a424e;
+  --dia-gray: #d9dee6; /* gray-matter fill on cross-sections */
   --dia-highlight: #7c3aed;
 
   color-scheme: light;
@@ -55,6 +56,7 @@
   --partial: #c0a050;
 
   --dia-stroke: #b8c0cc;
+  --dia-gray: #39424f; /* gray-matter fill on cross-sections (dark) */
   --dia-highlight: #a985f0;
 
   color-scheme: dark;

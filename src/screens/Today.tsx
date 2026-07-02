@@ -1,20 +1,43 @@
-// Today — the daily review landing (design doc §8.1, §8.8).
-//
-// In Increment 1 there are no SRS cards yet, so this always shows the
-// "nothing due" state: calm, factual, an optional door forward — never a nag,
-// never confetti. The daily Case-of-the-Day cold-open and the due queue arrive
-// with the SRS engine (Increment 3).
+// Today — the daily review landing (design doc §8.1, §8.8). When cards are due
+// it offers a single "start review" action; when nothing is due it shows the
+// calm all-clear (never a nag, never confetti) with an optional door forward.
 
-export function Today({ onGoMap }: { onGoMap: () => void }) {
+export function Today({
+  dueCount,
+  onStartReview,
+  onGoMap,
+}: {
+  dueCount: number;
+  onStartReview: () => void;
+  onGoMap: () => void;
+}) {
+  if (dueCount > 0) {
+    return (
+      <div className="flex h-full flex-col px-4 pt-3">
+        <h1 className="text-title font-semibold text-fg">Today</h1>
+        <div className="mt-8">
+          <p className="text-body-lg text-fg">{dueCount} due for review.</p>
+          <p className="mt-1 text-body text-fg-muted">
+            A few minutes keeps what you’ve learned from fading.
+          </p>
+          <button
+            type="button"
+            onClick={onStartReview}
+            className="mt-6 rounded-md bg-accent px-5 py-3 text-body font-medium text-white"
+          >
+            Start review
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full flex-col px-4 pt-3">
       <h1 className="text-title font-semibold text-fg">Today</h1>
-
       <div className="mt-8">
         <p className="text-body-lg text-fg">Nothing is due for review.</p>
-        <p className="mt-1 text-body text-fg-muted">
-          Your retention is current.
-        </p>
+        <p className="mt-1 text-body text-fg-muted">Your retention is current.</p>
 
         <div className="mt-8">
           <p className="text-caption font-medium uppercase tracking-wide text-fg-faint">

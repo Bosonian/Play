@@ -38,11 +38,38 @@ export const CURRICULUM: Act[] = [
     levels: ['cord'],
     chapters: [
       { id: 'act1-external', title: t('External anatomy') },
-      { id: 'act1-section', title: t('Cross-section & laminae') },
-      { id: 'act1-ascending', title: t('Ascending tracts') },
-      { id: 'act1-descending', title: t('Descending tracts') },
+      {
+        id: 'act1-section',
+        title: t('Cross-section & laminae'),
+        structureIds: [
+          'dorsal-horn',
+          'ventral-horn',
+          'central-canal',
+          'gracile-fasciculus',
+          'cuneate-fasciculus',
+          'cst-lateral',
+          'stt-lateral',
+        ],
+        crossSectionIds: ['cord-cervical'],
+      },
+      {
+        id: 'act1-ascending',
+        title: t('Ascending tracts'),
+        structureIds: ['gracile-fasciculus', 'cuneate-fasciculus', 'stt-lateral'],
+        tractIds: ['dcml', 'spinothalamic-lateral'],
+      },
+      {
+        id: 'act1-descending',
+        title: t('Descending tracts'),
+        structureIds: ['cst-lateral', 'ventral-horn'],
+        tractIds: ['corticospinal-lateral'],
+      },
       { id: 'act1-blood', title: t('Blood supply') },
-      { id: 'act1-syndromes', title: t('Cord syndromes') },
+      {
+        id: 'act1-syndromes',
+        title: t('Cord syndromes'),
+        syndromeIds: ['brown-sequard'],
+      },
     ],
   },
   {

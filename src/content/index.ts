@@ -13,14 +13,20 @@ import type {
 } from './types';
 import { CURRICULUM } from './curriculum';
 import { validateContent, type ContentLintIssue } from './schema';
+import {
+  cordStructures,
+  cordTracts,
+  cordSyndromes,
+  cordCrossSections,
+} from './data/spinalCord';
 
-// Content tables — filled in later increments (Increment 2: the spinal-cord
-// vertical slice).
-export const STRUCTURES: Structure[] = [];
-export const TRACTS: Tract[] = [];
+// Content tables. The spinal-cord slice (Increment 2) is the first authored
+// content; the rest of the neuraxis pours in here act by act.
+export const STRUCTURES: Structure[] = [...cordStructures];
+export const TRACTS: Tract[] = [...cordTracts];
 export const VASCULAR: VascularTerritory[] = [];
-export const SYNDROMES: Syndrome[] = [];
-export const CROSS_SECTIONS: CrossSection[] = [];
+export const SYNDROMES: Syndrome[] = [...cordSyndromes];
+export const CROSS_SECTIONS: CrossSection[] = [...cordCrossSections];
 
 export const CONTENT = {
   structures: STRUCTURES,
@@ -33,6 +39,14 @@ export const CONTENT = {
 
 export { CURRICULUM };
 export * from './types';
+
+// Id → record lookups, for the modes and question generator.
+export const byId = {
+  structure: new Map(STRUCTURES.map((s) => [s.id, s])),
+  tract: new Map(TRACTS.map((t) => [t.id, t])),
+  syndrome: new Map(SYNDROMES.map((s) => [s.id, s])),
+  crossSection: new Map(CROSS_SECTIONS.map((c) => [c.id, c])),
+};
 
 // Dev-only content check: validate shape + cross-references at startup and log
 // any issues to the console. This is how an orphan reference or a half-authored
