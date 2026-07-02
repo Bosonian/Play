@@ -17,6 +17,8 @@ export interface StudyResult {
   correct: boolean;
   // Drill provides an explicit self-grade; Atlas/others derive it from correct.
   grade?: Grade;
+  // Cases records which localization axes were right (partial credit).
+  axes?: Attempt['axes'];
 }
 
 function keepRecent(recent: boolean[], v: boolean): boolean[] {
@@ -34,6 +36,7 @@ export async function recordStudy(r: StudyResult): Promise<void> {
     mode: r.mode,
     rung: r.rung,
     correct: r.correct,
+    axes: r.axes,
     at,
   };
   await db.attempts.add(attempt);

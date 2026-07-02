@@ -5,6 +5,7 @@
 
 import type { Act, Chapter } from '../content/types';
 import type { NodeState } from '../engine/progression';
+import { RIDE_BY_TRACT } from '../content/data/rides';
 import { tr } from '../lib/text';
 import { ArrowIcon } from './icons';
 
@@ -29,9 +30,13 @@ function disabledReason(mode: ModeKey, chapter: Chapter): string | null {
       return hasSection ? null : 'no diagram here';
     case 'drill':
       return hasDrillContent ? null : 'no content here yet';
-    // Built later; keep honest about why they can't be tapped.
     case 'cases':
-    case 'ride':
+      return (chapter.syndromeIds?.length ?? 0) > 0 ? null : 'no case here';
+    case 'ride': {
+      const hasRide = (chapter.tractIds ?? []).some((id) => RIDE_BY_TRACT.has(id));
+      return hasRide ? null : 'no pathway here';
+    }
+    // Built later; keep honest about why it can't be tapped.
     case 'timeAttack':
       return 'not built yet';
   }

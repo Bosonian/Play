@@ -19,11 +19,16 @@ import { Stats } from './screens/Stats';
 import { More } from './screens/More';
 import { Drill } from './screens/Drill';
 import { Atlas } from './screens/Atlas';
+import { Cases } from './screens/Cases';
+import { RideTheTract } from './screens/RideTheTract';
+import { RIDE_BY_TRACT } from './content/data/rides';
 import { tr } from './lib/text';
 
 type Session =
   | { kind: 'drill'; questions: Question[]; title: string }
-  | { kind: 'atlas'; crossSectionId: string; title: string };
+  | { kind: 'atlas'; crossSectionId: string; title: string }
+  | { kind: 'cases'; syndromeIds: string[]; title: string }
+  | { kind: 'ride'; tractId: string; title: string };
 
 export function App() {
   const [tab, setTab] = useState<Tab>('map');
@@ -48,6 +53,12 @@ export function App() {
     } else if (mode === 'atlas') {
       const id = chapter.crossSectionIds?.[0];
       if (id) setSession({ kind: 'atlas', crossSectionId: id, title });
+    } else if (mode === 'cases') {
+      const ids = chapter.syndromeIds ?? [];
+      if (ids.length) setSession({ kind: 'cases', syndromeIds: ids, title });
+    } else if (mode === 'ride') {
+      const tractId = (chapter.tractIds ?? []).find((id) => RIDE_BY_TRACT.has(id));
+      if (tractId) setSession({ kind: 'ride', tractId, title });
     }
   }
 
@@ -74,14 +85,17 @@ export function App() {
     const exit = () => setSession(null);
     return (
       <div className="mx-auto h-full max-w-md bg-bg text-fg">
-        {session.kind === 'drill' ? (
+        {session.kind === 'drill' && (
           <Drill questions={session.questions} title={session.title} onExit={exit} />
-        ) : (
-          <Atlas
-            crossSectionId={session.crossSectionId}
-            title={session.title}
-            onExit={exit}
-          />
+        )}
+        {session.kind === 'atlas' && (
+          <Atlas crossSectionId={session.crossSectionId} title={session.title} onExit={exit} />
+        )}
+        {session.kind === 'cases' && (
+          <Cases syndromeIds={session.syndromeIds} title={session.title} onExit={exit} />
+        )}
+        {session.kind === 'ride' && (
+          <RideTheTract tractId={session.tractId} onExit={exit} />
         )}
       </div>
     );
