@@ -113,8 +113,9 @@ export function Cases({
   const allOK = levelOK && sideOK && dxOK;
   const canSubmit = level !== null && side !== null && dx !== null;
 
-  async function next() {
-    await recordStudy({
+  function next() {
+    // Advance immediately; persist in the background (never block on the write).
+    void recordStudy({
       factId: `case:${syndrome.id}`,
       masteryKey: syndrome.id,
       rung: 'localize',

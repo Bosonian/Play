@@ -37,10 +37,12 @@ export function Drill({
     if (questions[idx].choices[i].correct) setCorrectCount((c) => c + 1);
   }
 
-  async function finish(grade: Grade) {
+  function finish(grade: Grade) {
     const question = questions[idx];
     const wasCorrect = chosen !== null && question.choices[chosen].correct;
-    await recordStudy({
+    // Advance the UI immediately; persist in the background. Progression must
+    // never wait on (or be blocked by) a database write.
+    void recordStudy({
       factId: question.factId,
       masteryKey: question.masteryKey,
       rung: question.rung,

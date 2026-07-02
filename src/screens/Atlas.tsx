@@ -73,8 +73,9 @@ export function Atlas({
     if (structureId === targetId) setCorrectCount((c) => c + 1);
   }
 
-  async function next() {
-    await recordStudy({
+  function next() {
+    // Advance immediately; persist in the background (never block on the write).
+    void recordStudy({
       factId: `atlas:${section!.id}:${targetId}`,
       masteryKey: targetId,
       rung: 'locate',
