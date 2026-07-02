@@ -14,6 +14,7 @@ import type {
 import { CURRICULUM } from './curriculum';
 import { validateContent, type ContentLintIssue } from './schema';
 import {
+  cordExternalStructures,
   cordStructures,
   cordTracts,
   cordSyndromes,
@@ -22,7 +23,10 @@ import {
 
 // Content tables. The spinal-cord slice (Increment 2) is the first authored
 // content; the rest of the neuraxis pours in here act by act.
-export const STRUCTURES: Structure[] = [...cordStructures];
+export const STRUCTURES: Structure[] = [
+  ...cordExternalStructures,
+  ...cordStructures,
+];
 export const TRACTS: Tract[] = [...cordTracts];
 export const VASCULAR: VascularTerritory[] = [];
 export const SYNDROMES: Syndrome[] = [...cordSyndromes];

@@ -130,6 +130,13 @@ export function NodeSheet({
           })}
         </ul>
 
+        {MODES.every((m) => disabledReason(m.key, chapter) !== null) && (
+          <p className="mt-3 text-caption text-fg-faint">
+            This chapter isn’t authored yet — try one of the chapters below it
+            on the map.
+          </p>
+        )}
+
         {state === 'locked' && (
           <p className="mt-3 text-caption text-fg-faint">
             This region is ahead of where you are. You can still open it — it

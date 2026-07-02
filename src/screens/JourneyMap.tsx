@@ -90,27 +90,45 @@ export function JourneyMap({
     chapter: Chapter;
   } | null>(null);
 
-  // The frontier: first available chapter in a graded (non-tutorial) act.
-  const frontier = nodes.find((n) => {
-    const act = CURRICULUM.find((a) => a.id === n.actId);
-    return n.state === 'available' && !act?.isTutorial;
-  });
-  const frontierAct = frontier
-    ? CURRICULUM.find((a) => a.id === frontier.actId)
-    : undefined;
+  // A chapter is "playable" only if it has authored content — otherwise every
+  // mode is disabled and it's a dead end. The CTA must never point at one.
+  const hasContent = (c: Chapter) =>
+    (c.structureIds?.length ?? 0) +
+      (c.tractIds?.length ?? 0) +
+      (c.syndromeIds?.length ?? 0) +
+      (c.crossSectionIds?.length ?? 0) >
+    0;
+
+  // The frontier: the first non-tutorial, content-bearing chapter that isn't
+  // fully retained yet. This is what "Begin/Continue" opens — always something
+  // you can actually play.
+  let frontierAct: Act | undefined;
+  let frontierChapter: Chapter | undefined;
+  let frontierStarted = false;
+  for (const act of CURRICULUM) {
+    if (act.isTutorial) continue;
+    for (const chapter of act.chapters) {
+      if (!hasContent(chapter)) continue;
+      const node = nodeByChapter.get(chapter.id);
+      if (node?.state === 'retained') continue; // already solid; skip ahead
+      frontierAct = act;
+      frontierChapter = chapter;
+      frontierStarted = (node?.learned ?? 0) > 0;
+      break;
+    }
+    if (frontierChapter) break;
+  }
 
   // The one computed CTA (design doc §8.2), in priority order.
   let cta: { label: string; onClick: () => void } | null = null;
   if (dueCount > 0) {
     cta = { label: `Review — ${dueCount} due`, onClick: onGoToday };
-  } else if (frontier && frontierAct) {
-    const started = frontier.learned > 0;
-    const chapter = frontierAct.chapters.find(
-      (c) => c.id === frontier.chapterId,
-    )!;
+  } else if (frontierAct && frontierChapter) {
+    const act = frontierAct;
+    const chapter = frontierChapter;
     cta = {
-      label: `${started ? 'Continue' : 'Begin'} — ${tr(frontierAct.title)}`,
-      onClick: () => setSelected({ act: frontierAct, chapter }),
+      label: `${frontierStarted ? 'Continue' : 'Begin'} — ${tr(chapter.title)}`,
+      onClick: () => setSelected({ act, chapter }),
     };
   }
 

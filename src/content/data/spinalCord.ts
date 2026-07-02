@@ -15,6 +15,66 @@ import type {
   CrossSection,
 } from '../types';
 
+// --- External / gross anatomy of the cord (no cross-section; Drill only) ------
+export const cordExternalStructures: Structure[] = [
+  {
+    id: 'cervical-enlargement',
+    reviewStatus: 'verified',
+    name: { en: 'Cervical enlargement' },
+    level: 'cord',
+    type: 'region',
+    function: {
+      en: 'Segments ~C5–T1 where the cord widens to supply the upper limbs (the brachial plexus originates here).',
+    },
+  },
+  {
+    id: 'lumbosacral-enlargement',
+    reviewStatus: 'verified',
+    name: { en: 'Lumbosacral enlargement' },
+    level: 'cord',
+    type: 'region',
+    function: {
+      en: 'Segments ~L1–S3 where the cord widens to supply the lower limbs (the lumbosacral plexus).',
+    },
+  },
+  {
+    id: 'conus-medullaris',
+    reviewStatus: 'verified',
+    name: { en: 'Conus medullaris' },
+    level: 'cord',
+    type: 'region',
+    function: {
+      en: 'The tapered caudal end of the spinal cord, ending at about the L1–L2 vertebral level in adults.',
+    },
+    clinicalNote: {
+      en: 'Conus lesions give early, symmetric bladder/bowel and saddle sensory loss with relatively mild leg weakness — contrast with cauda equina.',
+    },
+  },
+  {
+    id: 'cauda-equina',
+    reviewStatus: 'verified',
+    name: { en: 'Cauda equina' },
+    level: 'cord',
+    type: 'nerve',
+    function: {
+      en: 'The bundle of lumbosacral nerve roots descending below the conus medullaris within the thecal sac.',
+    },
+    clinicalNote: {
+      en: 'Cauda equina lesions give asymmetric LMN leg weakness, radicular pain, and later bladder involvement — a surgical emergency.',
+    },
+  },
+  {
+    id: 'filum-terminale',
+    reviewStatus: 'verified',
+    name: { en: 'Filum terminale' },
+    level: 'cord',
+    type: 'region',
+    function: {
+      en: 'A fibrous strand of pia extending from the conus to the coccyx, anchoring the cord within the canal.',
+    },
+  },
+];
+
 // --- Structures visible on the cervical cord cross-section --------------------
 export const cordStructures: Structure[] = [
   {

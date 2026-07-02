@@ -37,7 +37,17 @@ export const CURRICULUM: Act[] = [
     subtitle: t('Where the journey begins'),
     levels: ['cord'],
     chapters: [
-      { id: 'act1-external', title: t('External anatomy') },
+      {
+        id: 'act1-external',
+        title: t('External anatomy'),
+        structureIds: [
+          'cervical-enlargement',
+          'lumbosacral-enlargement',
+          'conus-medullaris',
+          'cauda-equina',
+          'filum-terminale',
+        ],
+      },
       {
         id: 'act1-section',
         title: t('Cross-section & laminae'),
