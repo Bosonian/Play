@@ -13,21 +13,30 @@
      launcher (no Android SDK/emulator available in this environment; see
      the increment's own "CI will prove" list).
 
-     updatePeriodMillis: 6 hours. The widget's whole display is a 1:1 date
-     slide (today + offsetDays) off data that itself only changes when
-     Deepak logs a sprint or edits the exam/topics — none of which need a
-     redraw faster than a few times a day just to keep "today" current;
+     updatePeriodMillis: 6 hours. The widget's whole display is a 1:1
+     calendar slide (m3: readyDayEpochMs slid forward by however many whole
+     calendar days have passed since generatedDayEpochMs — see
+     PruefungWidgetProvider.updateOne) off data that itself only changes
+     when Deepak logs a sprint or edits the exam/topics — none of which need
+     a redraw faster than a few times a day just to keep "today" current;
      refreshWidgets() (src/native/widgets.ts) already pushes an immediate
      redraw the moment any of that actually changes.
 
      previewImage intentionally omitted (increment brief: "acceptable;
      note it") — the widget picker falls back to rendering the
-     initialLayout itself when none is set, which is an accurate preview
-     for a widget this simple anyway. -->
+     initialLayout itself when none is set, which is why widget_pruefung.xml
+     carries static placeholder text (m1) rather than empty TextViews: that
+     placeholder IS the picker preview.
+
+     android:description (m1, API 31+): a one-line summary shown under
+     android:label in the picker on Android 12+; silently ignored on older
+     API levels (this app's minSdk is 23), so no compatibility branch is
+     needed for it. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:minWidth="180dp"
     android:minHeight="64dp"
     android:updatePeriodMillis="21600000"
     android:initialLayout="@layout/widget_pruefung"
+    android:description="@string/widget_pruefung_description"
     android:resizeMode="horizontal|vertical"
     android:widgetCategory="home_screen" />

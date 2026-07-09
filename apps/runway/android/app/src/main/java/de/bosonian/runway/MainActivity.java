@@ -1,5 +1,6 @@
 package de.bosonian.runway;
 
+import android.content.Intent;
 import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;
 
@@ -24,6 +25,23 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // m6: a task relaunched from the Recents list after its process was
+        // killed redelivers the ORIGINAL launch intent — including whatever
+        // runway:// deep-link data URI it carried, e.g. a widget tap that
+        // cold-started the app hours or days ago. BridgeActivity.load()
+        // (called from super.onCreate() below) reads getIntent() and
+        // synthesizes a retained appUrlOpen event from it (see
+        // deepLinks.ts's own corrected comment on why that path exists), so
+        // without stripping the stale data here first, resuming from
+        // Recents would re-navigate to that old target instead of landing
+        // on Home — which is what resuming a recents entry should do. This
+        // has to run BEFORE super.onCreate(), same ordering reason as
+        // registerPlugin() below: super.onCreate() is what reads
+        // getIntent() and acts on it, so the strip must land first.
+        if ((getIntent().getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0) {
+            setIntent(new Intent(getIntent()).setData(null).setAction(Intent.ACTION_MAIN));
+        }
+
         registerPlugin(WidgetBridgePlugin.class);
         super.onCreate(savedInstanceState);
     }

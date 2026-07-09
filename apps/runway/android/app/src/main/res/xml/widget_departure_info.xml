@@ -5,18 +5,28 @@
      identical to widget_pruefung_info.xml (see that file's own comment) —
      same nominal 3-cell-wide, 1-cell-tall placement, same bumped 64dp
      minHeight for three stacked lines, same untested-against-a-real-
-     launcher caveat (no Android SDK/emulator in this environment).
+     launcher caveat (no Android SDK/emulator in this environment), same
+     m1 android:description note (API 31+ only, silently ignored below it).
 
-     updatePeriodMillis: 6 hours, same reasoning as the Prüfung widget's —
-     this widget's own "now vs. appointmentEpochMs" expiry check
-     (DepartureWidgetProvider.renderSnapshot) is itself a display-plumbing
-     time slide, not something that needs a faster system-level tick;
-     refreshWidgets() already pushes an immediate redraw whenever a
-     departure that could change what this widget shows is saved. -->
+     updatePeriodMillis: 6 hours, same reasoning as the Prüfung widget's.
+     This IS the redraw cadence the "now vs. appointmentEpochMs" expiry
+     check (DepartureWidgetProvider.renderSnapshot) actually runs on — the
+     check itself only evaluates when onUpdate fires (this timer, an
+     explicit refreshWidgets() push, or the system's own "widget just
+     placed" redraw), never continuously in the background (m5, corrected:
+     this comment previously implied the check tracked the clock live,
+     which it does not). A passed appointment can therefore keep rendering
+     as upcoming for up to this same ~6h window if the app stays closed and
+     nothing else triggers a redraw in between — an accepted tradeoff,
+     documented in README.md's "Home-screen widgets" section rather than
+     engineered around, since forcing a faster system tick would spend
+     battery on a staleness window that already self-heals the moment the
+     app is next opened. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:minWidth="180dp"
     android:minHeight="64dp"
     android:updatePeriodMillis="21600000"
     android:initialLayout="@layout/widget_departure"
+    android:description="@string/widget_departure_description"
     android:resizeMode="horizontal|vertical"
     android:widgetCategory="home_screen" />

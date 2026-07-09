@@ -1,6 +1,7 @@
 import { startOfWeek } from 'date-fns';
 import { describe, expect, it } from 'vitest';
 import { buildWidgetSnapshot } from './widgetSnapshot';
+import { examProjection } from './examProjection';
 import { computeProjection, computeStartBy } from './projection';
 import { formatTime } from './format';
 import type { Departure, DepartureStep, Exam, Sprint, Topic } from '../db/types';
@@ -8,6 +9,16 @@ import type { Departure, DepartureStep, Exam, Sprint, Topic } from '../db/types'
 // Thursday — matches examProjection.test.ts's fixed NOW so the reasoning
 // about which week is "current" lines up with that file's own comments.
 const NOW = new Date('2026-07-09T08:00:00.000Z');
+
+// m3: mirrors widgetSnapshot.ts's own (unexported) localMidnight exactly —
+// duplicated here rather than exported-just-for-tests, same tradeoff the
+// rest of this file already makes for computeProjection/computeStartBy
+// (imported for real, since those ARE meant to be reused) versus small
+// private helpers. Used to compute the expected readyDayEpochMs/
+// generatedDayEpochMs independent of the test runner's own timezone.
+function localMidnightMs(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
 
 function makeStep(overrides: Partial<DepartureStep> = {}): DepartureStep {
   return { id: crypto.randomUUID(), name: 'Shoes', plannedMinutes: 5, checkedAt: null, ...overrides };
@@ -76,23 +87,35 @@ describe('buildWidgetSnapshot', () => {
     expect(snapshot.departure).toBeNull();
   });
 
-  it('computes offsetDays as ceil(readyDate − now) for a normal projection', () => {
+  it('sets readyDayEpochMs to local midnight of the projected ready date, for a normal projection', () => {
     // No sprints logged yet: DEFAULT_PACE_HOURS_PER_WEEK (4h/week) applies,
-    // 10h remaining → 2.5 weeks → 17.5 days, ceil'd to 18.
-    const snapshot = buildWidgetSnapshot(NOW, makeExam(), [makeTopic({ estimatedHours: 10 })], [], []);
+    // 10h remaining → 2.5 weeks → 17.5 days out from NOW.
+    const topics = [makeTopic({ estimatedHours: 10 })];
+    const snapshot = buildWidgetSnapshot(NOW, makeExam(), topics, [], []);
+    const expectedReadyDate = examProjection(NOW, makeExam(), topics, []).readyDate;
     expect(snapshot.pruefung?.neverReady).toBe(false);
-    expect(snapshot.pruefung?.offsetDays).toBe(18);
+    expect(expectedReadyDate).not.toBeNull();
+    expect(snapshot.pruefung?.readyDayEpochMs).toBe(localMidnightMs(expectedReadyDate!));
   });
 
-  it('offsetDays is 0 when every topic is already at its estimate (done)', () => {
+  it('sets generatedDayEpochMs to local midnight of the generation instant, for any projection', () => {
+    const snapshot = buildWidgetSnapshot(NOW, makeExam(), [makeTopic({ estimatedHours: 10 })], [], []);
+    expect(snapshot.pruefung?.generatedDayEpochMs).toBe(localMidnightMs(NOW));
+  });
+
+  it('readyDayEpochMs equals generatedDayEpochMs when every topic is already at its estimate (done)', () => {
+    // examProjection's 'done' branch sets readyDate = now exactly, so both
+    // midnights fall on the same calendar day — the native slide (m3) then
+    // adds 0 days, same as the old offsetDays === 0 case this replaces.
     const topic = makeTopic({ estimatedHours: 1 });
     const sprint = makeSprint({ startedAt: '2026-07-01T08:00:00.000Z', endedAt: '2026-07-01T09:00:00.000Z' });
     const snapshot = buildWidgetSnapshot(NOW, makeExam(), [topic], [sprint], []);
-    expect(snapshot.pruefung?.offsetDays).toBe(0);
     expect(snapshot.pruefung?.neverReady).toBe(false);
+    expect(snapshot.pruefung?.readyDayEpochMs).toBe(localMidnightMs(NOW));
+    expect(snapshot.pruefung?.readyDayEpochMs).toBe(snapshot.pruefung?.generatedDayEpochMs);
   });
 
-  it('sets neverReady when the measured pace is zero', () => {
+  it('sets neverReady when the measured pace is zero, and leaves readyDayEpochMs at the 0 placeholder', () => {
     // A first sprint two complete weeks ago, then total silence — a
     // measured pace of exactly 0h/week (see examProjection.test.ts for the
     // same "silence after a first sprint reads as a measured 0" scenario).
@@ -100,7 +123,7 @@ describe('buildWidgetSnapshot', () => {
     const sprint = makeSprint({ startedAt: '2026-06-15T08:00:00.000Z', endedAt: '2026-06-15T08:50:00.000Z' });
     const snapshot = buildWidgetSnapshot(NOW, makeExam(), [topic], [sprint], []);
     expect(snapshot.pruefung?.neverReady).toBe(true);
-    expect(snapshot.pruefung?.offsetDays).toBe(0);
+    expect(snapshot.pruefung?.readyDayEpochMs).toBe(0);
   });
 
   it('builds weekLine with a required-pace comparison when the anchor is still in the future', () => {

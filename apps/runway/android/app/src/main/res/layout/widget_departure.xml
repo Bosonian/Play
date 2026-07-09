@@ -6,7 +6,13 @@
      larger, tabular so digits don't jitter), planLine (dim, smallest) — or,
      when there's no eligible departure, DepartureWidgetProvider collapses
      this to a single "No departure planned." line in widget_name and
-     blanks the other two (see that class's renderFallback). -->
+     blanks the other two (see that class's renderFallback).
+
+     m1: same "picker-preview only" reasoning as widget_pruefung.xml's own
+     comment — the android:text values below render ONLY in the widget
+     picker (no previewImage set — see widget_departure_info.xml), and
+     DepartureWidgetProvider.onUpdate ALWAYS overwrites them once the widget
+     is actually placed. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_departure_root"
     android:layout_width="match_parent"
@@ -24,7 +30,7 @@
         android:textStyle="bold"
         android:textColor="#F1F5F9"
         android:maxLines="1"
-        android:text="" />
+        android:text="Klinik" />
 
     <TextView
         android:id="@+id/widget_appointment_line"
@@ -36,7 +42,7 @@
         android:fontFeatureSettings="tnum"
         android:textColor="#F1F5F9"
         android:maxLines="1"
-        android:text="" />
+        android:text="14:30" />
 
     <TextView
         android:id="@+id/widget_plan_line"
@@ -46,6 +52,6 @@
         android:textSize="13sp"
         android:textColor="#94A3B8"
         android:maxLines="1"
-        android:text="" />
+        android:text="Leave by 14:10 · start by 13:35" />
 
 </LinearLayout>

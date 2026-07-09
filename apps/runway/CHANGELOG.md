@@ -5,6 +5,41 @@ via the `runway-latest.apk` asset at
 https://github.com/Bosonian/Play/releases/tag/runway-latest — it carries
 whichever version built last.
 
+## 0.11.1
+- Widget review round (adversarial pass on 0.11.0's W1+W2 work), seven
+  findings fixed:
+  - The widget picker showed two blank tiles both named "Runway" with no
+    way to tell them apart before placing one. Each `<receiver>` now has
+    its own `android:label` ("Prüfung" / "Next departure") and, on API 31+,
+    its own `android:description`; both layouts' TextViews now carry
+    static placeholder text (the picker's own preview, when no
+    `previewImage` is set) instead of rendering blank.
+  - The Prüfung widget said "Open Runway once to fill this widget." even
+    when the app HAD already run and simply had no exam set up yet —
+    unactionable and false. That case now reads "No exam set up." instead,
+    with the same tap target (`runway://exam`, which already routes to
+    exam setup when none exists); the old fallback copy is reserved
+    exclusively for "no snapshot has ever been written."
+  - The widget's "Ready by" date and the app's own ExamOverview screen
+    could disagree by a day. Replaced the offsetDays/`Math.ceil` scheme
+    with midnight-anchored calendar sliding (`readyDayEpochMs` +
+    `generatedDayEpochMs` in `widgetSnapshot.ts`, floored the same way on
+    both the native and TS sides) so the two agree by construction.
+  - Checking the last prep step on the live Runway screen didn't refresh
+    the departure widget, leaving a stale "start by ..." on the home
+    screen after every step was actually done.
+  - Reopening Runway from Android's Recents list after the process had
+    died re-fired the app's original launch intent, including any stale
+    `runway://` deep link it carried — `MainActivity` now strips it before
+    `super.onCreate()` when `FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY` is set.
+  - A cold start via a widget/shortcut tap could deliver the same deep
+    link twice (once via the synthesized `appUrlOpen` retained event,
+    once via `getLaunchUrl()`) — `deepLinks.ts` now dedupes by URL.
+  - Documented, rather than engineered around: widget expiry (the
+    departure widget's stale-appointment fallback) is only evaluated at
+    redraw — up to ~6h stale if the app stays closed. Info-xml comment and
+    README corrected to say so plainly instead of implying a live check.
+
 ## 0.11.0
 - Second home-screen widget: the next departure. Three lines — name,
   appointment time, and a "Leave by 14:10 · start by 13:35" plan line that

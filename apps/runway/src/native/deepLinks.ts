@@ -57,6 +57,16 @@ function screenForUrl(url: string): Screen | null {
   }
 }
 
+// m7 cold-start dedupe: module-level, not component state, because this
+// file's only caller (registerDeepLinkNavigation) is itself only ever
+// invoked once for the app's whole lifetime (see that function's own doc
+// comment) — a module-level variable and a per-call one would behave
+// identically here, and module-level avoids threading it through the
+// closure for no benefit. Set once a URL is actually handled (i.e. it
+// resolved to a real Screen); an unrecognised URL never overwrites it,
+// since nothing was navigated to for the dedupe to guard.
+let lastHandledUrl: string | null = null;
+
 /**
  * Registers the tap/deep-link handler once, for the lifetime of the app,
  * and handles the cold-start case in the same call. Returns an unsubscribe
@@ -64,26 +74,43 @@ function screenForUrl(url: string): Screen | null {
  * is registered once at startup and lives for the app's whole lifetime, the
  * same as registerNotificationNavigation.
  *
- * Cold start: unlike @capacitor/local-notifications (see
- * registerNotificationNavigation's own doc comment in notifications.ts for
- * why that one is an unverified inference about buffered bridge events),
- * @capacitor/app's `getLaunchUrl()` directly exposes the URL the app was
- * launched with, when there is one — reading it once here at registration
- * time is a documented, reliable way to catch "the widget/shortcut tap
- * cold-started the app", not a guess about bridge buffering behaviour.
+ * Cold start (m7, corrected): this file's earlier comment described
+ * `getLaunchUrl()` as THE way to catch a cold start, as if the `appUrlOpen`
+ * listener below only ever fired for a deep link tapped while the app was
+ * already running. That's not what BridgeActivity actually does — see
+ * node_modules/@capacitor/android/capacitor/src/main/java/com/getcapacitor/BridgeActivity.java's
+ * `load()`, which calls `onNewIntent(getIntent())` on every cold start,
+ * and @capacitor/app's AppPlugin.handleOnNewIntent, which turns that into a
+ * *retained* `appUrlOpen` notification (delivered to a listener as soon as
+ * one registers, even though the underlying Android intent fired before the
+ * listener existed). So a cold start via a runway:// intent fires
+ * `appUrlOpen` too, and `getLaunchUrl()` here is a belt-and-suspenders
+ * SECOND path, not the sole cold-start mechanism. Without deduping, that
+ * means a cold-start deep link is handled twice — once from each path —
+ * which double-navigates on the very first screen the app shows.
+ * `lastHandledUrl` above is what makes that harmless BY CONSTRUCTION
+ * (whichever path runs second is always a no-op for the same URL) rather
+ * than relying on every individual route/handler being idempotent to a
+ * repeated call.
  */
 export async function registerDeepLinkNavigation(handler: (screen: Screen) => void): Promise<() => void> {
   if (!Capacitor.isNativePlatform()) return () => {};
 
+  const handleUrl = (url: string) => {
+    if (url === lastHandledUrl) return; // already handled via the other cold-start path
+    const screen = screenForUrl(url);
+    if (!screen) return;
+    lastHandledUrl = url;
+    handler(screen);
+  };
+
   const listenerHandle = await App.addListener('appUrlOpen', (event: URLOpenListenerEvent) => {
-    const screen = screenForUrl(event.url);
-    if (screen) handler(screen);
+    handleUrl(event.url);
   });
 
   const launch = await App.getLaunchUrl();
   if (launch?.url) {
-    const screen = screenForUrl(launch.url);
-    if (screen) handler(screen);
+    handleUrl(launch.url);
   }
 
   return () => {

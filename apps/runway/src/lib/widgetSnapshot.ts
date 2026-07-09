@@ -12,11 +12,12 @@ import { computeProjection, computeStartBy } from './projection';
 //
 // ARCHITECTURE RULE: this file is where every number either widget shows
 // gets computed. The native side may only do two things with numbers from
-// here — add offsetDays to "today", and diff two dates/epoch millis — both a
-// 1:1 mirror of a time slide, never a re-derivation of examProjection's or
-// projection.ts's math. Every string either widget renders verbatim
-// (anchorLabel, weekLine, nameLine, appointmentLine, planLine) is built here
-// too, so a copy change never needs a matching native change.
+// here — calendar-slide readyDayEpochMs forward by whole days, and diff two
+// dates/epoch millis — both a 1:1 mirror of a time slide, never a
+// re-derivation of examProjection's or projection.ts's math. Every string
+// either widget renders verbatim (anchorLabel, weekLine, nameLine,
+// appointmentLine, planLine) is built here too, so a copy change never needs
+// a matching native change.
 
 /** Same tight/late threshold the app's own STATE_TEXT (ExamOverview.tsx)
  * switches colour at — passed through in the snapshot rather than hardcoded
@@ -25,13 +26,37 @@ import { computeProjection, computeStartBy } from './projection';
  * two places that would otherwise both need to agree on it. */
 const PRUEFUNG_STATE_THRESHOLD_DAYS = 14;
 
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
+/** Local midnight (device timezone) of the calendar day `date` falls on —
+ * the shared building block behind readyDayEpochMs/generatedDayEpochMs
+ * below (m3). Both examProjection.daysBetween (used by the live
+ * ExamOverview screen) and the native widget's own day-diffing floor
+ * whole calendar days at midnight-to-midnight, so building both fields from
+ * this exact construction — rather than, say, "now + N days" arithmetic on
+ * a millisecond offset — is what makes the widget and the live app agree BY
+ * CONSTRUCTION instead of by coincidence. Replaces the old offsetDays
+ * scheme (ceil((readyDate − now) / MS_PER_DAY)), which mixed a
+ * whole-days-floor rule (examProjection/ExamOverview) with a ceil of a
+ * partial-day difference that also carried readyDate's own time-of-day —
+ * the two could land a day apart depending on what time of day either was
+ * computed, which is exactly the m3 bug this replaces. */
+function localMidnight(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
 
 export interface PruefungWidgetData {
-  /** ceil((readyDate − now) in days) — the widget renders "Ready by
-   * {today + offsetDays}". Meaningless (and left at 0) when `neverReady` is
-   * true; the widget must check `neverReady` first. */
-  offsetDays: number;
+  /** Local midnight (device timezone) of the projected ready date's
+   * calendar day. The native side slides this forward by however many
+   * whole calendar days have passed since generatedDayEpochMs (below)
+   * before rendering "Ready by ..." — see PruefungWidgetProvider.updateOne
+   * — so a snapshot that's sat unrefreshed for a few days still shows the
+   * right date without the app needing to reopen just to keep "today"
+   * current. Meaningless (and left at 0) when `neverReady` is true; the
+   * widget must check `neverReady` first. */
+  readyDayEpochMs: number;
+  /** Local midnight (device timezone) of the calendar day this snapshot was
+   * built on — the native side's reference point for "how many days old is
+   * this snapshot" (see readyDayEpochMs above). */
+  generatedDayEpochMs: number;
   /** Mirrors examProjection's readyDate === null (zero measured pace, or an
    * overflowed projection) — the widget shows "Ready: never at current
    * pace" instead of a date. */
@@ -180,18 +205,15 @@ export function buildWidgetSnapshot(
   const weekStart = startOfWeek(now, { weekStartsOn: 1 });
 
   const neverReady = projection.readyDate === null;
-  // Math.ceil, per the increment spec — a readyDate a few hours from now
-  // still reads as "1 day away" on the widget's whole-day display, the same
-  // direction the app's own live screens round overdue/remaining figures.
   // 0 in the neverReady branch is a placeholder, not a real answer — see
-  // PruefungWidgetData.offsetDays's doc comment: the native side must check
-  // neverReady before ever reading this field.
-  const offsetDays =
-    projection.readyDate === null ? 0 : Math.ceil((projection.readyDate.getTime() - now.getTime()) / MS_PER_DAY);
+  // PruefungWidgetData.readyDayEpochMs's doc comment: the native side must
+  // check neverReady before ever reading this field.
+  const readyDayEpochMs = projection.readyDate === null ? 0 : localMidnight(projection.readyDate).getTime();
 
   return {
     pruefung: {
-      offsetDays,
+      readyDayEpochMs,
+      generatedDayEpochMs: localMidnight(now).getTime(),
       neverReady,
       anchorEpochMs: projection.anchor.getTime(),
       anchorLabel: formatExamAnchorLine(exam),

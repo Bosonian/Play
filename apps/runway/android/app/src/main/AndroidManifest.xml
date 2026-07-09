@@ -53,10 +53,15 @@
              ACTION_APPWIDGET_UPDATE as a system broadcast, which an
              unexported receiver could not receive; this is the standard,
              documented shape for every AppWidgetProvider, not a relaxation
-             specific to this app. -->
+             specific to this app. android:label (m1): without it, a
+             <receiver> falls back to the <application>'s own label
+             ("Runway"), which is exactly why the widget picker used to show
+             two identically-named blank tiles with no way to tell them
+             apart before placing one. -->
         <receiver
             android:name=".PruefungWidgetProvider"
-            android:exported="true">
+            android:exported="true"
+            android:label="@string/widget_pruefung_label">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
@@ -68,10 +73,12 @@
         <!-- Widgets increment W2: the departure home-screen widget
              provider. Same exported="true" reasoning as PruefungWidgetProvider
              above — this is the standard shape every AppWidgetProvider
-             needs, not something specific to this widget. -->
+             needs, not something specific to this widget. Same m1
+             android:label reasoning too. -->
         <receiver
             android:name=".DepartureWidgetProvider"
-            android:exported="true">
+            android:exported="true"
+            android:label="@string/widget_departure_label">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>

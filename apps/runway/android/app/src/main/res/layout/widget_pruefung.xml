@@ -5,7 +5,14 @@
      (RUNWAY_PRUFUNG_PLAN.md §4.1). Rendered by
      PruefungWidgetProvider.java; colours for widget_line1 are set
      programmatically there (calm/tight/late), everything else here is
-     static. -->
+     static.
+
+     m1: the android:text values below are visible ONLY in the widget
+     picker's preview (no previewImage is set — see widget_pruefung_info.xml
+     — so the picker falls back to rendering this initialLayout as-is).
+     PruefungWidgetProvider.onUpdate ALWAYS overwrites every one of these
+     TextViews the moment the widget is actually placed on a home screen;
+     nothing below is ever shown to Deepak on a real, placed widget. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_root"
     android:layout_width="match_parent"
@@ -23,7 +30,7 @@
         android:textStyle="bold"
         android:textColor="#F1F5F9"
         android:maxLines="1"
-        android:text="" />
+        android:text="Ready by 14 Dec" />
 
     <TextView
         android:id="@+id/widget_line2"
@@ -33,7 +40,7 @@
         android:textSize="13sp"
         android:textColor="#94A3B8"
         android:maxLines="1"
-        android:text="" />
+        android:text="Exam Nov 2026" />
 
     <TextView
         android:id="@+id/widget_line3"
@@ -43,6 +50,6 @@
         android:textSize="13sp"
         android:textColor="#94A3B8"
         android:maxLines="1"
-        android:text="" />
+        android:text="This week 1.5 of 6.5 h" />
 
 </LinearLayout>

@@ -149,6 +149,15 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
       const s = d.steps.find((x) => x.id === step.id);
       if (s) s.checkedAt = s.checkedAt === null ? new Date().toISOString() : null;
     });
+    // m4: checking the LAST remaining step flips planLine from "Leave by ...
+    // · start by ..." to plain "Leave by ..." (buildDepartureWidgetData in
+    // widgetSnapshot.ts keys that off allStepsChecked) — without this the
+    // departure widget kept showing a stale "start by" after every step was
+    // actually done. Harmless, not wasted, on every other toggle: an
+    // unchanged planLine still triggers a real SharedPreferences write and
+    // provider redraw (see WidgetBridgePlugin's own comment on why poking
+    // both providers unconditionally is simpler than diffing first).
+    void refreshWidgets();
   };
 
   // 'planned' -> 'running' without checking a step - the explicit "Start

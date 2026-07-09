@@ -1,14 +1,21 @@
 package de.bosonian.runway;
 
-// ARCHITECTURE RULE (widgets increment, Runway 0.10.0): all business math —
-// pace, remaining hours, the ready-date projection — lives in TypeScript
-// (src/lib/examProjection.ts, src/lib/widgetSnapshot.ts). This class is
-// display plumbing only. The only arithmetic it performs on numbers is:
-// (1) adding a day-count (offsetDays, computed in TS) to "today" to get a
+// ARCHITECTURE RULE (widgets increment, Runway 0.10.0; calendar-slide
+// reworked m3): all business math — pace, remaining hours, the ready-date
+// projection — lives in TypeScript (src/lib/examProjection.ts,
+// src/lib/widgetSnapshot.ts). This class is display plumbing only. The only
+// arithmetic it performs on numbers is: (1) counting how many whole calendar
+// days have passed since the snapshot was generated and sliding
+// readyDayEpochMs forward by that many days (Calendar day-add) to get a
 // display date, and (2) diffing two already-known dates in whole days
-// (displayDate vs. anchor) to pick a colour band. Both are a 1:1 mirror of
-// the same time-sliding math the app's own live screens already do — never
-// a re-derivation of pace or remaining-hours logic.
+// (displayReadyDay vs. anchor) to pick a colour band. Both are a 1:1 mirror
+// of the same midnight-to-midnight floor-diff math examProjection.ts's own
+// daysBetween does — never a re-derivation of pace or remaining-hours logic.
+// m3: this midnight-to-midnight symmetry (both this class and
+// examProjection.ts floor calendar days the same way, from the same kind of
+// local-midnight instant) is what makes the widget's displayed date agree
+// with what ExamOverview.tsx would show if opened at that same moment, by
+// construction — not by coincidence, and not by re-deriving the projection.
 
 import android.app.PendingIntent;
 import android.appwidget.AppWidgetManager;
@@ -40,6 +47,14 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
 
     private static final long DAY_MILLIS = 24L * 60 * 60 * 1000;
     private static final String FALLBACK_LINE1 = "Open Runway once to fill this widget.";
+    // m2: distinct from FALLBACK_LINE1 — a snapshot that DOES exist but
+    // whose "pruefung" key is null means Deepak has opened the app at least
+    // once (so it's had the chance to write a snapshot) but hasn't set up
+    // an exam yet. Telling him to "open Runway once" in that case is simply
+    // false and, worse, unactionable: opening the app again doesn't create
+    // an exam by itself. See renderSnapshot's own comment on where this is
+    // used versus renderFallback.
+    private static final String NO_EXAM_LINE1 = "No exam set up.";
 
     // Same calm/tight/late palette as the app's own STATE_TEXT
     // (src/screens/ExamOverview.tsx) — kept as literal ARGB ints here
@@ -71,7 +86,18 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
                 // Malformed snapshot should never happen (it's always
                 // written by JSON.stringify on the JS side) but a widget
                 // must never crash the home screen over a display bug —
-                // same fallback as "no snapshot written yet".
+                // same fallback as "no snapshot written yet". This also
+                // covers m3's schema upgrade window: a snapshot written by
+                // an older APK build (offsetDays, no readyDayEpochMs/
+                // generatedDayEpochMs) makes pruefung.getLong(...) below
+                // throw JSONException rather than silently misreading a
+                // wrong field, landing here too. That's an acceptable
+                // fallback, not a real gap — the very next app open
+                // (widgets.ts's refreshWidgets, called from several
+                // screens on load) overwrites SharedPreferences with a
+                // fresh, current-schema snapshot and heals it, and this
+                // window only exists between installing an updated APK and
+                // next opening the app, never during ordinary use.
                 renderFallback(views);
             }
         }
@@ -96,10 +122,30 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
         views.setTextViewText(R.id.widget_line3, "");
     }
 
+    // m2: same shape as renderFallback (one-line message, calm colour,
+    // lines 2-3 blank) but a different sentence — see NO_EXAM_LINE1's own
+    // comment for why "no snapshot has ever been written" and "a snapshot
+    // exists but there's no exam in it" must not share copy. renderFallback
+    // itself stays reserved exclusively for the "no snapshot ever" case
+    // (snapshotJson == null, or a JSONException while parsing one) — see
+    // updateOne above.
+    private void renderNoExam(RemoteViews views) {
+        views.setTextViewText(R.id.widget_line1, NO_EXAM_LINE1);
+        views.setTextColor(R.id.widget_line1, COLOR_CALM);
+        views.setTextViewText(R.id.widget_line2, "");
+        views.setTextViewText(R.id.widget_line3, "");
+    }
+
     private void renderSnapshot(RemoteViews views, String snapshotJson) throws JSONException {
         JSONObject root = new JSONObject(snapshotJson);
         if (root.isNull("pruefung")) {
-            renderFallback(views);
+            // A snapshot exists (the app has run at least once) but no exam
+            // has been set up yet — the tap target below is still
+            // runway://exam either way, which is correct here too: Home's
+            // own routing already lands on exam setup when db.exams has no
+            // row, so tapping this state takes Deepak straight to creating
+            // one rather than to a dead end.
+            renderNoExam(views);
             return;
         }
         JSONObject pruefung = root.getJSONObject("pruefung");
@@ -116,22 +162,42 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
             // Mirrors examProjection.ts's readyDate === null case exactly
             // (zero measured pace, or an overflowed projection) — see
             // PruefungWidgetData.neverReady's doc comment in
-            // widgetSnapshot.ts. offsetDays is meaningless here and is not
-            // read.
+            // widgetSnapshot.ts. readyDayEpochMs/generatedDayEpochMs are
+            // meaningless here and are not read.
             views.setTextViewText(R.id.widget_line1, "Ready: never at current pace");
             views.setTextColor(R.id.widget_line1, COLOR_LATE);
         } else {
-            int offsetDays = pruefung.getInt("offsetDays");
+            // m3: readyDayEpochMs/generatedDayEpochMs are both already local
+            // midnight of their respective calendar days (see
+            // widgetSnapshot.ts's localMidnight — the JS side builds them
+            // that way, not this class). Getting "today" the same way here
+            // (midnight, not the current instant) is what keeps the slide
+            // count a whole-day count rather than picking up a spurious
+            // extra/missing day depending on what time of day the widget
+            // happens to redraw.
+            long readyDayEpochMs = pruefung.getLong("readyDayEpochMs");
+            long generatedDayEpochMs = pruefung.getLong("generatedDayEpochMs");
             long anchorEpochMs = pruefung.getLong("anchorEpochMs");
 
-            // Display plumbing only (see the file-top comment): today +
-            // offsetDays, via Calendar so it respects the device's local
-            // timezone/DST the same way the rest of this app's date math
-            // does.
-            Calendar displayDate = Calendar.getInstance();
-            displayDate.add(Calendar.DAY_OF_YEAR, offsetDays);
+            Calendar todayMidnight = Calendar.getInstance();
+            todayMidnight.set(Calendar.HOUR_OF_DAY, 0);
+            todayMidnight.set(Calendar.MINUTE, 0);
+            todayMidnight.set(Calendar.SECOND, 0);
+            todayMidnight.set(Calendar.MILLISECOND, 0);
 
-            long slackDays = daysBetween(displayDate.getTimeInMillis(), anchorEpochMs);
+            // How many whole calendar days have passed since this snapshot
+            // was generated — clamped at 0 (never negative) so a snapshot
+            // that's somehow "from the future" (a device clock adjustment
+            // between generation and redraw) never slides the ready date
+            // backwards; it just renders as of the day it was generated,
+            // same as a same-day snapshot would.
+            long slideDays = Math.max(0, daysBetween(generatedDayEpochMs, todayMidnight.getTimeInMillis()));
+
+            Calendar displayReadyDay = Calendar.getInstance();
+            displayReadyDay.setTimeInMillis(readyDayEpochMs);
+            displayReadyDay.add(Calendar.DAY_OF_YEAR, (int) slideDays);
+
+            long slackDays = daysBetween(displayReadyDay.getTimeInMillis(), anchorEpochMs);
             int color;
             if (slackDays < 0) {
                 color = COLOR_LATE;
@@ -141,7 +207,7 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
                 color = COLOR_CALM;
             }
 
-            views.setTextViewText(R.id.widget_line1, "Ready by " + formatDisplayDate(displayDate));
+            views.setTextViewText(R.id.widget_line1, "Ready by " + formatDisplayDate(displayReadyDay));
             views.setTextColor(R.id.widget_line1, color);
         }
 

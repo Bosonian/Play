@@ -10,4 +10,15 @@
     <string name="shortcut_new_departure_long">Start a new departure</string>
     <string name="shortcut_pruefung_short">Prüfung</string>
     <string name="shortcut_pruefung_long">Open Prüfung</string>
+
+    <!-- m1: per-widget picker labels/descriptions. Both widgets used
+         android:label="@string/app_name" (via the <application> default) up
+         to 0.11.0, so the Android widget picker showed two blank-looking
+         tiles both named "Runway" with no way to tell them apart before
+         placing one — these give each its own name and, on API 31+, its own
+         one-line description under that name in the picker. -->
+    <string name="widget_pruefung_label">Prüfung</string>
+    <string name="widget_pruefung_description">Projected exam ready date.</string>
+    <string name="widget_departure_label">Next departure</string>
+    <string name="widget_departure_description">Leave-by times for your next departure.</string>
 </resources>
