@@ -2,6 +2,8 @@
 
 *A time-perception app for getting out the door. Working title: **Runway** (the getting-ready window is a runway; the plane leaves whether you're strapped in or not). Rename freely.*
 
+*Revision 2: v1 ships as an installable Android APK (Capacitor shell around the web app) instead of a plain PWA, per your request. This upgrades notifications from "reliable only while the app is open" to real alarm-clock-grade scheduled alarms. Sections 5.5, 6 and 7 changed; the research and core mechanic are untouched.*
+
 **Status: plan for review. Nothing is built yet.** Per your safety preferences this document is the "explain the plan in plain English before executing" step, and it ends with the questions that need your explicit approval before any code is written.
 
 ---
@@ -93,14 +95,16 @@ Time optimism doesn't fix itself; the app should learn your real numbers:
 - After 3+ runs of a template: "You plan 10 min to dress; your median is 16. Update the estimate?" — suggestion, never silent adjustment.
 - History view: last 10 departures, planned vs. actual, median slip. Plain numbers, no charts, no streaks, no shame mechanics. (Self-Competitor gets "on time 4 of your last 5" — a quiet score, not confetti.)
 
-### 5.5 Alerts — with an honest platform limitation
+### 5.5 Alerts — full alarm-grade, because we ship an APK
 
-Staged notifications ("start getting ready" / "wrap up" / "leave in 5" / "leave now") multiply the chance of transitioning at the right moment ([ADDA](https://add.org/adhd-time-blindness/)). On Android Chrome as a PWA:
+Staged notifications ("start getting ready" / "wrap up" / "leave in 5" / "leave now") multiply the chance of transitioning at the right moment ([ADDA](https://add.org/adhd-time-blindness/)). The original plan's biggest weakness was that a plain PWA can't reliably fire alarms while closed. Shipping as a native APK (Capacitor shell, §6) removes that weakness:
 
-- **App open (even screen-locked with wake lock): fully reliable.** Timers + Notification API + vibration work.
-- **App closed: not reliable.** Scheduled local notifications without a push server aren't dependable in PWAs. **v1 therefore does not promise closed-app alarms.** Mitigations: (a) the intended usage is Maps-style — open the app when you start getting ready, prop the phone up; (b) an "add leave-by alarm to clock" helper for the start-getting-ready moment; (c) real web push via a small server is the flagship v1.5 item — same infrastructure the PlayDHD TODO already earmarks for the Sunday Reflection nudge.
+- Alarms are scheduled natively via [`@capacitor/local-notifications`](https://capacitorjs.com/docs/apis/local-notifications) with `allowWhileIdle: true` so they fire through Doze, app closed or not.
+- The manifest declares [`USE_EXACT_ALARM`](https://developer.android.com/about/versions/14/changes/schedule-exact-alarms) — the Android 14+ permission for apps whose *core function* is alarms, which is exactly what this is. No runtime permission dance; sideloading also means no Play Store policy review of that claim.
+- "Leave now" gets its own high-importance notification channel: sound + strong vibration, distinct from the gentler staged ones. You choose the sounds once in Android's channel settings.
+- Two honest caveats: (1) Android lets users disable exact alarms per-app in system settings; if that happens, scheduled exact alarms are silently dropped — the app checks `checkExactNotificationSetting()` on launch and tells you rather than failing quietly. (2) Aggressive battery optimizers (Samsung's included) can defer even exact alarms; first-run setup will include a one-time "exclude from battery optimization" prompt.
 
-This is the plan's biggest limitation and I'd rather name it now than have you discover it standing in the shower. The app's value proposition works *within* the getting-ready window; getting you *into* that window still leans on a clock alarm in v1.
+So in v1: setting up tomorrow's departure tonight and getting woken into the getting-ready window by the app itself — works, phone in pocket, app closed.
 
 ### 5.6 Explicitly not in v1
 
@@ -112,26 +116,39 @@ This is the plan's biggest limitation and I'd rather name it now than have you d
 
 ## 6. Tech and repo
 
-**Stack (needs your explicit sign-off): the exact stack already in this repo** — React 18 + TypeScript + Vite + Tailwind + Dexie (IndexedDB) + `vite-plugin-pwa`, deployed as an installable PWA on GitHub Pages. Rationale: it's proven on your phone with head-in, local-only storage suits the no-account design, and no new tooling to learn or babysit. The one genuinely new API surface is Wake Lock + Notifications, both plain web APIs.
+**Stack (needs your explicit sign-off): the web stack already proven in this repo, wrapped in a native Android shell.**
 
-**Repo layout — needs your call.** This repo (`Play`) currently *is* the head-in app (one Vite build at `/Play/`). Options:
+- **App code:** React 18 + TypeScript + Vite + Tailwind + Dexie (IndexedDB) — identical to head-in. All the logic, screens and storage are ordinary web code.
+- **Android shell: [Capacitor](https://capacitorjs.com/).** Capacitor wraps the built web app in a real Android project (a WebView plus native plugin bridges) and produces a normal APK. Chosen over the alternatives deliberately: full-native Kotlin would abandon the stack you already have working; React Native/Flutter are new stacks entirely; a plain PWA can't do closed-app alarms; a TWA wrapper is still bound by web-notification limits. Capacitor keeps ~95% of the code as plain web and buys native power exactly where needed:
+  - `@capacitor/local-notifications` — exact, Doze-proof scheduled alarms (§5.5)
+  - `@capacitor/haptics` — vibration patterns
+  - `@capacitor-community/keep-awake` — screen-on during the Runway view
+  - Maps handoff via the same `google.com/maps/dir/` URL, which Android routes to the Maps app
+- **Bonus, free:** the same codebase still runs in any browser (`npm run dev`, or a Pages deploy later for Mac use). Develop and test in the browser; ship the APK.
 
-1. **Separate repo (`bosonian/runway` or similar), same stack** — cleanest: own deploy, own PWA manifest, own icon on your home screen, no risk to head-in. Cost: a few minutes of repo/Pages setup. **Recommended.**
-2. **Second Vite app in this repo** (e.g. `apps/runway/` built to `/Play/runway/`) — one repo to rule them all, but the deploy workflow and PWA scoping (two service workers under one origin path) get fiddly, and a Runway mistake can break head-in's deploy.
+**How you get the APK — no Android Studio on your machine.** A GitHub Actions workflow builds the APK on every push to the release branch (Ubuntu runners ship the Android SDK) and attaches it to a GitHub Release. On your S25 Ultra: open the release page, download, install (Android will ask once to allow installs from Chrome). Updates = download the new APK over the old one; Dexie data survives updates because it lives in the app's WebView storage, though it does **not** survive uninstall — worth knowing before ever "reinstalling to fix something."
 
-Option 1 is better engineering; it just needs you to create the repo and grant access. Option 2 works today with no new access.
+**APK signing — one decision needed.** Android requires every APK to be signed, and *updates must carry the same signature* or the phone refuses to install over the old version.
+1. **Keystore in a GitHub Actions secret (recommended):** I generate the keystore, you paste one base64 string into the repo's secrets (two-minute task, I'll give exact steps). Standard, safe.
+2. **Keystore committed to the repo:** zero setup, but this repo is public — anyone could sign an APK that your phone would accept as an "update" to Runway. Real-world risk for a personal sideloaded app is small (they'd still need your phone), but it's a corner I'd rather not cut silently.
 
-## 7. Build plan — five focused sessions
+**Repo layout — needs your call.** This repo (`Play`) currently *is* the head-in app. Options:
 
-Each ≈ one 60–90 min window, each ends with something visibly working. Classification per your scale: sessions 1–5 together are a **Moderate** change (new app, no existing code touched under option 1) — hence this approval gate.
+1. **Separate repo (`bosonian/runway` or similar) — recommended**, now even more clearly: a Capacitor project carries an entire `android/` Gradle tree plus its own CI workflow, which would sit heavily inside head-in's repo. Needs you to create the repo and add it to a session.
+2. **Sub-app in this repo** (`apps/runway/` with its own package.json and workflow) — works today with no new access; main risks are workflow clutter and accidentally entangling head-in's deploy.
 
-1. **Skeleton + data model.** App shell, Dexie schema (departures, templates, steps, run logs), departure setup screen with template pick. *Checkpoint: create a departure on your phone.*
+## 7. Build plan — six focused sessions
+
+Each ≈ one 60–90 min window, each ends with something visibly working. Classification per your scale: the whole build is a **Moderate** change (new app, no existing code touched under repo option 1) — hence this approval gate.
+
+1. **Skeleton + data model.** App shell, Dexie schema (departures, templates, steps, run logs), departure setup screen with template pick. Browser-only this session. *Checkpoint: create a departure in the browser.*
 2. **Runway screen.** The projection equation, live updates, step check-off, slip rendering, calm/warning states. *Checkpoint: the number visibly slips when you ignore it — the Maps effect, reproduced.*
-3. **Leave-now + handoff.** Leave state, Maps deep link, wake lock, "I'm out the door" logging, in-app staged alerts with vibration. *Checkpoint: full dry run against a fake appointment.*
-4. **Calibration.** Per-step actuals, post-run summary, estimate-update suggestions, 10-departure history. *Checkpoint: app proposes a corrected estimate after three runs.*
-5. **PWA + deploy.** Manifest, icons, install flow, Pages workflow, real-appointment field test. *Checkpoint: installed icon on the S25 Ultra, used for one real appointment.*
+3. **APK pipeline.** Capacitor scaffold (`android/` project), signing setup, GitHub Actions workflow building a release APK. *Checkpoint: you download an APK from GitHub and the app from sessions 1–2 runs installed on the S25 Ultra.* Deliberately early — installing on the real phone needs to work before behavior gets built on top of it.
+4. **Alarms + leave-now.** Native staged alarms (exact, Doze-proof), notification channels, battery-optimization prompt, leave state, Maps handoff, keep-awake, "I'm out the door" logging. *Checkpoint: phone in pocket, app closed, alarms fire on time; full dry run against a fake appointment.*
+5. **Calibration.** Per-step actuals, post-run summary, estimate-update suggestions, 10-departure history. *Checkpoint: app proposes a corrected estimate after three runs.*
+6. **Polish + field test.** Icon, splash, first-run setup flow, rough edges from the dry runs, then a real appointment. *Checkpoint: used for one real departure, and you left on time — or the log shows exactly where it broke down.*
 
-Rollback story is trivial under repo option 1 (delete the repo) and stays trivial under option 2 (revert the branch; head-in untouched on `main`).
+Rollback story is trivial under repo option 1 (delete the repo, uninstall the APK) and stays trivial under option 2 (revert the branch; head-in untouched on `main`).
 
 ## 8. v2 direction, noted and parked
 
@@ -139,10 +156,11 @@ The deadline-procrastination half of your original problem could reuse the same 
 
 ## 9. Questions needing your answer before code
 
-1. **Stack:** the existing React/Vite/Dexie/Tailwind PWA stack — approved?
+1. **Stack:** React/Vite/Dexie/Tailwind wrapped in Capacitor, APK built by GitHub Actions — approved?
 2. **Repo:** separate repo (recommended) or sub-app inside `Play`?
-3. **Name:** Runway — keep, or rename?
-4. **v1 scope as drawn** (departures only, manual travel minutes, no closed-app alarms) — approved, or is any cut too deep?
+3. **Signing:** keystore as a GitHub secret (recommended, one two-minute task for you) or committed to the repo (zero setup, weaker)?
+4. **Name:** Runway — keep, or rename?
+5. **v1 scope as drawn** (departures only, manual travel minutes) — approved, or is any cut too deep?
 
 ---
 
