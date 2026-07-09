@@ -10,15 +10,16 @@ import { computeProjection } from '../lib/projection';
 import type { Projection } from '../lib/projection';
 import { currentStepElapsed } from '../lib/currentStepElapsed';
 import { useNow } from '../hooks/useNow';
-import { formatAppointmentLine, formatSlackLine, formatTime } from '../lib/format';
+import { formatAppointmentLine, formatSlackLine, formatTime, formatTimeInput } from '../lib/format';
 import { allowSleep, keepAwake } from '../native/keepAwake';
 import { hapticImpact } from '../native/haptics';
 import { cancelDepartureAlarms, scheduleDepartureAlarms } from '../native/notifications';
 import { readLiveTravelConfig } from '../lib/liveTravelSettings';
 import { useLiveTravel } from '../hooks/useLiveTravel';
 import { refreshWidgets } from '../native/widgets';
-import { compressPlan } from '../lib/replan';
+import { compressPlan, suggestNewTarget } from '../lib/replan';
 import type { CompressResult } from '../lib/replan';
+import { TextField } from '../ui/TextField';
 
 /** Same confirm copy as Home's "Remove" action on a planned departure (M1) —
  * abandoning from either screen is the same operation with the same
@@ -30,6 +31,26 @@ const ABANDON_CONFIRM = 'Remove this departure? Its alarms are cancelled.';
  * block and the post-departure confirmation). */
 function mapsUrl(destination: string): string {
   return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`;
+}
+
+/**
+ * Combines today's date with an `<input type="time">` value ("HH:mm") into
+ * the NEXT occurrence of that time from `now` — if today's instance has
+ * already gone by, it rolls to tomorrow instead of landing in the past.
+ * This is what makes "pick 00:30 while it's 23:50" mean "in 40 minutes",
+ * not "in almost 24 hours" — the natural reading of a clock-time picker
+ * that doesn't also ask for a date. Returns an Invalid Date (getTime() is
+ * NaN) for anything that isn't a well-formed "HH:mm" string, which the
+ * caller (Runway.tsx's re-anchor panel) treats the same as "nothing valid
+ * chosen yet" rather than crashing on it.
+ */
+function nextOccurrenceOf(now: Date, hhmm: string): Date {
+  const match = /^(\d{2}):(\d{2})$/.exec(hhmm);
+  if (!match) return new Date(NaN);
+  const candidate = new Date(now);
+  candidate.setHours(Number(match[1]), Number(match[2]), 0, 0);
+  if (candidate.getTime() <= now.getTime()) candidate.setDate(candidate.getDate() + 1);
+  return candidate;
 }
 
 interface RunwayProps {
@@ -88,6 +109,25 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   // right, right now" decision, not something that should reopen stale on a
   // later visit.
   const [replanOpen, setReplanOpen] = useState(false);
+
+  // Re-anchor panel's time input (leaveBy-has-passed spec). `null` means
+  // "no user edit yet - keep showing the live suggested default", which is
+  // what lets the prefilled value stay a genuine live suggestion (it tracks
+  // `now` and re-rounds every 5 minutes) right up until the user actually
+  // types or picks something themselves - the same "state starts as an
+  // override, not a copy of the default" shape a plain useState(defaultVal)
+  // would NOT give: with a copy, the field would freeze at whatever the
+  // suggestion happened to be on first render instead of staying honest as
+  // time passes. Reset on close (below) so reopening the panel later starts
+  // from a fresh suggestion rather than an unrelated stale edit.
+  const [reanchorValue, setReanchorValue] = useState<string | null>(null);
+  const [reanchorTouched, setReanchorTouched] = useState(false);
+  useEffect(() => {
+    if (!replanOpen) {
+      setReanchorValue(null);
+      setReanchorTouched(false);
+    }
+  }, [replanOpen]);
 
   // Keep the screen on for exactly as long as a run is live. Keyed on
   // status rather than just mount/unmount because this component stays
@@ -256,12 +296,61 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     setReplanOpen(false);
   };
 
+  // Re-anchor (leaveBy-has-passed spec): writes a NEW target time, replacing
+  // compression's "smaller version of the old plan" with "I'm still going -
+  // new target". `chosen` is computed at render time in the JSX (same
+  // call-time pattern as applyReplan(replanResult) above), already resolved
+  // through nextOccurrenceOf's next-occurrence rolling, so there's nothing
+  // left to validate here beyond what the button's own disabled state
+  // already gated.
+  const applyReanchor = async (chosen: Date) => {
+    void hapticImpact('light');
+    const chosenIso = chosen.toISOString();
+    // Backfill for a legacy (pre-originalAppointmentAt) row: null there
+    // means this row has never been re-anchored before, so its CURRENT
+    // appointmentAt — captured here, the instant before we overwrite it —
+    // IS still the true original commitment. See db/types.ts's own comment
+    // on originalAppointmentAt for why this one-time backfill matters: skip
+    // it and a legacy row's slip math would silently start measuring
+    // against whichever appointmentAt happened to be live at re-anchor
+    // time, defeating the field's whole purpose for exactly the rows it
+    // exists to help.
+    const originalToKeep = departure.originalAppointmentAt ?? departure.appointmentAt;
+    await db.departures.where('id').equals(departure.id).modify((d) => {
+      d.appointmentAt = chosenIso;
+      // == null, not === null: rows written before this field existed don't
+      // carry the property at all (undefined, not null) — a strict null
+      // check would skip the backfill for exactly the legacy rows it
+      // exists to protect.
+      if (d.originalAppointmentAt == null) d.originalAppointmentAt = originalToKeep;
+    });
+    // Same "wrapUp/startBy shift, reschedule" reasoning as applyReplan above
+    // — the appointment itself just moved, so all four staged alarm times
+    // move with it.
+    await scheduleDepartureAlarms({ ...departure, appointmentAt: chosenIso, originalAppointmentAt: originalToKeep });
+    void refreshWidgets();
+    setReplanOpen(false);
+  };
+
   if (justLeft) {
     // leaveBy (appointment minus travel) doesn't depend on `now` - see
     // projection.ts - so the argument passed here is arbitrary. appointmentAt
     // is used rather than the live clock so this stays a fixed fact about
     // *this* departure rather than looking like it tracks the wall clock.
-    const leaveBy = computeProjection(new Date(departure.appointmentAt), departure).leaveBy;
+    //
+    // originalAppointmentAt ?? appointmentAt (not appointmentAt alone): the
+    // slip this summary reports must be measured against the ORIGINAL
+    // commitment, per db/types.ts's own comment on originalAppointmentAt -
+    // otherwise a departure re-anchored to a later target minutes ago would
+    // report "on the door on time" against the RESCUED target, silently
+    // laundering the lateness it was actually re-anchored to recover from.
+    // travelMinutes is still `departure`'s CURRENT value here (it may have
+    // been live-updated since the original commitment) - an accepted
+    // imprecision, since re-anchoring changes the appointment, not travel
+    // time, and there is no separate "travel time as of the original
+    // commitment" to fall back on.
+    const slipAnchor = departure.originalAppointmentAt ?? departure.appointmentAt;
+    const leaveBy = computeProjection(new Date(slipAnchor), { ...departure, appointmentAt: slipAnchor }).leaveBy;
     const leftAtDate = new Date(departure.leftAt ?? new Date().toISOString());
     const slipMinutes = Math.round((leftAtDate.getTime() - leaveBy.getTime()) / 60_000);
 
@@ -342,6 +431,33 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   const replanResult: CompressResult | null = replanOpen
     ? compressPlan({ availableMinutes: replanAvailableMinutes, steps: departure.steps, bufferMinutes: departure.bufferMinutes })
     : null;
+
+  // Re-anchor spec: once leaveBy itself is behind us, there is no time left
+  // to travel at all - compression's floor check would refuse outright
+  // (replanResult above would come back fits:false), and rightly so. This
+  // case takes over the whole panel instead of showing that refusal, per
+  // the spec's priority order.
+  const leaveByPassed = projection.leaveBy.getTime() <= now.getTime();
+  // suggestNewTarget's "remaining plan" input is exactly replanNeededMinutes
+  // above (unchecked steps + buffer) - the same number compressPlan itself
+  // measures against, just handed to a different function once compression
+  // has nothing left to offer.
+  const suggestedTarget = suggestNewTarget(now, replanNeededMinutes, departure.travelMinutes);
+  // reanchorValue stays `null` until the user actually edits the field
+  // (see its own useState comment above) - the displayed value falls back
+  // to the live suggestion until then.
+  const reanchorInputValue = reanchorValue ?? formatTimeInput(suggestedTarget);
+  const reanchorChosen = nextOccurrenceOf(now, reanchorInputValue);
+  // Guards two things at once: an unparseable/empty input (NaN) and, as a
+  // defensive backstop, a chosen instant that somehow isn't in the future.
+  // In practice the second half of this OR is unreachable for any
+  // well-formed "HH:mm" - nextOccurrenceOf's next-occurrence rolling
+  // guarantees the result is always strictly after `now` - so this only
+  // ever actually fires on empty/invalid input, the same "defensive, not a
+  // real path" shape replan.ts's own overshoot-correction loop documents
+  // for its own unreachable branch.
+  const reanchorInvalid = Number.isNaN(reanchorChosen.getTime()) || reanchorChosen.getTime() <= now.getTime();
+
   // F1 spec: "Edit link only if the edit path applies" - reachable here
   // means status is 'planned' or 'running' (the TERMINAL_STATUSES guard
   // above already returned for anything else), and F3 makes Edit available
@@ -380,12 +496,52 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
         </Button>
       )}
 
-      {/* F1: the hint area. Three mutually exclusive states: the confirm
-          block (once tapped open), the late-only prompt (projection.state
-          === 'late', unopened), or nothing at all (calm/tight, unopened) -
-          never a modal, never applied without the explicit "Apply" tap
-          below. */}
-      {replanOpen && replanResult ? (
+      {/* F1 + re-anchor: the hint area. Four mutually exclusive states in
+          priority order: the re-anchor panel (leaveByPassed, unopened
+          confirm blocks below it never even get evaluated once this is
+          true), the confirm block (once tapped open, leaveBy still ahead),
+          the late-only prompt (projection.state === 'late', unopened), or
+          nothing at all (calm/tight, unopened) - never a modal, never
+          applied without an explicit button tap. */}
+      {replanOpen && leaveByPassed ? (
+        // leaveBy has already passed - there is no time left to travel at
+        // all, so compression (which only ever shrinks a plan that still
+        // fits SOME window) has nothing honest to offer; see replan.ts's
+        // suggestNewTarget doc comment. Re-anchoring to a new target is the
+        // recovery path here, not a smaller version of the old one.
+        <div className="flex flex-col gap-3 rounded-lg border border-red-800/60 bg-red-950/20 p-4">
+          <p className="text-sm text-red-200">
+            {formatTime(new Date(departure.appointmentAt))} has passed. Set a new target to replan against.
+          </p>
+          <TextField
+            label="New target time"
+            type="time"
+            value={reanchorInputValue}
+            onChange={(e) => {
+              setReanchorValue(e.target.value);
+              setReanchorTouched(true);
+            }}
+          />
+          <p className="text-sm tabular-nums text-slate-400">
+            Earliest honest arrival: {formatTime(suggestedTarget)}.
+          </p>
+          {reanchorTouched && reanchorInvalid && (
+            <p className="text-sm text-red-300">Target must be in the future.</p>
+          )}
+          <div className="mt-1 flex gap-2">
+            <Button
+              onClick={() => void applyReanchor(reanchorChosen)}
+              disabled={reanchorInvalid}
+              className="flex-1"
+            >
+              Re-anchor to {formatTime(reanchorChosen)}
+            </Button>
+            <Button variant="secondary" onClick={() => setReplanOpen(false)} className="flex-1">
+              Keep the old plan
+            </Button>
+          </div>
+        </div>
+      ) : replanOpen && replanResult ? (
         replanResult.fits && replanNeededMinutes <= replanAvailableMinutes ? (
           // compressPlan never expands a plan, so when the remaining plan
           // already fits the time left it returns it unchanged — offering an
@@ -445,7 +601,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
             onClick={() => setReplanOpen(true)}
             className="min-h-11 rounded-md text-left text-sm font-medium text-amber-400 hover:text-amber-300"
           >
-            The plan no longer fits. Replan from now?
+            {leaveByPassed ? 'The appointment has passed. Set a new target?' : 'The plan no longer fits. Replan from now?'}
           </button>
         )
       )}
@@ -551,10 +707,18 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
           confirmation block the late-only hint above does. Two different
           copy strings, one action: this one reads as an offer ("Replan from
           now."), the hint above reads as a prompt in response to a problem
-          ("The plan no longer fits. Replan from now?"). */}
+          ("The plan no longer fits. Replan from now?").
+          Toggles (prev => !prev), not a hardcoded `true` — field report: a
+          fixed `true` left this button inert once the panel was already
+          open (tapping it re-set the already-true state, so nothing
+          visibly changed and there was no way to close the panel from
+          here). The late-only hint above stays open-only on purpose: it
+          only ever renders while the panel is already closed (it's in the
+          "else" branch of the same conditional the panel occupies), so
+          there is no state where tapping it would need to close anything. */}
       <div className="flex items-center justify-center gap-6">
         <button
-          onClick={() => setReplanOpen(true)}
+          onClick={() => setReplanOpen((prev) => !prev)}
           className="min-h-11 text-sm font-medium text-slate-600 hover:text-slate-300"
         >
           Replan from now.

@@ -5,6 +5,49 @@ via the `runway-latest.apk` asset at
 https://github.com/Bosonian/Play/releases/tag/runway-latest — it carries
 whichever version built last.
 
+## 0.13.0
+- Fix from a real-device field report: appointment 17:00, opened Runway at
+  18:14 (75 min past). "Replan from now" correctly showed the refusal ("No
+  plan reaches 17:00 on time…"), but two things were broken on top of that:
+  - The quiet "Replan from now." action at the bottom of the screen was
+    inert once the panel was already open — it set `replanOpen` to a
+    hardcoded `true`, so tapping it again while open did nothing, and there
+    was no way to close the panel from that button. Now toggles.
+  - Once `leaveBy` (appointment minus travel) has actually passed, there is
+    no time left to travel at all — compression has nothing honest left to
+    offer, and the refusal it showed instead was a dead end: no button on
+    that panel could get you unstuck. A new **re-anchor** panel now
+    supersedes the refusal in exactly that case: "{appointment} has passed.
+    Set a new target to replan against," a time input prefilled with a
+    live-updating suggested target (now + remaining plan + travel, rounded
+    up to the next 5 minutes — see `suggestNewTarget` in `src/lib/
+    replan.ts`), and "Re-anchor to {time}" writes a fresh `appointmentAt`
+    and reschedules alarms against it.
+  - **`originalAppointmentAt`** (new field, `src/db/types.ts`): the slip/
+    lateness record (History, and Runway's own "Out the door N min late"
+    summary) now always measures against the ORIGINAL commitment, not
+    whatever `appointmentAt` happens to be right now. A deliberate Edit
+    (DepartureSetup, on a 'planned' or 'running' departure) updates both
+    fields together — an edit means reality moved, so the "original"
+    commitment moves with it. The re-anchor action above deliberately does
+    NOT touch this field — re-anchoring rescues a departure without
+    rewriting how late it actually ran, so a re-anchored departure that
+    arrives against its new target still shows up in History measured
+    against the one it actually missed. `null` on pre-existing rows;
+    Dexie needs no schema-version bump for a non-indexed field, and the
+    first re-anchor of such a row backfills it from that row's current
+    `appointmentAt` at that moment (see the field's own doc comment for
+    why that one-time backfill is correct).
+  - Known imprecision, stated plainly rather than hidden: the re-anchor
+    copy always reads "{appointment} has passed", but the panel's trigger
+    condition is `leaveBy <= now`, not `appointmentAt <= now` — with a
+    long travel time, it's possible for `leaveBy` to have passed while the
+    appointment itself is still technically ahead. The copy would be
+    inaccurate in that narrow case. Not fixed here because the panel's
+    entire point in that moment is the same either way (no plan reaches the
+    appointment on time; a new target is needed), but worth a second pass
+    if it turns out to matter in practice.
+
 ## 0.12.1
 - Fix from first real use: "Replan from now" on a plan that already fits
   said nothing and offered a no-op Apply. It now states the true thing:

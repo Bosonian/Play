@@ -40,6 +40,7 @@ function makeDeparture(overrides: Partial<Departure> = {}): Departure {
     arrivalResult: null,
     arrivalLateMinutes: null,
     createdAt: '2026-07-09T07:00:00.000Z',
+    originalAppointmentAt: '2026-07-09T14:30:00.000Z',
     ...overrides,
   };
 }

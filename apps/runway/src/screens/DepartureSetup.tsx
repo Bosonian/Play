@@ -191,10 +191,20 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
     if (!canSave || !appointmentAtDate) return;
 
     const nowIso = new Date().toISOString();
+    const appointmentIso = appointmentAtDate.toISOString();
     const sharedFields = {
       name: name.trim() || destination.trim() || 'Departure',
       destination: destination.trim(),
-      appointmentAt: appointmentAtDate.toISOString(),
+      appointmentAt: appointmentIso,
+      // originalAppointmentAt tracks appointmentAt on EVERY save here, both
+      // create and edit — see db/types.ts's own comment on the field. For a
+      // brand-new departure the two start identical (there's nothing to
+      // diverge from yet). For an edit, this IS the "reality moved" writer
+      // the field's semantics rule describes: a deliberate edit updates the
+      // record's original commitment along with the appointment itself,
+      // unlike Runway.tsx's re-anchor action, which deliberately leaves
+      // this field alone.
+      originalAppointmentAt: appointmentIso,
       travelMinutes,
       bufferMinutes,
       steps,

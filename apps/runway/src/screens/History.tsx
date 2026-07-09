@@ -17,9 +17,20 @@ const HISTORY_LIMIT = 10;
  * - see projection.ts - so any Date works. appointmentAt is used rather
  * than the live clock so a departure's history entry is a fixed fact,
  * not something that would read differently depending on when this
- * screen happens to be opened. */
+ * screen happens to be opened.
+ *
+ * originalAppointmentAt ?? appointmentAt, not appointmentAt alone: History
+ * is exactly the slip/lateness record db/types.ts's originalAppointmentAt
+ * comment describes - it must measure against the ORIGINAL commitment, not
+ * whatever appointmentAt a re-anchor may have since moved it to, or a
+ * departure rescued minutes before it would have blown its real target
+ * could read as "on time" here. travelMinutes is still the departure's
+ * CURRENT value (it may have been live-updated since the original
+ * commitment) - an accepted imprecision, since re-anchoring changes the
+ * appointment, not travel time. */
 function plannedLeaveBy(departure: Departure): Date {
-  return computeProjection(new Date(departure.appointmentAt), departure).leaveBy;
+  const anchor = departure.originalAppointmentAt ?? departure.appointmentAt;
+  return computeProjection(new Date(anchor), { ...departure, appointmentAt: anchor }).leaveBy;
 }
 
 /** leftAt minus planned leaveBy, in whole minutes. Positive = left later

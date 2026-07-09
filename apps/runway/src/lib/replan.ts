@@ -146,3 +146,37 @@ export function compressPlan(args: {
 
   return { fits: true, steps: newSteps, bufferMinutes: compressedBuffer };
 }
+
+const FIVE_MINUTES_MS = 5 * 60_000;
+
+/** Rounds `date` up to the next 5-minute boundary. A date already sitting
+ * exactly on one (seconds and milliseconds both zero) is left alone —
+ * `Math.ceil` of an exact multiple is that same multiple, so this never
+ * pushes an already-clean time (e.g. 18:35:00.000) forward to 18:40. */
+function roundUpToFiveMinutes(date: Date): Date {
+  return new Date(Math.ceil(date.getTime() / FIVE_MINUTES_MS) * FIVE_MINUTES_MS);
+}
+
+/**
+ * "Re-anchor" (this increment's spec): once `leaveBy` has already passed,
+ * compression has nothing left to offer — compressPlan's own floor check
+ * above refuses outright, and rightly so, because there is no version of
+ * the OLD target that's still reachable. The honest move at that point
+ * isn't a smaller old plan, it's a new target: "I'm still going — new
+ * target 18:30" instead of a dead-end refusal.
+ *
+ * This proposes that new target: `now`, plus whatever prep genuinely still
+ * remains (the caller computes `remainingPlanMinutes` as unchecked steps +
+ * buffer — same inputs compressPlan's `availableMinutes` is measured
+ * against), plus travel. Rounded UP to the next 5-minute boundary because a
+ * target of 18:32 reads like noise (why not 18:31, why not 18:33?) while
+ * 18:35 reads like an actual plan someone chose on purpose.
+ *
+ * Pure and caller-fed, same shape as compressPlan above and projection.ts:
+ * no Dexie access, no internal `Date.now()`, so "what would this suggest at
+ * 18:14" is trivial to pin down in a test without mocking the clock.
+ */
+export function suggestNewTarget(now: Date, remainingPlanMinutes: number, travelMinutes: number): Date {
+  const raw = new Date(now.getTime() + (remainingPlanMinutes + travelMinutes) * 60_000);
+  return roundUpToFiveMinutes(raw);
+}

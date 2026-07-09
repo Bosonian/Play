@@ -70,6 +70,43 @@ export interface Departure {
   arrivalResult: 'early' | 'onTime' | 'late' | null;
   arrivalLateMinutes: number | null;
   createdAt: string;
+  /**
+   * The appointment time as it stood when this departure's commitment was
+   * first made. CREATED equal to `appointmentAt` (DepartureSetup's add
+   * path) — the two start out identical and only diverge once one of the
+   * things below happens.
+   *
+   * Semantics rule (re-anchor spec): the slip/lateness record (History.tsx,
+   * Runway.tsx's justLeft summary) always measures against this field, not
+   * against whatever `appointmentAt` happens to be right now. Two different
+   * writers touch `appointmentAt`, and only one of them is allowed to move
+   * this field too:
+   *   - A deliberate Edit (DepartureSetup's save on a 'planned' or
+   *     'running' departure) UPDATES `originalAppointmentAt` to match the
+   *     new `appointmentAt` — an edit means reality moved (the Termin got
+   *     pushed back), so the "original" commitment moves with it.
+   *   - The re-anchor quick action (Runway.tsx's leaveBy-has-passed panel)
+   *     changes `appointmentAt` WITHOUT touching this field — re-anchor
+   *     rescues a departure that's already blown its original target, and
+   *     the whole point is that the record stays true: a re-anchored
+   *     departure that arrives "on time" against its NEW target should
+   *     still show up in History as late against the one it actually
+   *     missed, not quietly launder itself into an on-time run.
+   *
+   * `null` on rows written before this field existed — Dexie needs no
+   * schema-version bump to add a field that isn't indexed (see db.ts's
+   * `version()` comments for which fields DO need one). Every slip-reading
+   * call site reads `originalAppointmentAt ?? appointmentAt`, which is
+   * exactly correct for a legacy row that's never been re-anchored (the two
+   * are still the same value there by definition). The FIRST re-anchor of a
+   * legacy row backfills this field with whatever `appointmentAt` was the
+   * moment before that re-anchor — see Runway.tsx's `applyReanchor` for why
+   * that backfill is the correct one-time fix rather than leaving the field
+   * null forever (a null here would silently fall back to the RESCUED
+   * appointmentAt for a legacy row that gets re-anchored twice, defeating
+   * the whole point of this field for exactly the rows it exists to help).
+   */
+  originalAppointmentAt: string | null;
 }
 
 /**

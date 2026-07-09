@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compressPlan } from './replan';
+import { compressPlan, suggestNewTarget } from './replan';
 import type { DepartureStep } from '../db/types';
 
 function step(id: string, plannedMinutes: number, checkedAt: string | null = null): DepartureStep {
@@ -150,5 +150,42 @@ describe('compressPlan', () => {
     if (!result.fits) throw new Error('expected fits');
     expect(result.steps).toEqual([checkedStep]);
     expect(result.bufferMinutes).toBe(0);
+  });
+});
+
+describe('suggestNewTarget', () => {
+  it('rounds up to the next 5-minute boundary when the raw sum lands off-grid', () => {
+    // 18:14 + 0 remaining + 5 travel = 18:19 -> rounds up to 18:20.
+    const now = new Date('2026-07-09T18:14:00.000Z');
+    const target = suggestNewTarget(now, 0, 5);
+    expect(target.toISOString()).toBe('2026-07-09T18:20:00.000Z');
+  });
+
+  it('leaves an exact 5-minute boundary untouched (does not push it forward a whole 5 min)', () => {
+    // 18:00 + 30 remaining + 5 travel = 18:35:00.000 exactly.
+    const now = new Date('2026-07-09T18:00:00.000Z');
+    const target = suggestNewTarget(now, 30, 5);
+    expect(target.toISOString()).toBe('2026-07-09T18:35:00.000Z');
+  });
+
+  it('zero remaining plan and zero travel: rounds `now` itself up to the next boundary', () => {
+    const now = new Date('2026-07-09T18:14:00.000Z');
+    const target = suggestNewTarget(now, 0, 0);
+    expect(target.toISOString()).toBe('2026-07-09T18:15:00.000Z');
+  });
+
+  it('travel minutes are included in the sum, not dropped', () => {
+    const now = new Date('2026-07-09T18:00:00.000Z');
+    const withoutTravel = suggestNewTarget(now, 10, 0); // 18:10 -> 18:10
+    const withTravel = suggestNewTarget(now, 10, 20); // 18:30 -> 18:30
+    expect(withoutTravel.toISOString()).toBe('2026-07-09T18:10:00.000Z');
+    expect(withTravel.toISOString()).toBe('2026-07-09T18:30:00.000Z');
+  });
+
+  it('sub-minute now (seconds/ms) still rounds up correctly, never rounding down', () => {
+    // 18:14:30.500 + 0 + 0 -> raw 18:14:30.500, rounds up to 18:15, not down to 18:10.
+    const now = new Date('2026-07-09T18:14:30.500Z');
+    const target = suggestNewTarget(now, 0, 0);
+    expect(target.toISOString()).toBe('2026-07-09T18:15:00.000Z');
   });
 });
