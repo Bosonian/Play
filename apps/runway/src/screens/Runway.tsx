@@ -13,10 +13,12 @@ import { useNow } from '../hooks/useNow';
 import { formatAppointmentLine, formatSlackLine, formatTime } from '../lib/format';
 import { allowSleep, keepAwake } from '../native/keepAwake';
 import { hapticImpact } from '../native/haptics';
-import { cancelDepartureAlarms } from '../native/notifications';
+import { cancelDepartureAlarms, scheduleDepartureAlarms } from '../native/notifications';
 import { readLiveTravelConfig } from '../lib/liveTravelSettings';
 import { useLiveTravel } from '../hooks/useLiveTravel';
 import { refreshWidgets } from '../native/widgets';
+import { compressPlan } from '../lib/replan';
+import type { CompressResult } from '../lib/replan';
 
 /** Same confirm copy as Home's "Remove" action on a planned departure (M1) —
  * abandoning from either screen is the same operation with the same
@@ -78,6 +80,14 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   // later should show the plain terminal note instead. Local state (not
   // the persisted status) is what distinguishes those two moments.
   const [justLeft, setJustLeft] = useState(false);
+
+  // F1 ("Replan from now" — recover-instead-of-forfeit spec): whether the
+  // inline confirmation block is open. Deliberately plain component state,
+  // not persisted anywhere — closing the screen (or the departure finishing)
+  // discards it, which is correct: this is a one-shot "does this diff look
+  // right, right now" decision, not something that should reopen stale on a
+  // later visit.
+  const [replanOpen, setReplanOpen] = useState(false);
 
   // Keep the screen on for exactly as long as a run is live. Keyed on
   // status rather than just mount/unmount because this component stays
@@ -201,6 +211,39 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     onNavigate({ name: 'home' });
   };
 
+  // F1: writes a compressed plan the confirmation block already showed on
+  // screen — the diff the user tapped "Apply" on IS `result`, computed at
+  // render time from the same `departure`/`now` this component already has,
+  // so there's nothing left to recompute here. Transactional `.modify()`,
+  // same reasoning as toggleStep/handleStart above: a fast second tap
+  // elsewhere shouldn't be able to race this write.
+  //
+  // Calibration note (spec-required): compressPlan's compressed
+  // plannedMinutes feed straight into this departure's own DepartureStep
+  // rows, which deriveStepActuals (calibration.ts) later reads back to
+  // reconstruct per-step actuals for history/suggestions. But
+  // computeSuggestions joins those actuals to a TEMPLATE's *current* step
+  // minutes by NAME (see calibration.ts's own doc comment) — never to
+  // whatever plannedMinutes a particular Departure happened to carry. A
+  // one-off squeeze here changes what THIS run asked for, not what the
+  // template still says it normally takes, so it cannot corrupt future
+  // calibration suggestions.
+  const applyReplan = async (result: Extract<CompressResult, { fits: true }>) => {
+    void hapticImpact('light');
+    await db.departures.where('id').equals(departure.id).modify((d) => {
+      d.steps = result.steps;
+      d.bufferMinutes = result.bufferMinutes;
+    });
+    // wrapUp shifts because the buffer changed (alarmTimes.ts) - reschedule
+    // rather than leave the four staged alarms pointing at the old plan.
+    // Past alarms are filtered inside computeAlarmTimes itself, so a slot
+    // that's already fired (e.g. slot 0, "Start getting ready.") simply
+    // doesn't get rescheduled - nothing to reimplement here.
+    await scheduleDepartureAlarms({ ...departure, steps: result.steps, bufferMinutes: result.bufferMinutes });
+    void refreshWidgets();
+    setReplanOpen(false);
+  };
+
   if (justLeft) {
     // leaveBy (appointment minus travel) doesn't depend on `now` - see
     // projection.ts - so the argument passed here is arbitrary. appointmentAt
@@ -273,6 +316,29 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   // whole projection has actually gone late.
   const overrunTone = projection.state === 'late' ? 'text-red-400' : 'text-amber-400';
 
+  // F1: whole minutes between now and the door - leaveBy doesn't move as
+  // `now` advances (projection.ts), so this shrinks every tick exactly the
+  // way the centerpiece figure does. Deliberately NOT clamped to >= 0 before
+  // being handed to compressPlan: a negative value only ever produces a
+  // fits:false result down that path (its floor-sum check can't be beaten
+  // by a number below zero unless there's truly nothing left to plan for -
+  // see replan.ts's own doc comment on the algorithm), so there's no need
+  // for a separate "already past leaveBy" branch here.
+  const replanAvailableMinutes = Math.floor((projection.leaveBy.getTime() - now.getTime()) / 60_000);
+  const replanNeededMinutes =
+    uncheckedSteps.reduce((sum, step) => sum + step.plannedMinutes, 0) + departure.bufferMinutes;
+  const replanResult: CompressResult | null = replanOpen
+    ? compressPlan({ availableMinutes: replanAvailableMinutes, steps: departure.steps, bufferMinutes: departure.bufferMinutes })
+    : null;
+  // F1 spec: "Edit link only if the edit path applies" - reachable here
+  // means status is 'planned' or 'running' (the TERMINAL_STATUSES guard
+  // above already returned for anything else), and F3 makes Edit available
+  // on Home for both of those, so the clause always applies wherever this
+  // component can render it. Kept as an explicit condition (rather than a
+  // hardcoded `true`) so a future status this screen might gain doesn't
+  // silently inherit an edit link that isn't actually offered anywhere.
+  const editPathApplies = departure.status === 'planned' || departure.status === 'running';
+
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-8 px-4 pb-12 pt-safe-top">
       <div className="pt-8">
@@ -300,6 +366,62 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
         <Button onClick={() => void handleStart()} className="w-full">
           Start getting ready
         </Button>
+      )}
+
+      {/* F1: the hint area. Three mutually exclusive states: the confirm
+          block (once tapped open), the late-only prompt (projection.state
+          === 'late', unopened), or nothing at all (calm/tight, unopened) -
+          never a modal, never applied without the explicit "Apply" tap
+          below. */}
+      {replanOpen && replanResult ? (
+        replanResult.fits ? (
+          <div className="flex flex-col gap-3 rounded-lg border border-sky-800/60 bg-sky-950/30 p-4">
+            <p className="text-sm text-slate-200">
+              You have {replanAvailableMinutes} min to the door. The remaining plan needs {replanNeededMinutes}.
+            </p>
+            <ul className="flex flex-col gap-1 text-sm tabular-nums text-slate-300">
+              {uncheckedSteps.map((step) => {
+                const compressed = replanResult.steps.find((s) => s.id === step.id);
+                return (
+                  <li key={step.id}>
+                    {step.name || 'Step'} {step.plannedMinutes} → {compressed?.plannedMinutes ?? step.plannedMinutes} min
+                  </li>
+                );
+              })}
+              <li>
+                buffer {departure.bufferMinutes} → {replanResult.bufferMinutes} min
+              </li>
+            </ul>
+            <div className="mt-1 flex gap-2">
+              <Button onClick={() => void applyReplan(replanResult)} className="flex-1">
+                Apply
+              </Button>
+              <Button variant="secondary" onClick={() => setReplanOpen(false)} className="flex-1">
+                Keep the old plan
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3 rounded-lg border border-red-800/60 bg-red-950/20 p-4">
+            <p className="text-sm text-red-200">
+              No plan reaches {formatTime(new Date(departure.appointmentAt))} on time — the remaining steps need at
+              least {replanResult.minimumMinutes} min. Aim for {formatTime(projection.projectedArrival)}
+              {editPathApplies ? ', or remove steps in Edit.' : '.'}
+            </p>
+            <Button variant="secondary" onClick={() => setReplanOpen(false)}>
+              Keep the old plan
+            </Button>
+          </div>
+        )
+      ) : (
+        projection.state === 'late' && (
+          <button
+            onClick={() => setReplanOpen(true)}
+            className="min-h-11 rounded-md text-left text-sm font-medium text-amber-400 hover:text-amber-300"
+          >
+            The plan no longer fits. Replan from now?
+          </button>
+        )
       )}
 
       {allChecked ? (
@@ -396,13 +518,28 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
 
       {/* Quiet, at the very bottom, on purpose - abandoning is a real but
           uncommon action and shouldn't compete visually with the live
-          projection or the step list above it (M1/M2). */}
-      <button
-        onClick={() => void handleAbandon()}
-        className="min-h-11 self-center text-sm font-medium text-slate-600 hover:text-red-400"
-      >
-        Abandon this departure
-      </button>
+          projection or the step list above it (M1/M2). F1: "Replan from
+          now." sits beside it for the same reason - it's a real but
+          uncommon action, always available (not gated to the late state;
+          slack can be quietly tightened too), and opens the same
+          confirmation block the late-only hint above does. Two different
+          copy strings, one action: this one reads as an offer ("Replan from
+          now."), the hint above reads as a prompt in response to a problem
+          ("The plan no longer fits. Replan from now?"). */}
+      <div className="flex items-center justify-center gap-6">
+        <button
+          onClick={() => setReplanOpen(true)}
+          className="min-h-11 text-sm font-medium text-slate-600 hover:text-slate-300"
+        >
+          Replan from now.
+        </button>
+        <button
+          onClick={() => void handleAbandon()}
+          className="min-h-11 text-sm font-medium text-slate-600 hover:text-red-400"
+        >
+          Abandon this departure
+        </button>
+      </div>
     </div>
   );
 }

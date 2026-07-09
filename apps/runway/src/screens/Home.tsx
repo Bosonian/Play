@@ -481,14 +481,23 @@ export function Home({ onNavigate }: HomeProps) {
                   </div>
                 </div>
               </Card>
-              {/* Quiet secondary actions, 'planned' only (M1/M2) - a
-                  'running' departure is already in progress on the Runway
-                  screen, which is where its own "Abandon" action lives;
-                  offering Edit here too would let you rewrite a plan that's
-                  already under way. These sit outside the Card <button>
-                  rather than nested inside it - a <button> inside a
-                  <button> is invalid HTML and Card is already a button. */}
-              {departure.status === 'planned' && (
+              {/* Quiet secondary actions. These sit outside the Card
+                  <button> rather than nested inside it - a <button> inside a
+                  <button> is invalid HTML and Card is already a button.
+                  F3 (recover-instead-of-forfeit spec): Edit is now offered
+                  for 'running' cards too, not just 'planned' - editing a
+                  running departure is for when REALITY moved (the Termin
+                  got pushed back, a step turned out to need longer than
+                  planned) and DepartureSetup's own edit path locks already-
+                  checked steps so that isn't a rewrite of history, just a
+                  correction to what's still ahead (see DepartureSetup.tsx).
+                  Remove stays 'planned'-only, unchanged from M1/M2: a
+                  'running' departure's equivalent action is Runway's own
+                  "Abandon this departure", already reachable from the
+                  screen you'd be on to check a running departure's
+                  progress - duplicating it here would just be a second
+                  path to the same confirm dialog. */}
+              {(departure.status === 'planned' || departure.status === 'running') && (
                 <div className="flex justify-end gap-1 px-1">
                   <button
                     onClick={() => onNavigate({ name: 'departureSetup', departureId: departure.id })}
@@ -496,12 +505,14 @@ export function Home({ onNavigate }: HomeProps) {
                   >
                     Edit
                   </button>
-                  <button
-                    onClick={() => void removeDeparture(departure)}
-                    className="min-h-11 rounded-md px-2 text-sm font-medium text-slate-500 hover:text-red-400"
-                  >
-                    Remove
-                  </button>
+                  {departure.status === 'planned' && (
+                    <button
+                      onClick={() => void removeDeparture(departure)}
+                      className="min-h-11 rounded-md px-2 text-sm font-medium text-slate-500 hover:text-red-400"
+                    >
+                      Remove
+                    </button>
+                  )}
                 </div>
               )}
             </div>

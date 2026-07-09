@@ -26,6 +26,17 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
     () => (departureId ? db.departures.get(departureId) : undefined),
     [departureId],
   );
+
+  // F3: whether this form is editing a departure whose run is already under
+  // way. A 'planned' departure can never carry a checked step (toggleStep in
+  // Runway.tsx flips status to 'running' in the same transaction as the
+  // first check-off), so the locked-step rendering below only ever actually
+  // triggers when this is true — but it's kept as an explicit derived flag,
+  // not inferred implicitly from "does any step happen to be checked",
+  // because the point being made in the UI (and in the doc comment on
+  // handleSave's alarm-reschedule gate below) is about the departure's
+  // status, not a coincidental property of its steps.
+  const isEditingRunning = existingDeparture?.status === 'running';
   const sourceTemplate = useLiveQuery(
     () => (templateId && !departureId ? db.templates.get(templateId) : undefined),
     [templateId, departureId],
@@ -213,16 +224,30 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
     // brand-new departure may now be the soonest planned one.
     void refreshWidgets();
 
-    // Alarms only make sense for a departure that hasn't started yet — an
-    // edit to a 'running' or terminal departure would schedule alerts for a
-    // plan that's already moot, so the status check matters here even
-    // though Home's Edit action already only offers editing while
-    // 'planned' (belt and suspenders: this function has no way to know
-    // *why* it was called). Editing a 'planned' departure lands here too —
+    // Alarms only make sense for a departure that's still ahead of you — a
+    // terminal departure ('left'/'done'/'abandoned') has nothing left to
+    // alert about, so the status check matters here even though Home's Edit
+    // action already only offers editing while 'planned' or 'running' (belt
+    // and suspenders: this function has no way to know *why* it was
+    // called). Both 'planned' and 'running' reschedule identically —
     // scheduleDepartureAlarms cancels whatever was scheduled from the
     // previous save before scheduling the new times (src/native/
-    // notifications.ts), so an edit always reschedules, unconditionally,
-    // for the only path this branch can take (planned).
+    // notifications.ts) — including F3's own case, editing a departure
+    // already under way: wrapUp/startBy shift with a changed step or
+    // buffer, and computeAlarmTimes itself filters out anything already in
+    // the past (e.g. slot 0's "Start getting ready.", if that stage already
+    // fired), so there's nothing extra to reimplement for the running case.
+    //
+    // F3's asymmetry, worth stating plainly: editing a running departure is
+    // for when REALITY moved — the Termin got pushed back, a step is taking
+    // longer than planned — not a soft-delete or a way to quietly reset a
+    // run that's going badly. Abandon (Runway.tsx) stays the only exit from
+    // a departure that's actually being given up on; this form only ever
+    // reschedules the SAME run, it never starts a new one or clears
+    // startedAt/checked-step history (DepartureSetup's step-list rendering
+    // below locks already-checked steps out of editing entirely, and
+    // `sharedFields` above never touches `status`/`startedAt`, so neither
+    // can drift here even by omission).
     //
     // Permission is requested here, lazily, on first save — never at app
     // launch (CLAUDE.md: no permission ambush). The plugin's schedule()
@@ -234,7 +259,7 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
     // navigation still happens — Home's notification-permission banner
     // (B1) is the non-blocking surface for "alerts won't fire", not this
     // form.
-    if (savedDeparture.status === 'planned') {
+    if (savedDeparture.status === 'planned' || savedDeparture.status === 'running') {
       try {
         const granted = await ensurePermissions();
         if (granted) {
@@ -256,6 +281,15 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
           onBack={() => onNavigate({ name: 'home' })}
         />
       </div>
+
+      {/* F3: only shown while editing a running departure - explains why
+          some step rows below are locked, rather than leaving that as an
+          unexplained inconsistency in an otherwise fully-editable form. */}
+      {isEditingRunning && (
+        <p className="text-sm text-slate-400">
+          This departure is already running. Steps already checked off are locked; everything else can still change.
+        </p>
+      )}
 
       <TextField
         label="Name"
@@ -354,36 +388,66 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
         </h2>
 
         <div className="flex flex-col gap-2">
-          {steps.map((step) => (
-            <div key={step.id} className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900 p-2">
-              <input
-                value={step.name}
-                onChange={(e) => updateStep(step.id, { name: e.target.value })}
-                placeholder="Step name"
-                aria-label="Step name"
-                className="min-h-11 flex-1 rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none"
-              />
-              <input
-                type="number"
-                inputMode="numeric"
-                min={0}
-                value={step.plannedMinutes}
-                aria-label={`${step.name || 'Step'} minutes`}
-                onChange={(e) => {
-                  const parsed = Number.parseInt(e.target.value, 10);
-                  updateStep(step.id, { plannedMinutes: Number.isNaN(parsed) ? 0 : parsed });
-                }}
-                className="min-h-11 w-16 rounded-md border border-slate-800 bg-slate-950 px-2 py-2 text-slate-100 tabular-nums focus:border-sky-500 focus:outline-none"
-              />
-              <button
-                onClick={() => removeStep(step.id)}
-                aria-label={`Remove ${step.name || 'step'}`}
-                className="flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-red-400"
-              >
-                &times;
-              </button>
-            </div>
-          ))}
+          {steps.map((step) => {
+            // F3: a checked step is history, not a draft - toggleStep
+            // (Runway.tsx) stamped `checkedAt` for a reason, and this form
+            // must not be a back door to un-stamp it, rename it, or resize
+            // it after the fact. Locked rows render dimmed with a plain
+            // "done" label instead of inputs; the step simply never appears
+            // in an onChange/onClick handler, which is what actually keeps
+            // its `checkedAt`/`name`/`plannedMinutes` untouched all the way
+            // through to the save in handleSave above (this component never
+            // clears or rewrites those fields for a step it never edited).
+            const locked = step.checkedAt !== null;
+            if (locked) {
+              return (
+                <div
+                  key={step.id}
+                  className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900/40 p-2 opacity-60"
+                >
+                  <span className="min-h-11 flex flex-1 items-center px-3 text-slate-400 line-through">
+                    {step.name || 'Step'}
+                  </span>
+                  <span className="min-h-11 flex w-16 items-center justify-end px-2 text-sm tabular-nums text-slate-500">
+                    {step.plannedMinutes} min
+                  </span>
+                  <span className="flex min-h-11 min-w-11 items-center justify-center text-xs font-medium uppercase tracking-wide text-slate-600">
+                    done
+                  </span>
+                </div>
+              );
+            }
+            return (
+              <div key={step.id} className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900 p-2">
+                <input
+                  value={step.name}
+                  onChange={(e) => updateStep(step.id, { name: e.target.value })}
+                  placeholder="Step name"
+                  aria-label="Step name"
+                  className="min-h-11 flex-1 rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none"
+                />
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  value={step.plannedMinutes}
+                  aria-label={`${step.name || 'Step'} minutes`}
+                  onChange={(e) => {
+                    const parsed = Number.parseInt(e.target.value, 10);
+                    updateStep(step.id, { plannedMinutes: Number.isNaN(parsed) ? 0 : parsed });
+                  }}
+                  className="min-h-11 w-16 rounded-md border border-slate-800 bg-slate-950 px-2 py-2 text-slate-100 tabular-nums focus:border-sky-500 focus:outline-none"
+                />
+                <button
+                  onClick={() => removeStep(step.id)}
+                  aria-label={`Remove ${step.name || 'step'}`}
+                  className="flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-red-400"
+                >
+                  &times;
+                </button>
+              </div>
+            );
+          })}
         </div>
 
         <Button variant="secondary" onClick={addStep}>

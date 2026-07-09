@@ -33,6 +33,14 @@ Runway's staged alerts are scheduled as exact, Doze-proof Android alarms (RUNWAY
 1. **Allow notifications when Runway asks** — this happens automatically when you save your first departure.
 2. **Settings → Apps → Runway → Battery → choose Unrestricted.** Samsung's battery optimizer defers alarms for apps left on the default setting, exact-alarm permission or not.
 
+## When the plan slips
+
+A plan that's already fallen behind used to leave two options: push through a schedule that no longer fits, or abandon the departure outright. As of 0.12.0 there's a third: recovery is one tap, forfeit is never required.
+
+- **Replan from now**, on the live Runway screen — squeezes the remaining unchecked steps and the buffer down to whatever time is actually left before you need to be out the door, and shows you exactly what changes (old → new minutes, per step) before anything is applied. Available any time a departure is under way, not just once it's gone late. If the remaining time genuinely can't fit even a minimal version of the plan, it says so plainly instead of pretending a workable plan exists.
+- **Snooze**, on the "Start getting ready." alarm only — ten more minutes, one tap, no need to open the app. The later alarms ("Wrap up", "Leave in 5", "Leave now") don't offer this: the appointment doesn't move because the alarm did, so snoozing those would just be a later, equally real lateness.
+- **Edit a running departure**, from Home — for when reality moved (the appointment got pushed back, a step is taking longer than planned), not for erasing a run that's going badly. Steps already checked off stay locked; everything else can still change, and alarms reschedule to match.
+
 ## Live travel times
 
 Departure mode can replace the manually-entered travel estimate with a live drive-time figure from Google's Routes API, factoring in current traffic. It is entirely optional — off by default, and every part of the app works without it, falling back to the travel minutes you typed in.

@@ -5,6 +5,47 @@ via the `runway-latest.apk` asset at
 https://github.com/Bosonian/Play/releases/tag/runway-latest — it carries
 whichever version built last.
 
+## 0.12.0
+- Recover instead of forfeit — three ways back in when a departure plan has
+  already slipped, instead of the only options being "push through" or
+  abandon:
+  - **Replan from now** (`src/lib/replan.ts`'s `compressPlan`, pure and
+    unit-tested independent of the UI). A quiet "Replan from now." text
+    action on the live Runway screen, always available while a departure is
+    under way — not gated to the late state, since slack can be quietly
+    tightened before it's actually gone. Once projection reaches the 'late'
+    state, an inline hint ("The plan no longer fits. Replan from now?")
+    appears above the step list too. Tapping either opens an inline
+    confirmation — never a modal, never applied automatically — showing
+    exactly what would change: old → new minutes per unchecked step and for
+    the buffer, computed by scaling the remaining plan down to fit whatever
+    time is actually left before leaveBy, floored to a 1-minute-per-step /
+    2-minute-buffer minimum (a zero buffer stays zero). If even those floors
+    don't fit the time remaining, the app says so plainly instead of
+    offering a plan that's technically "compressed" but not actually
+    workable. Checked steps are never touched — they're history.
+  - **Snooze on "Start getting ready."** — that alarm only (not "Wrap up",
+    "Leave in 5", or "Leave now": snoozing any of the later three would be
+    self-deception with a UI, since the appointment doesn't move just
+    because the alarm did). One tap, `+10` minutes, reschedules the same
+    alarm in place — tapping the notification body still opens the
+    departure exactly as before.
+  - **Edit a running departure.** Home's "Edit" action is no longer
+    'planned'-only. Editing a departure already under way locks
+    already-checked steps (dimmed, "done", no inputs) — their `checkedAt`
+    history survives the edit untouched — while everything else (step
+    names/minutes, adding/removing unchecked steps, the appointment time,
+    travel, buffer) stays editable. Saving reschedules alarms the same way
+    saving a 'planned' departure always has. This is for when reality
+    moved — the Termin got pushed back, a step is taking longer than
+    planned — not a soft-delete; Abandon (on the Runway screen) stays the
+    only real exit from a run being given up on.
+  - Device-only-verifiable: snoozing with the app fully closed depends on
+    the same "Capacitor's bridge buffers an action-performed event until a
+    JS listener attaches" behaviour the existing cold-start notification-tap
+    case already relies on and already flags as unverified — noted again
+    here rather than assumed fixed.
+
 ## 0.11.1
 - Widget review round (adversarial pass on 0.11.0's W1+W2 work), seven
   findings fixed:

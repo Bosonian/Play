@@ -1,5 +1,10 @@
 import { Capacitor } from '@capacitor/core';
-import type { ActionPerformed, Channel, ScheduleOptions } from '@capacitor/local-notifications';
+import type {
+  ActionPerformed,
+  Channel,
+  LocalNotificationSchema,
+  ScheduleOptions,
+} from '@capacitor/local-notifications';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import type { Departure, Milestone, Sprint } from '../db/types';
 import { computeAlarmTimes } from '../lib/alarmTimes';
@@ -18,15 +23,30 @@ const LEAVE_CHANNEL_ID = 'runway-leave';
 const SLOT_COUNT = 4;
 const MS_PER_MINUTE = 60_000;
 
+/**
+ * F2 (recover-instead-of-forfeit spec): the action type attached ONLY to
+ * slot 0's "Start getting ready." notification (see the comment where it's
+ * assigned in scheduleDepartureAlarms below for why the other three slots
+ * deliberately don't get this). One action, `SNOOZE_ACTION_ID` — its
+ * `title` is the literal button label Android renders.
+ */
+const START_ACTION_TYPE_ID = 'runway-start-alarm';
+const SNOOZE_ACTION_ID = 'snooze-10';
+const SNOOZE_MINUTES = 10;
+
 let channelsReady = false;
 
 /**
  * Creates the two notification channels Android needs before it will show
- * anything on a per-channel importance/sound. Idempotent per JS session via
+ * anything on a per-channel importance/sound, and registers the snooze
+ * action type (F2) alongside them. Idempotent per JS session via
  * `channelsReady` — Android channel settings are sticky after first
  * creation anyway (the user can retune sound/vibration in system settings
  * afterwards; re-creating with the same id does not reset that), so there's
- * nothing to gain from calling this more than once per launch.
+ * nothing to gain from calling this more than once per launch; the same
+ * reasoning covers registerActionTypes, which the plugin's .d.ts doesn't
+ * document as harmful to call repeatedly but which also has nothing to
+ * gain from it.
  */
 async function ensureChannels(): Promise<void> {
   if (!Capacitor.isNativePlatform() || channelsReady) return;
@@ -45,7 +65,13 @@ async function ensureChannels(): Promise<void> {
     importance: 4, // IMPORTANCE_HIGH — heads-up banner + sound
     vibration: true,
   };
-  await Promise.all([LocalNotifications.createChannel(staged), LocalNotifications.createChannel(leave)]);
+  await Promise.all([
+    LocalNotifications.createChannel(staged),
+    LocalNotifications.createChannel(leave),
+    LocalNotifications.registerActionTypes({
+      types: [{ id: START_ACTION_TYPE_ID, actions: [{ id: SNOOZE_ACTION_ID, title: 'Snooze 10 min' }] }],
+    }),
+  ]);
 }
 
 /**
@@ -210,6 +236,16 @@ export async function scheduleDepartureAlarms(departure: Departure): Promise<voi
       channelId: alarm.slot === 3 ? LEAVE_CHANNEL_ID : STAGED_CHANNEL_ID,
       schedule: { at: alarm.at, allowWhileIdle: true },
       extra: { departureId: departure.id },
+      // F2: only slot 0 ("Start getting ready.") gets a snooze button. The
+      // other three stages are deliberately excluded — "Wrap up" already
+      // means the buffer has started, and "Leave in 5"/"Leave now" snoozing
+      // themselves would be self-deception with a UI: the appointment
+      // doesn't move just because the alarm did, so a snoozed "leave now"
+      // only produces a later, still-just-as-real lateness. "Start getting
+      // ready" is the one stage where 10 more minutes is still a plan
+      // change Replan-from-now (F1) can absorb, not a promise the rest of
+      // the schedule can't keep.
+      actionTypeId: alarm.slot === 0 ? START_ACTION_TYPE_ID : undefined,
     })),
   };
   await LocalNotifications.schedule(options);
@@ -399,6 +435,16 @@ export async function registerNotificationNavigation(
   const listenerHandle = await LocalNotifications.addListener(
     'localNotificationActionPerformed',
     (action: ActionPerformed) => {
+      // F2: tapping "Snooze 10 min" reschedules instead of opening the app
+      // (see scheduleSnoozeAlarm's own doc comment). Every other actionId —
+      // in practice just 'tap', the plugin's default for tapping the
+      // notification body itself (read the .d.ts's ActionPerformed comment)
+      // — keeps exactly the pre-F2 behaviour below: open the departure the
+      // notification was about.
+      if (action.actionId === SNOOZE_ACTION_ID) {
+        void scheduleSnoozeAlarm(action.notification);
+        return;
+      }
       const departureId = action.notification.extra?.departureId;
       if (typeof departureId === 'string') handler(departureId);
     },
@@ -407,4 +453,46 @@ export async function registerNotificationNavigation(
   return () => {
     void listenerHandle.remove();
   };
+}
+
+/**
+ * F2: re-schedules the tapped "Start getting ready." alarm
+ * `SNOOZE_MINUTES` from the moment "Snooze 10 min" was tapped, reusing the
+ * ORIGINAL notification's id/title/body/channel/actionTypeId/extra exactly
+ * — this is a pure reschedule of the same alarm, not a resend of possibly-
+ * stale copy computed from whatever the departure looks like now. Reusing
+ * `original.id` (== notificationId(departureId, 0)) matters beyond just
+ * "why compute a new one": it's what keeps the snoozed alarm cancellable
+ * through the exact same path everything else already uses —
+ * cancelDepartureAlarms recomputes that same id on leave/abandon/edit, so a
+ * snooze taken and then overtaken by one of those still gets cleaned up
+ * without this function needing to know about it.
+ *
+ * Deliberately does NOT navigate anywhere, unlike a tap — snoozing means
+ * "not yet"; popping the app open to the Runway screen the instant you ask
+ * for ten more minutes would defeat the point of asking.
+ *
+ * Device-verify item, same class as registerNotificationNavigation's own
+ * cold-start caveat above: this handler only runs at all if Capacitor's
+ * bridge can wake the JS runtime from an app-fully-closed state on an
+ * action tap — inferred general bridge behaviour (the same "buffers events
+ * until a listener attaches" mechanism the cold-start tap case already
+ * relies on), not something this plugin's .d.ts documents as guaranteed.
+ * UNVERIFIED until tested on a real device with the app fully closed.
+ */
+async function scheduleSnoozeAlarm(original: LocalNotificationSchema): Promise<void> {
+  const snoozeAt = new Date(Date.now() + SNOOZE_MINUTES * MS_PER_MINUTE);
+  await LocalNotifications.schedule({
+    notifications: [
+      {
+        id: original.id,
+        title: original.title,
+        body: original.body,
+        channelId: original.channelId,
+        actionTypeId: original.actionTypeId,
+        schedule: { at: snoozeAt, allowWhileIdle: true },
+        extra: original.extra,
+      },
+    ],
+  });
 }
