@@ -61,9 +61,11 @@ projected ready date = today + (remaining study hours ÷ measured pace in hours/
 
 Remaining hours are the sum of each topic's (estimated − logged) hours, floored at 0 per topic. Measured pace is the rolling median of actual hours logged per week over the last 4 complete weeks — a modest, labeled 4 h/week assumption until there's real data to measure, never an aspirational number.
 
-Work happens in **sprints**: fixed 25/50/90-minute boxes with a short start ritual, not an open-ended timer, because scheduled ignition fits the mode's motivation better than "just start working" does. **Milestones** are real external dates — a booked mock oral, a study session committed to with someone else — not self-invented checkpoints; the app renders them, it does not invent them. Each milestone gets its own mini ready-date projection scoped to the topics it covers, and a single morning-of reminder at 07:30 local on the day.
+Work happens in **sprints**: fixed 25/50/90-minute boxes with a short start ritual, not an open-ended timer, because scheduled ignition fits the mode's motivation better than "just start working" does. **Milestones** are real external dates — a booked mock oral, a study session committed to with someone else — not self-invented checkpoints; the app renders them, it does not invent them. Each milestone gets its own mini ready-date projection scoped to the topics it covers, and a single morning-of reminder at 07:30 local on the day (or the milestone's own time if that's earlier).
 
 Reached from Home via the quiet "Prüfung" link beside History; departure mode remains the default landing.
+
+There is no way to delete an exam in v1 — after the exam, starting fresh means clearing app data or waiting for v1.5's archive.
 
 ## v1.5 candidates
 
@@ -74,6 +76,8 @@ Cut from v1 deliberately, not forgotten:
 - **Live traffic** — replacing manually-entered travel minutes with the Google Directions API, once an API key and billing are worth setting up (RUNWAY_PLAN.md §5.6).
 - **Calendar import** — read-only Google Calendar import to create departures from existing appointments instead of typing them in (RUNWAY_PLAN.md §5.6).
 - **Weekly planning nudge** — an optional reminder to plan the coming week's sprints. Left unbuilt in v1: RUNWAY_PRUFUNG_PLAN.md §5 marks it default-OFF and borderline (it edges toward the fake-urgency pattern this mode deliberately avoids); worth reconsidering only if Deepak asks for it knowingly.
+- **Exam archive / start-new-exam flow** — v1 supports exactly one exam with no delete path (see "Prüfung mode" above); needed before a second Facharzt-scale exam could ever be prepped for in this app.
+- **Topic estimate suggestions (≥3 sprints per topic, ≥25% drift — suggest, never apply)** — the calibration pattern departure mode already has (`src/lib/calibration.ts`'s `computeSuggestions`) applied to topic `estimatedHours`. Cut from v1 because it needs real logged-sprint history to have any signal at all — building it before there's data to test it against would be guessing at what "meaningfully drifted" looks like in practice.
 
 ## Re-triggering a build
 

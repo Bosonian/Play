@@ -59,6 +59,22 @@ function PostSprintView({ sprint, topicName, onNavigate }: PostSprintViewProps) 
   );
 }
 
+/** Elapsed-past-planned threshold (F2) beyond which "End sprint" stops
+ * ending immediately and instead asks which duration to log. Below this,
+ * the honest-overrun behaviour is unchanged (plan §4.3): a sprint that ran
+ * a bit long just logs its real length, no dialog. Above it, the overrun is
+ * large enough that it's more likely Deepak forgot the sprint was running
+ * (walked away, got pulled into something else) than that he deliberately
+ * worked 60+ minutes past the box he set — silently logging 9 real hours
+ * against a 50-minute sprint would corrupt the pace math this whole mode
+ * is built on, so this asks instead of guessing either way. */
+const OVERRUN_CONFIRM_THRESHOLD_MINUTES = 60;
+
+interface PendingEndChoice {
+  elapsedMinutes: number;
+  plannedMinutes: number;
+}
+
 /**
  * Sprint mode's live screen (RUNWAY_PRUFUNG_PLAN.md §4.3) — mirrors
  * Runway.tsx's structure (useNow, keep-awake tied to liveness, transactional
@@ -79,6 +95,21 @@ export function Sprint({ sprintId, onNavigate }: SprintProps) {
   // note instead - local state (not the persisted endedAt) is what
   // distinguishes those two moments.
   const [justEnded, setJustEnded] = useState(false);
+
+  // F13: the exact endedAt this screen just wrote, captured locally at the
+  // moment of writing rather than read back from `sprint` (the useLiveQuery
+  // above). Dexie's liveQuery re-emission after a write is asynchronous, so
+  // there's a window where `justEnded` is already true but `sprint` hasn't
+  // re-fetched yet — PostSprintView would then compute sprintMinutes()
+  // against a still-`endedAt: null` sprint and flash "0 min" for a frame.
+  // Passing this captured value through sidesteps that race entirely rather
+  // than trying to win it.
+  const [finishedEndedAt, setFinishedEndedAt] = useState<string | null>(null);
+
+  // F2: set when the sprint ran far enough past its planned box that
+  // ending should ask which duration to log, rather than silently logging
+  // whatever elapsed. Cleared once resolved either way.
+  const [pendingEndChoice, setPendingEndChoice] = useState<PendingEndChoice | null>(null);
 
   // Keep the screen on for exactly as long as this sprint is live
   // (endedAt === null) - same cleanup-on-status-change shape as Runway's
@@ -108,19 +139,82 @@ export function Sprint({ sprintId, onNavigate }: SprintProps) {
   // contrast with Runway's "Abandon this departure", which does confirm,
   // because abandoning a departure discards a plan whereas ending a sprint
   // simply records what actually happened.
-  const handleEnd = async () => {
+  //
+  // Writes `endedAtIso` exactly as given - the caller (handleEnd directly
+  // below, or one of the two pendingEndChoice buttons) has already decided
+  // what that timestamp should be, including F2's "log planned instead of
+  // actual" choice.
+  const finishSprint = async (endedAtIso: string) => {
     void hapticImpact('medium');
     await db.sprints.where('id').equals(sprint.id).modify((s) => {
-      if (s.endedAt === null) s.endedAt = new Date().toISOString();
+      if (s.endedAt === null) s.endedAt = endedAtIso;
     });
     // Terminal - the planned-end alarm would otherwise still fire later
     // for a sprint that's already been logged as finished.
     await cancelSprintEndAlarm(sprint.id);
+    setFinishedEndedAt(endedAtIso); // F13 - see its declaration above
     setJustEnded(true);
   };
 
+  const handleEnd = async () => {
+    const elapsedMinutes = Math.floor((Date.now() - new Date(sprint.startedAt).getTime()) / 60_000);
+    if (elapsedMinutes > sprint.plannedMinutes + OVERRUN_CONFIRM_THRESHOLD_MINUTES) {
+      // F2: a large forgotten-sprint overrun asks which duration to log
+      // instead of silently writing 9 real hours against a 50-minute box.
+      // No write happens yet - resolved by one of the two choice buttons
+      // below.
+      setPendingEndChoice({ elapsedMinutes, plannedMinutes: sprint.plannedMinutes });
+      return;
+    }
+    await finishSprint(new Date().toISOString());
+  };
+
   if (justEnded) {
-    return <PostSprintView sprint={sprint} topicName={topic?.name ?? ''} onNavigate={onNavigate} />;
+    // F13: prefer the locally-captured endedAt over `sprint.endedAt` so
+    // this renders correctly even before the liveQuery above has re-fetched
+    // the write finishSprint just made - see finishedEndedAt's declaration.
+    const displaySprint = finishedEndedAt !== null ? { ...sprint, endedAt: finishedEndedAt } : sprint;
+    return <PostSprintView sprint={displaySprint} topicName={topic?.name ?? ''} onNavigate={onNavigate} />;
+  }
+
+  if (pendingEndChoice) {
+    const { elapsedMinutes, plannedMinutes } = pendingEndChoice;
+    return (
+      <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-8 px-4 pb-12 pt-safe-top">
+        <div className="pt-8">
+          <ScreenHeader title="Sprint" onBack={() => onNavigate({ name: 'exam' })} />
+        </div>
+        <div className="flex flex-1 flex-col items-center justify-center gap-6 text-center">
+          <p className="text-lg text-slate-100">
+            This sprint ran {elapsedMinutes} min against {plannedMinutes} planned. Log which?
+          </p>
+          <div className="flex w-full flex-col gap-3">
+            <Button
+              onClick={() => {
+                setPendingEndChoice(null);
+                void finishSprint(new Date().toISOString());
+              }}
+              className="w-full"
+            >
+              Log {elapsedMinutes} min
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setPendingEndChoice(null);
+                const plannedEndIso = new Date(
+                  new Date(sprint.startedAt).getTime() + plannedMinutes * 60_000,
+                ).toISOString();
+                void finishSprint(plannedEndIso);
+              }}
+              className="w-full"
+            >
+              Log {plannedMinutes} min
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (sprint.endedAt !== null) {

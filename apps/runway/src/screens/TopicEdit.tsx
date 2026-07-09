@@ -16,6 +16,19 @@ interface TopicEditProps {
  * life of the prep window; deleting it would orphan that history. */
 const HAS_SPRINTS_MESSAGE = 'This topic has logged sprints. Topics with history cannot be removed in v1.';
 
+/** Upper clamp on estimatedHours (F5) — without one, a stray extra digit in
+ * the hours field (or a corrupted/imported value) can produce a number
+ * large enough that examProjection.ts's pace math overflows a JS number
+ * (Infinity minutes-to-ready), which turns into an Invalid Date wherever
+ * the ready date is displayed — a white-screen crash, not a validation
+ * message. 10000h (~570 years at 4h/week) is comfortably past anything a
+ * real exam topic could need while still catching the actual failure mode
+ * (a typo like "50000" instead of "50"). examProjection.ts's own
+ * projectFromAnchor also guards the overflow directly, as defense in depth
+ * for any estimatedHours that reaches it by a path other than this form. */
+const MAX_ESTIMATED_HOURS = 10000;
+const ESTIMATED_HOURS_RANGE_MESSAGE = 'Estimated hours must be between 0 and 10000.';
+
 /**
  * Add/remove/rename/reorder for an exam's topics (RUNWAY_PRUFUNG_PLAN.md
  * §4). Structurally this mirrors TemplateEdit's step editor — a local
@@ -81,7 +94,9 @@ export function TopicEdit({ examId, onNavigate }: TopicEditProps) {
     });
   }
 
-  const canSave = topics.every((topic) => topic.estimatedHours >= 0);
+  const canSave = topics.every(
+    (topic) => topic.estimatedHours >= 0 && topic.estimatedHours <= MAX_ESTIMATED_HOURS,
+  );
 
   async function handleSave() {
     if (!canSave) return;
@@ -93,7 +108,7 @@ export function TopicEdit({ examId, onNavigate }: TopicEditProps) {
     const currentIds = new Set(topics.map((t) => t.id));
     const removedIds = (savedTopics ?? []).filter((t) => !currentIds.has(t.id)).map((t) => t.id);
 
-    await db.transaction('rw', db.topics, async () => {
+    await db.transaction('rw', db.topics, db.milestones, async () => {
       if (removedIds.length > 0) await db.topics.bulkDelete(removedIds);
       // `order` is written here, from final list position, rather than
       // tracked field-by-field through every addTopic/moveTopic call — the
@@ -101,6 +116,23 @@ export function TopicEdit({ examId, onNavigate }: TopicEditProps) {
       // once at save time is simpler than keeping a redundant field in
       // sync on every reorder.
       await db.topics.bulkPut(topics.map((topic, index) => ({ ...topic, examId, order: index })));
+
+      // F7: prune every deleted topic's id out of every milestone's
+      // topicIds too, in the same transaction as the delete itself — a
+      // milestone left pointing at a topic id that no longer exists is a
+      // dangling reference (milestoneProjection.ts falls back to the whole
+      // exam if this is ever missed some other way, but fixing it here
+      // means that fallback is a safety net, not the normal path).
+      if (removedIds.length > 0) {
+        const removedIdSet = new Set(removedIds);
+        const examMilestones = await db.milestones.where('examId').equals(examId).toArray();
+        for (const milestone of examMilestones) {
+          const prunedTopicIds = milestone.topicIds.filter((id) => !removedIdSet.has(id));
+          if (prunedTopicIds.length !== milestone.topicIds.length) {
+            await db.milestones.update(milestone.id, { topicIds: prunedTopicIds });
+          }
+        }
+      }
     });
 
     onNavigate({ name: 'exam' });
@@ -155,6 +187,7 @@ export function TopicEdit({ examId, onNavigate }: TopicEditProps) {
               type="number"
               inputMode="decimal"
               min={0}
+              max={MAX_ESTIMATED_HOURS}
               step={0.5}
               value={topic.estimatedHours}
               aria-label={`${topic.name || 'Topic'} estimated hours`}
@@ -181,9 +214,7 @@ export function TopicEdit({ examId, onNavigate }: TopicEditProps) {
         Add topic
       </Button>
 
-      {!canSave && (
-        <p className="text-sm text-red-400">Estimated hours cannot be negative.</p>
-      )}
+      {!canSave && <p className="text-sm text-red-400">{ESTIMATED_HOURS_RANGE_MESSAGE}</p>}
 
       <Button onClick={() => void handleSave()}>Save topics</Button>
     </div>

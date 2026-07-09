@@ -1,5 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
+import type { Sprint } from '../db/types';
 import type { Screen } from '../App';
 import { ScreenHeader } from '../ui/ScreenHeader';
 import { Button } from '../ui/Button';
@@ -7,9 +8,11 @@ import { useNow } from '../hooks/useNow';
 import {
   DEFAULT_PACE_HOURS_PER_WEEK,
   examProjection,
+  findLiveSprint,
   hoursThisWeek,
   loggedHoursByTopic,
   milestoneProjection,
+  zombieSprints,
 } from '../lib/examProjection';
 import type { ExamProjectionResult } from '../lib/examProjection';
 import {
@@ -20,6 +23,7 @@ import {
   formatRequiredPaceLine,
   formatTime,
 } from '../lib/format';
+import { cancelSprintEndAlarm } from '../native/notifications';
 
 interface ExamOverviewProps {
   onNavigate: (screen: Screen) => void;
@@ -42,19 +46,17 @@ const STATE_TEXT: Record<ExamProjectionResult['state'], string> = {
 // describing.
 const PACE_ASSUMPTION_LINE = `Pace is an assumption (${DEFAULT_PACE_HOURS_PER_WEEK} h/week) until sprints are logged.`;
 
-// How long an unfinished sprint (endedAt === null) still counts as
-// currently-running for the "A sprint is running" banner below. A crash or
-// force-close can leave a sprint stuck with no endedAt forever; without a
-// cutoff, that dead row would haunt this screen indefinitely, always
-// inviting a tap into a sprint that isn't actually happening.
+// findLiveSprint/zombieSprints/LIVE_SPRINT_THRESHOLD_MS (examProjection.ts)
+// draw the line between "still genuinely running" (the quiet banner below)
+// and "a zombie needing reconciliation" (the card below that) — shared with
+// SprintSetup's double-start guard so the two screens can't disagree on
+// which is which. See that file's comment for the full threshold rationale.
 //
-// This threshold ONLY controls the banner. It has no bearing on the hour
-// math above: examProjection.ts's loggedHoursByTopic already skips every
-// sprint with endedAt === null unconditionally, with no age check of its
-// own - an unfinished sprint (crashed or merely still live) contributes
-// zero logged hours either way, which is the correct answer regardless of
-// how old it is.
-const LIVE_SPRINT_THRESHOLD_MS = 12 * 60 * 60_000;
+// Neither has any bearing on the hour math above: examProjection.ts's
+// loggedHoursByTopic already skips every sprint with endedAt === null
+// unconditionally, with no age check of its own - an unfinished sprint
+// (crashed, zombie, or merely still live) contributes zero logged hours
+// either way, which is the correct answer regardless of how old it is.
 
 // How many past milestones stay visible, dimmed, at the bottom of the
 // Milestones section (increment-4 spec). Deliberately small and deliberately
@@ -120,12 +122,44 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
     .filter((m) => new Date(m.at).getTime() < now.getTime())
     .slice(-MAX_PAST_MILESTONES);
 
-  // LIVE_SPRINT_THRESHOLD_MS above is what keeps a crashed, never-ended
-  // sprint from pinning this banner up forever.
-  const liveSprint = sprints.find(
-    (sprint) => sprint.endedAt === null && now.getTime() - new Date(sprint.startedAt).getTime() < LIVE_SPRINT_THRESHOLD_MS,
-  );
+  const liveSprint = findLiveSprint(sprints, now);
   const liveSprintTopicName = liveSprint ? topics.find((topic) => topic.id === liveSprint.topicId)?.name : undefined;
+
+  // Zombie reconciliation (F3): a sprint the live screen never got to end
+  // (crash, force-close, forgotten) is unreachable through normal
+  // navigation once SprintSetup refuses a second concurrent sprint — this
+  // card is the only way back to it. zombieSprints() is oldest-first and
+  // only the first is shown, so resolving one reveals the next rather than
+  // listing them all at once.
+  const zombie = zombieSprints(sprints, now)[0];
+  const zombieTopicName = zombie ? topics.find((topic) => topic.id === zombie.topicId)?.name ?? 'Untitled topic' : undefined;
+
+  async function resolveZombie(target: Sprint, endedAt: string | null) {
+    // `endedAt: null` means "Discard": DELETE the row entirely rather than
+    // leaving it around with, say, a 0-minute endedAt. This matters beyond
+    // tidiness — TopicEdit.removeTopic blocks deleting any topic with
+    // sprintCount > 0, so a discarded zombie left in place would
+    // permanently pin its topic in the list even though the "work" it
+    // represents was never real and Deepak explicitly said to throw it
+    // away.
+    if (endedAt === null) {
+      await db.sprints.delete(target.id);
+    } else {
+      await db.sprints.update(target.id, { endedAt });
+    }
+    // Harmless if the alarm already fired or was never scheduled (see
+    // cancelSprintEndAlarm's own doc comment) — cancelled either way so a
+    // long-dead sprint can't still ring.
+    await cancelSprintEndAlarm(target.id);
+  }
+
+  /** The endedAt the card's "Log planned N min" button writes — startedAt
+   * plus the box that was planned, not whatever elapsed (which, for a
+   * zombie, isn't even known: the sprint was never ended, so there's no
+   * real "actual minutes" to log, only the box it was set up for). */
+  function zombiePlannedEndIso(target: Sprint): string {
+    return new Date(new Date(target.startedAt).getTime() + target.plannedMinutes * 60_000).toISOString();
+  }
 
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-6 px-4 pb-12 pt-safe-top">
@@ -138,7 +172,7 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
       <div className="flex flex-col items-center gap-1 text-center">
         {projection.readyDate ? (
           <p className={`text-huge font-bold tabular-nums ${textAccent}`}>
-            Ready by {formatDateMedium(projection.readyDate)}
+            Ready by {formatDateMedium(projection.readyDate, now)}
           </p>
         ) : (
           <>
@@ -167,10 +201,36 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
 
       <div className="flex flex-col items-center gap-1 text-center">
         <p className="text-sm tabular-nums text-slate-400">
-          {formatRequiredPaceLine(projection.anchor, projection.requiredPaceHoursPerWeek, thisWeekHours)}
+          {formatRequiredPaceLine(projection.anchor, projection.requiredPaceHoursPerWeek, thisWeekHours, now)}
         </p>
         {!projection.paceIsMeasured && <p className="text-sm text-slate-500">{PACE_ASSUMPTION_LINE}</p>}
       </div>
+
+      {/* Zombie reconciliation card (F3) — placed ahead of "Start a sprint"
+          so an unresolved sprint from a crash or a forgotten end gets
+          noticed before starting fresh work, but it's a resolve-when-ready
+          nudge, not a gate: SprintSetup only blocks on a genuinely LIVE
+          sprint, never on a zombie. */}
+      {zombie && (
+        <div className="flex flex-col gap-3 rounded-md border border-amber-900 bg-amber-950/40 px-4 py-3">
+          <p className="text-sm text-slate-100">
+            {zombieTopicName}: a sprint from {formatDateLong(new Date(zombie.startedAt))}{' '}
+            {formatTime(new Date(zombie.startedAt))} was never ended.
+          </p>
+          <div className="flex gap-3">
+            <Button
+              variant="secondary"
+              onClick={() => void resolveZombie(zombie, zombiePlannedEndIso(zombie))}
+              className="flex-1"
+            >
+              Log planned {zombie.plannedMinutes} min
+            </Button>
+            <Button variant="secondary" onClick={() => void resolveZombie(zombie, null)} className="flex-1">
+              Discard
+            </Button>
+          </div>
+        </div>
+      )}
 
       <Button onClick={() => onNavigate({ name: 'sprintSetup' })} className="w-full">
         Start a sprint
@@ -203,7 +263,7 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
                   </p>
                 </div>
                 <p className={`text-sm font-medium tabular-nums ${milestoneAccent}`}>
-                  {milestoneResult.readyDate ? `Ready ${formatDateMedium(milestoneResult.readyDate)}` : 'Never'}
+                  {milestoneResult.readyDate ? `Ready ${formatDateMedium(milestoneResult.readyDate, now)}` : 'Never'}
                 </p>
               </div>
             );

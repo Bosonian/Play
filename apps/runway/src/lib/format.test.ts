@@ -65,8 +65,17 @@ describe('formatExamAnchorLine', () => {
 });
 
 describe('formatDateMedium', () => {
-  it('day and short month, no weekday, no year', () => {
-    expect(formatDateMedium(new Date('2026-12-14T00:00:00'))).toBe('14 Dec');
+  it('day and short month, no weekday, no year when the year matches `now`', () => {
+    const now = new Date('2026-07-09T00:00:00');
+    expect(formatDateMedium(new Date('2026-12-14T00:00:00'), now)).toBe('14 Dec');
+  });
+
+  it('appends the year once it differs from `now` (F4)', () => {
+    // The exact case named in the finding: a slow measured pace can
+    // project a readyDate years out, and "Ready by 8 Jun" on a July 2026
+    // screen would silently mean 2028 with nothing on screen to say so.
+    const now = new Date('2026-07-09T00:00:00');
+    expect(formatDateMedium(new Date('2028-06-08T00:00:00'), now)).toBe('8 Jun 2028');
   });
 });
 
@@ -85,16 +94,40 @@ describe('formatExamMarginLine', () => {
 });
 
 describe('formatRequiredPaceLine', () => {
+  const now = new Date('2026-07-09T00:00:00');
+
   it('states the required pace and this week’s progress toward it, one decimal each', () => {
     const anchor = new Date('2026-11-01T00:00:00');
-    expect(formatRequiredPaceLine(anchor, 6.5, 2)).toBe(
+    expect(formatRequiredPaceLine(anchor, 6.5, 2, now)).toBe(
       'Ready by 1 Nov needs 6.5 h/week. This week: 2.0 of 6.5.',
     );
   });
 
   it('says the window is open instead of a rate once requiredPace is null', () => {
     const anchor = new Date('2026-11-01T00:00:00');
-    expect(formatRequiredPaceLine(anchor, null, 2)).toBe('The exam window is open.');
+    expect(formatRequiredPaceLine(anchor, null, 2, now)).toBe('The exam window is open.');
+  });
+
+  it('appends the anchor’s year once it differs from `now` (F4)', () => {
+    const anchor = new Date('2028-06-08T00:00:00');
+    expect(formatRequiredPaceLine(anchor, 6.5, 2, now)).toBe(
+      'Ready by 8 Jun 2028 needs 6.5 h/week. This week: 2.0 of 6.5.',
+    );
+  });
+
+  it('says there is not enough time left instead of an absurd rate once requiredPace exceeds 168 h/week (F12)', () => {
+    // 24 * 7 = 168, the ceiling on how many hours a week actually has.
+    const anchor = new Date('2026-11-01T00:00:00');
+    expect(formatRequiredPaceLine(anchor, 169, 2, now)).toBe(
+      'Ready by 1 Nov needs more hours than remain before it.',
+    );
+  });
+
+  it('168 h/week exactly still prints as a (barely) achievable rate, not the overflow copy', () => {
+    const anchor = new Date('2026-11-01T00:00:00');
+    expect(formatRequiredPaceLine(anchor, 168, 2, now)).toBe(
+      'Ready by 1 Nov needs 168.0 h/week. This week: 2.0 of 168.0.',
+    );
   });
 });
 

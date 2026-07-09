@@ -281,13 +281,21 @@ export async function cancelMilestoneAlarm(milestoneId: string): Promise<void> {
 
 /**
  * Schedules a milestone's single morning-of alarm (RUNWAY_PRUFUNG_PLAN.md
- * §5): 07:30 LOCAL time on the milestone's own calendar date, regardless of
- * what time of day the milestone itself is at — "Today: {name}, {HH:mm}."
+ * §5): whichever is EARLIER of 07:30 LOCAL time on the milestone's own
+ * calendar date, or the milestone's own time (F9) — "Today: {name}, {HH:mm}."
  * is meant to land while Deepak is still getting his day started, not at
  * the moment the milestone happens (that's what the milestone itself is
  * for). Built with plain Date mutators (`setHours`), which operate in the
  * device's local timezone — the same "local", not UTC, time the rest of
  * this app's date math assumes.
+ *
+ * The min(07:30, milestone.at) clamp (F9) matters for an early milestone —
+ * a 06:00 mock oral, say. Unconditionally reminding "this morning" at 07:30
+ * would fire the reminder AFTER the thing it's reminding about has already
+ * started, which defeats the point of a morning-of nudge entirely. Clamping
+ * to the milestone's own time instead means the reminder is never later
+ * than useful, even though it stops being a true "before the day starts"
+ * nudge for milestones that early.
  *
  * On the gentler STAGED channel, not the high-importance LEAVE channel a
  * sprint's end alarm uses: a milestone reminder is a heads-up for later
@@ -301,7 +309,7 @@ export async function cancelMilestoneAlarm(milestoneId: string): Promise<void> {
  * what this alarm is — a nudge to open the app, not a deep link.
  *
  * Skips scheduling (past-filter rule, same as computeAlarmTimes for
- * departures) if 07:30 on the milestone's date has already passed — Android
+ * departures) if the clamped reminder time has already passed — Android
  * fires a past-scheduled exact alarm immediately, and a stale "Today: ..."
  * reminder firing the moment you save an edit would be surprising, not
  * useful.
@@ -314,7 +322,9 @@ export async function scheduleMilestoneAlarm(milestone: Milestone): Promise<void
   const milestoneAt = new Date(milestone.at);
   const morningOf = new Date(milestoneAt);
   morningOf.setHours(7, 30, 0, 0);
-  if (morningOf.getTime() <= Date.now()) return;
+  // F9: min(07:30 that day, milestone.at) — see the doc comment above.
+  const remindAt = morningOf.getTime() < milestoneAt.getTime() ? morningOf : milestoneAt;
+  if (remindAt.getTime() <= Date.now()) return;
 
   await LocalNotifications.schedule({
     notifications: [
@@ -323,7 +333,7 @@ export async function scheduleMilestoneAlarm(milestone: Milestone): Promise<void
         title: 'Runway',
         body: `Today: ${milestone.name}, ${formatTime(milestoneAt)}.`,
         channelId: STAGED_CHANNEL_ID,
-        schedule: { at: morningOf, allowWhileIdle: true },
+        schedule: { at: remindAt, allowWhileIdle: true },
         // No `extra` — see the doc comment above: tapping opens the app via
         // the plugin's default behaviour, deliberately not wired to any
         // special navigation the way a departure's `extra.departureId` is.

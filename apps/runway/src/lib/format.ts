@@ -71,16 +71,26 @@ export function formatDateLong(date: Date): string {
   return format(date, 'd MMM yyyy');
 }
 
-/** "14 Dec" — day + short month, no weekday, no year. Used only for the
- * exam overview's "Ready by" centerpiece: unlike formatDateLong's anchor
- * dates (which sit far enough out — a whole exam season away — that the
- * year is part of being exact), a readyDate is always within a few months
- * of `now` by construction, so the year would be redundant noise on the
- * biggest number on the screen. Distinct from formatDateDisplay's "Wed 9
- * Jul" too: no weekday, because "Ready by" isn't read as "which day of the
- * week do I have to act by" the way an appointment is. */
-export function formatDateMedium(date: Date): string {
-  return format(date, 'd MMM');
+/** "14 Dec" (same year as `now`) or "8 Jun 2028" (a different year) — day +
+ * short month, no weekday, with the year appended only when it isn't
+ * obvious from context. Used for the exam overview's "Ready by"
+ * centerpiece and milestone rows. Distinct from formatDateDisplay's "Wed 9
+ * Jul": no weekday, because "Ready by" isn't read as "which day of the
+ * week do I have to act by" the way an appointment is.
+ *
+ * `now` is a required, explicit second argument (F4) — a readyDate is NOT
+ * always within a few months of `now` the way an earlier version of this
+ * comment assumed: a slow-enough measured pace projects a readyDate years
+ * out ("Ready by 8 Jun" with no year, read on a July day, silently means
+ * 2028 with nothing on screen to say so). Comparing against `now` rather
+ * than a fixed "always/never show the year" rule keeps this correct
+ * however far out the projection lands, and keeps the function pure and
+ * testable without reading the system clock internally — same reasoning
+ * projection.ts/examProjection.ts take `now` as an argument everywhere
+ * else in this app. */
+export function formatDateMedium(date: Date, now: Date): string {
+  const pattern = date.getFullYear() === now.getFullYear() ? 'd MMM' : 'd MMM yyyy';
+  return format(date, pattern);
 }
 
 /** "Exam window opens 1 Nov 2026" before the exact date is known; "Exam 1
@@ -108,6 +118,12 @@ export function formatExamMarginLine(slackDays: number): string {
   return slackDays >= 0 ? `${slackDays} days of margin` : `${Math.abs(slackDays)} days past the exam`;
 }
 
+/** A week has exactly this many hours — the ceiling past which "N h/week
+ * required" stops being a real, achievable rate (F12) and starts being a
+ * symptom of an anchor that's essentially already unreachable (e.g. 40h
+ * remaining with 2 days left before the anchor: 140 h/week). */
+const HOURS_PER_WEEK = 24 * 7;
+
 /** "Ready by 1 Nov needs 6.5 h/week. This week: 2.0 of 6.5." — the exam
  * overview's actionable line (RUNWAY_PRUFUNG_PLAN.md §2). `anchor` here is
  * the exam's own anchor date (window start or exact date), not the
@@ -115,15 +131,27 @@ export function formatExamMarginLine(slackDays: number): string {
  * you ready in time for the exam", not a restatement of the centerpiece.
  * `requiredPaceHoursPerWeek` of `null` means the anchor is today or
  * already past, at which point "hours/week needed" isn't a meaningful
- * number — the line says so instead of dividing by zero. */
+ * number — the line says so instead of dividing by zero.
+ *
+ * A required pace above HOURS_PER_WEEK (F12) is a related but distinct
+ * case: dividing still produces a finite number, but "184 h/week" isn't a
+ * rate anyone can actually work — there aren't that many hours in a week
+ * to log. Rather than print an absurd number, the line says plainly that
+ * there isn't enough time left, same spirit as the null-anchor branch
+ * above. `now` (F4) is threaded through to formatDateMedium so the anchor
+ * date shows its year whenever it differs from the current one. */
 export function formatRequiredPaceLine(
   anchor: Date,
   requiredPaceHoursPerWeek: number | null,
   hoursThisWeek: number,
+  now: Date,
 ): string {
   if (requiredPaceHoursPerWeek === null) return 'The exam window is open.';
+  if (requiredPaceHoursPerWeek > HOURS_PER_WEEK) {
+    return `Ready by ${formatDateMedium(anchor, now)} needs more hours than remain before it.`;
+  }
   const required = requiredPaceHoursPerWeek.toFixed(1);
-  return `Ready by ${formatDateMedium(anchor)} needs ${required} h/week. This week: ${hoursThisWeek.toFixed(1)} of ${required}.`;
+  return `Ready by ${formatDateMedium(anchor, now)} needs ${required} h/week. This week: ${hoursThisWeek.toFixed(1)} of ${required}.`;
 }
 
 /** "24:59" while a sprint still has time left in its planned box; "+3:12"

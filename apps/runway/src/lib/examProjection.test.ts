@@ -126,9 +126,16 @@ describe('measuredPaceHoursPerWeek', () => {
     expect(measuredPaceHoursPerWeek(NOW, [])).toBeNull();
   });
 
-  it('is null when sprints exist only outside the 4-week window', () => {
+  it('a sprint logged only long ago (outside the 4-week window) still yields a measured 0, not null (F1)', () => {
+    // Studying started 10 weeks ago and has been silent ever since. Once
+    // there's a first-ever sprint, weeksSinceFirstSprint clamps to the
+    // standard 4-week cap, and every one of those 4 recent weeks is a real
+    // silent week that postdates the first sprint -> median([0,0,0,0]) = 0.
+    // This is a MEASUREMENT of decline (an honest "Never"), not "no data
+    // yet" — only a total absence of any completed sprint, ever, falls
+    // back to null (see the empty-sprints test above).
     const sprints = [sprintWeeksAgo(10, 5)];
-    expect(measuredPaceHoursPerWeek(NOW, sprints)).toBeNull();
+    expect(measuredPaceHoursPerWeek(NOW, sprints)).toBe(0);
   });
 
   it('median over exactly 4 populated weeks', () => {
@@ -142,25 +149,73 @@ describe('measuredPaceHoursPerWeek', () => {
     expect(measuredPaceHoursPerWeek(NOW, sprints)).toBe(5);
   });
 
+  it('the 4-week cap is unchanged when the first sprint is more than 4 weeks old (F1)', () => {
+    // First-ever sprint is 10 weeks ago (well before the 4-week window),
+    // plus the same populated last-4-weeks data as the test above. The
+    // 10-week-old sprint doesn't fall in any of the 4 recent buckets, so
+    // the result is identical to the "exactly 4 populated weeks" test:
+    // weeksSinceFirstSprint clamps at 4 regardless of how much older the
+    // actual first sprint was.
+    const sprints = [
+      sprintWeeksAgo(10, 1),
+      sprintWeeksAgo(4, 2),
+      sprintWeeksAgo(3, 4),
+      sprintWeeksAgo(2, 6),
+      sprintWeeksAgo(1, 8),
+    ];
+    expect(measuredPaceHoursPerWeek(NOW, sprints)).toBe(5);
+  });
+
   it('weeks with zero logged hours inside the window count as 0, not skipped', () => {
     // Only 2 of the 4 weeks have sprints: 10h and 2h. The other two are
     // silent weeks that must count as 0 -> sorted [0, 0, 2, 10], median
     // (0+2)/2 = 1. If empty weeks were skipped instead, the median of
-    // [2, 10] would wrongly be 6.
+    // [2, 10] would wrongly be 6. (First sprint is exactly 4 weeks ago, so
+    // the F1 window scoping doesn't shrink this one below the full 4.)
     const sprints = [sprintWeeksAgo(4, 10), sprintWeeksAgo(1, 2)];
     expect(measuredPaceHoursPerWeek(NOW, sprints)).toBe(1);
   });
 
-  it('median over fewer weeks of actual data (one week has sprints, three are zero-padded)', () => {
-    // sorted [0, 0, 0, 3] -> median (0+0)/2 = 0. A single hard-working
-    // week doesn't average out to a healthy-looking pace.
-    const sprints = [sprintWeeksAgo(2, 3)];
+  it('scopes the window to 1 bucket when studying started 1 complete week ago (F1)', () => {
+    // The bug this fixes: a fixed 4-week window would zero-pad the 3 weeks
+    // before studying began, reading median([0,0,0,5]) = 0 - punishing
+    // week one of real effort harder than doing nothing. Scoped to only
+    // the complete week(s) since the first-ever sprint, week two of
+    // studying (one complete week has passed since starting) reads as
+    // median([5]) = 5 instead.
+    const sprints = [sprintWeeksAgo(1, 5)];
+    expect(measuredPaceHoursPerWeek(NOW, sprints)).toBe(5);
+  });
+
+  it('scopes the window to 2 buckets [x, 0] when one of the two weeks since starting is empty (F1)', () => {
+    // First-ever sprint 2 weeks ago (6h); the following week (1 week ago)
+    // is a real stall, logged 0. Window is scoped to those 2 complete
+    // weeks since starting, not the full 4 -> median([6, 0]) = 3. A silent
+    // week that POSTDATES the first sprint still counts as a real 0 (see
+    // the next test) - only weeks that PREDATE it are excluded.
+    const sprints = [sprintWeeksAgo(2, 6)];
+    expect(measuredPaceHoursPerWeek(NOW, sprints)).toBe(3);
+  });
+
+  it('a real stall across the full 4-week window since starting still trends to 0 (F1)', () => {
+    // First-ever sprint exactly 4 weeks ago (20h that week), then 3
+    // complete weeks of total silence since - unlike the "week two" cases
+    // above, all 4 of these weeks genuinely postdate the first sprint, so
+    // none of them are excluded as "before studying began". This must
+    // still read as decline: median([20,0,0,0]) = 0, not an inflated
+    // "healthy" number just because the window happens to be short.
+    const sprints = [sprintWeeksAgo(4, 20)];
     expect(measuredPaceHoursPerWeek(NOW, sprints)).toBe(0);
   });
 
   it('excludes the current, partial week at its exact Monday 00:00 boundary', () => {
     // Starts exactly at the current week's Monday 00:00 - part of the
-    // in-progress week, not a completed one, so it must not count.
+    // in-progress week, not a completed one, so it must not count toward
+    // ANY bucket. And since it's the first-ever completed sprint, every
+    // already-complete week predates the start of studying: there is no
+    // measurable week yet, so the function returns null (labeled default
+    // carries until the first Monday rollover) rather than measuring a
+    // pre-studying week as 0 and projecting "Never" on day one.
     const onBoundary = makeSprint({
       startedAt: '2026-07-06T00:00:00.000Z',
       endedAt: '2026-07-06T05:00:00.000Z',
@@ -318,6 +373,21 @@ describe('examProjection', () => {
     expect(result.anchorKind).toBe('window');
     expect(result.anchor.toISOString()).toBe(new Date('2026-11-01T00:00:00').toISOString());
   });
+
+  it('guards against an overflowed readyDate with the same null-readyDate "never" shape as zero pace (F5)', () => {
+    // An extreme estimatedHours (TopicEdit's own clamp should prevent this
+    // via the UI, but this guard is defense-in-depth against direct DB
+    // edits or a future import path) pushes weeksNeeded * MS_PER_WEEK past
+    // what a double can represent, making `new Date(...)` an Invalid Date
+    // whose getTime() is NaN. That must not leak out as a broken readyDate.
+    const exam = makeExam();
+    const topics = [makeTopic({ estimatedHours: Number.MAX_VALUE })];
+    const result = examProjection(NOW, exam, topics, []);
+
+    expect(result.readyDate).toBeNull();
+    expect(result.slackDays).toBeNull();
+    expect(result.state).toBe('late');
+  });
 });
 
 describe('milestoneProjection', () => {
@@ -332,6 +402,21 @@ describe('milestoneProjection', () => {
     // Only topic 'a's 5h counts - topic 'b' is outside the subset entirely,
     // not just under-weighted.
     expect(result.remainingHours).toBe(5);
+  });
+
+  it('falls back to the whole exam when topicIds is non-empty but references no existing topic (F7)', () => {
+    // Every id in topicIds has been deleted (e.g. a direct DB edit outside
+    // TopicEdit's own pruning) - filtering yields zero topics, which is
+    // not a real "just these zero topics" selection, so this reads the
+    // same as an explicitly-empty topicIds: the whole exam.
+    const topics = [
+      makeTopic({ id: 'a', estimatedHours: 5 }),
+      makeTopic({ id: 'b', estimatedHours: 5 }),
+    ];
+    const milestone = makeMilestone({ topicIds: ['deleted-topic'], at: '2026-12-01T00:00:00.000Z' });
+    const result = milestoneProjection(NOW, milestone, topics, []);
+
+    expect(result.remainingHours).toBe(10);
   });
 
   it('an empty topicIds subset means the whole exam, not zero topics', () => {

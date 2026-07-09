@@ -5,7 +5,8 @@ import type { Sprint } from '../db/types';
 import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { ScreenHeader } from '../ui/ScreenHeader';
-import { loggedHoursByTopic } from '../lib/examProjection';
+import { useNow } from '../hooks/useNow';
+import { findLiveSprint, loggedHoursByTopic } from '../lib/examProjection';
 import { ensurePermissions, scheduleSprintEndAlarm } from '../native/notifications';
 import { hapticImpact } from '../native/haptics';
 
@@ -59,6 +60,22 @@ export function SprintSetup({ onNavigate }: SprintSetupProps) {
     [exam],
   );
 
+  // Same tick cadence as ExamOverview's minute-level `now` — a live sprint
+  // aging past LIVE_SPRINT_THRESHOLD_MS while this screen happens to be
+  // sitting open is a rare edge case, not one that needs second-level
+  // freshness to catch.
+  const now = useNow(60_000);
+
+  // Zombie-vs-live gate (F3): a genuinely running sprint (started recently,
+  // never ended) blocks starting a second one — see findLiveSprint's own
+  // comment in examProjection.ts for the shared threshold this and
+  // ExamOverview's reconciliation card both key off. A ZOMBIE sprint
+  // (unfinished but old) does NOT block here — that's deliberate: zombie
+  // reconciliation lives on ExamOverview's card, and making this screen
+  // also refuse to start would strand Deepak unable to do either.
+  const liveSprint = findLiveSprint(sprints ?? [], now);
+  const liveSprintTopicName = liveSprint ? topics?.find((topic) => topic.id === liveSprint.topicId)?.name : undefined;
+
   const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
   const [selectedMinutes, setSelectedMinutes] = useState<SprintLength | null>(null);
   const [ritualItems, setRitualItems] = useState<RitualItemDraft[]>([]);
@@ -79,7 +96,14 @@ export function SprintSetup({ onNavigate }: SprintSetupProps) {
       if (cancelled) return;
       let names: string[];
       try {
-        names = setting ? (JSON.parse(setting.value) as string[]) : DEFAULT_RITUAL_NAMES;
+        const parsed: unknown = setting ? JSON.parse(setting.value) : DEFAULT_RITUAL_NAMES;
+        // F8: JSON.parse succeeding doesn't mean the *shape* is right — a
+        // settings row written by some future format, or hand-edited, could
+        // parse fine as e.g. `{}` or `[3, 4]` and then blow up on
+        // `.map((name) => ...)` below (or worse, silently render numbers as
+        // ritual step names). Falls back to defaults exactly like a parse
+        // failure does, rather than trusting an unverified shape.
+        names = Array.isArray(parsed) && parsed.every((item) => typeof item === 'string') ? parsed : DEFAULT_RITUAL_NAMES;
       } catch {
         names = DEFAULT_RITUAL_NAMES; // defensive: a corrupted settings row falls back rather than crashing setup
       }
@@ -118,12 +142,22 @@ export function SprintSetup({ onNavigate }: SprintSetupProps) {
   // inventing an unskippable step to enforce a checklist he's said he
   // doesn't want.
   const allRitualChecked = ritualItems.every((item) => item.checkedAt !== null);
-  const canBegin = ritualLoaded && selectedTopicId !== null && selectedMinutes !== null && allRitualChecked;
+  // `!liveSprint` (F3) belongs in canBegin, not just in what's rendered
+  // below — canBegin is also what handleBegin's own guard checks, so this
+  // is the one place that has to be right for both to agree.
+  const canBegin =
+    ritualLoaded && selectedTopicId !== null && selectedMinutes !== null && allRitualChecked && !liveSprint;
 
   const loggedByTopic = loggedHoursByTopic(sprints ?? []);
 
   async function handleBegin() {
     if (!exam || !canBegin || selectedTopicId === null || selectedMinutes === null || submitting) return;
+    // Re-check right before writing (F3): the render above already hides
+    // the whole form once a live sprint exists, but a sprint started
+    // moments ago — e.g. from another tab — could still slip in between
+    // that render and this tap. `sprints` is a live Dexie query, so this
+    // reads current state rather than a stale render-time snapshot.
+    if (findLiveSprint(sprints ?? [], new Date())) return;
     setSubmitting(true);
     void hapticImpact('light');
 
@@ -172,7 +206,19 @@ export function SprintSetup({ onNavigate }: SprintSetupProps) {
         <ScreenHeader title="Start a sprint" onBack={() => onNavigate({ name: 'exam' })} />
       </div>
 
-      {!exam || !topics ? null : topics.length === 0 ? (
+      {!exam || !topics ? null : liveSprint ? (
+        // F3: a live sprint already exists — this screen's whole job
+        // (topic → length → ritual → begin) doesn't apply until that one
+        // is resolved, so the setup form is replaced entirely rather than
+        // just disabling its "Begin sprint" button.
+        <div className="flex flex-col gap-3">
+          <p className="text-slate-100">{liveSprintTopicName ?? 'Untitled topic'}</p>
+          <p className="text-sm text-slate-400">A sprint is already running.</p>
+          <Button onClick={() => onNavigate({ name: 'sprint', sprintId: liveSprint.id })} className="w-full">
+            Open sprint
+          </Button>
+        </div>
+      ) : topics.length === 0 ? (
         <div className="flex flex-col gap-3">
           <p className="text-sm text-slate-500">No topics yet. Add topics before starting a sprint.</p>
           <button
