@@ -1,19 +1,22 @@
 import { startOfWeek } from 'date-fns';
 import type { Departure, Exam, Sprint, Topic } from '../db/types';
 import { examProjection, hoursThisWeek } from './examProjection';
-import { formatExamAnchorLine } from './format';
+import { formatDateTimeShort, formatExamAnchorLine, formatTime } from './format';
+import { PAST_DEPARTURE_THRESHOLD_MS } from './departureThreshold';
+import { computeProjection, computeStartBy } from './projection';
 
-// Widgets increment (Runway 0.10.0): the JSON shape written to Android
-// SharedPreferences and read by the native Prüfung widget
-// (android/app/src/main/java/de/bosonian/runway/PruefungWidgetProvider.java).
+// Widgets increment (Runway 0.10.0 W1, 0.11.0 W2): the JSON shape written to
+// Android SharedPreferences and read by the two native widgets
+// (android/app/src/main/java/de/bosonian/runway/PruefungWidgetProvider.java
+// and DepartureWidgetProvider.java).
 //
-// ARCHITECTURE RULE: this file is where every number the widget shows gets
-// computed. The native side may only do two things with numbers from here —
-// add offsetDays to "today", and diff two dates in days — both a 1:1 mirror
-// of a time slide, never a re-derivation of examProjection's pace/remaining-
-// hours math. Every string the widget renders verbatim (anchorLabel,
-// weekLine) is built here too, so a copy change never needs a matching
-// native change.
+// ARCHITECTURE RULE: this file is where every number either widget shows
+// gets computed. The native side may only do two things with numbers from
+// here — add offsetDays to "today", and diff two dates/epoch millis — both a
+// 1:1 mirror of a time slide, never a re-derivation of examProjection's or
+// projection.ts's math. Every string either widget renders verbatim
+// (anchorLabel, weekLine, nameLine, appointmentLine, planLine) is built here
+// too, so a copy change never needs a matching native change.
 
 /** Same tight/late threshold the app's own STATE_TEXT (ExamOverview.tsx)
  * switches colour at — passed through in the snapshot rather than hardcoded
@@ -49,14 +52,36 @@ export interface PruefungWidgetData {
   stateThresholdDays: number;
 }
 
+/** The departure widget's data (W2) — mirrors PruefungWidgetData's shape:
+ * every string the widget renders verbatim is prebaked here, and the native
+ * side (DepartureWidgetProvider.java) only does display plumbing (the
+ * expiry check against appointmentEpochMs — see that class's own comment). */
+export interface DepartureWidgetData {
+  id: string;
+  nameLine: string;
+  /** "14:30" (today) or "Thu 10 Jul 14:30" (any other day) — via
+   * formatDateTimeShort, the same same-day judgment formatAppointmentLine
+   * uses for this exact departure elsewhere in the app. */
+  appointmentLine: string;
+  /** "Leave by 14:10 · start by 13:35" while prep steps remain unchecked;
+   * "Leave by 14:10" once every step is checked (there's no more "start by"
+   * once there's nothing left to start). leaveBy is computeProjection's
+   * appointment-minus-travel line; startBy is computeStartBy's "if you
+   * start prep right now with everything ahead of you" line — see both
+   * functions' own doc comments in projection.ts for why they're computed
+   * differently (leaveBy ignores prep entirely; startBy assumes none of it
+   * is done yet, deliberately, even mid-run — this line is a plan, not a
+   * live countdown, that's what the Runway screen itself is for). */
+  planLine: string;
+  /** For the native expiry check: a stale snapshot from a departure whose
+   * appointment has since passed must stop rendering it (see
+   * DepartureWidgetProvider.java's own comment on the expiry rule). */
+  appointmentEpochMs: number;
+}
+
 export interface WidgetSnapshot {
   pruefung: PruefungWidgetData | null;
-  /** Always null in this increment (widgets W1) — departure mode's widget
-   * data lands in W2. Included now, rather than added later, so the JSON
-   * shape on disk never has to migrate: an old native reader and a newer
-   * snapshot (or vice versa) can always find this key, even if its value
-   * is still null. */
-  departure: null;
+  departure: DepartureWidgetData | null;
   generatedAtEpochMs: number;
 }
 
@@ -76,23 +101,78 @@ function buildWeekLine(loggedThisWeek: number, requiredPaceHoursPerWeek: number 
 }
 
 /**
+ * Picks the departure the widget should show: the soonest whose status is
+ * 'planned' or 'running' and whose appointment hasn't slipped more than
+ * PAST_DEPARTURE_THRESHOLD_MS into the past — the exact same "still counts
+ * as upcoming" rule Home's own Upcoming/Past split uses (src/screens/
+ * Home.tsx), via the shared constant rather than a second copy of the
+ * number. Filtering (not just sorting) happens here rather than trusting
+ * the caller's query to have already applied it, so this stays correct
+ * however `departures` was gathered — src/native/widgets.ts's query mirrors
+ * Home's ("same query semantics"), but doesn't itself filter by the
+ * threshold, since that filtering is business logic and belongs here with
+ * everything else this file computes. */
+function selectUpcomingDeparture(now: Date, departures: Departure[]): Departure | null {
+  const thresholdMs = now.getTime() - PAST_DEPARTURE_THRESHOLD_MS;
+  const eligible = departures.filter(
+    (departure) =>
+      (departure.status === 'planned' || departure.status === 'running') &&
+      new Date(departure.appointmentAt).getTime() >= thresholdMs,
+  );
+  if (eligible.length === 0) return null;
+  return eligible.reduce((soonest, departure) =>
+    new Date(departure.appointmentAt).getTime() < new Date(soonest.appointmentAt).getTime() ? departure : soonest,
+  );
+}
+
+/** Builds DepartureWidgetData for the departure selectUpcomingDeparture
+ * chose, or null when nothing qualifies (nothing planned/running, or
+ * everything that is has already slipped past the threshold). */
+function buildDepartureWidgetData(now: Date, departures: Departure[]): DepartureWidgetData | null {
+  const departure = selectUpcomingDeparture(now, departures);
+  if (!departure) return null;
+
+  const appointmentAt = new Date(departure.appointmentAt);
+  // Same equation the live Runway screen recomputes every tick
+  // (src/screens/Runway.tsx) — leaveBy doesn't depend on `now` (see
+  // projection.ts), so this is a fixed fact about the departure, not
+  // something that goes stale between snapshot refreshes the way the
+  // Prüfung widget's weekLine can.
+  const leaveBy = computeProjection(now, departure).leaveBy;
+  const allStepsChecked = departure.steps.every((step) => step.checkedAt !== null);
+  const planLine = allStepsChecked
+    ? `Leave by ${formatTime(leaveBy)}`
+    : `Leave by ${formatTime(leaveBy)} · start by ${formatTime(computeStartBy(departure))}`;
+
+  return {
+    id: departure.id,
+    nameLine: departure.name,
+    appointmentLine: formatDateTimeShort(appointmentAt, now),
+    planLine,
+    appointmentEpochMs: appointmentAt.getTime(),
+  };
+}
+
+/**
  * Builds the widget snapshot from data already loaded from Dexie (the
  * caller, src/native/widgets.ts, is the only place that touches Dexie for
  * this — this function stays pure and testable without a database).
  *
- * `upcomingDeparture` is accepted now, ahead of departure mode's widget
- * landing in W2, so this signature doesn't have to change shape twice —
- * unused (and therefore prefixed `_`) until that increment reads it.
+ * `departures` is every departure the caller could find with status
+ * 'planned' or 'running' (src/native/widgets.ts mirrors Home's own Upcoming
+ * query) — selectUpcomingDeparture above does the "which one, if any" work.
  */
 export function buildWidgetSnapshot(
   now: Date,
   exam: Exam | undefined,
   topics: Topic[],
   sprints: Sprint[],
-  _upcomingDeparture: Departure | null | undefined,
+  departures: Departure[],
 ): WidgetSnapshot {
+  const departureData = buildDepartureWidgetData(now, departures);
+
   if (!exam) {
-    return { pruefung: null, departure: null, generatedAtEpochMs: now.getTime() };
+    return { pruefung: null, departure: departureData, generatedAtEpochMs: now.getTime() };
   }
 
   const projection = examProjection(now, exam, topics, sprints);
@@ -119,7 +199,7 @@ export function buildWidgetSnapshot(
       weekStartEpochMs: weekStart.getTime(),
       stateThresholdDays: PRUEFUNG_STATE_THRESHOLD_DAYS,
     },
-    departure: null,
+    departure: departureData,
     generatedAtEpochMs: now.getTime(),
   };
 }

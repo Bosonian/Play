@@ -23,15 +23,16 @@
             </intent-filter>
 
             <!-- Widgets increment (src/native/deepLinks.ts): runway://exam
-                 and runway://new-departure, tapped from the Prüfung widget
-                 and the static app shortcuts below. launchMode stays
-                 singleTask (unchanged, verified above) — a deep link while
-                 the app is already running is delivered to the existing
-                 Activity via onNewIntent rather than spawning a second
-                 instance, which is exactly what @capacitor/app's
-                 handleOnNewIntent (see node_modules/@capacitor/app/android/
-                 .../AppPlugin.java) expects to receive appUrlOpen events
-                 from. -->
+                 and runway://new-departure (W1, tapped from the Prüfung
+                 widget and the static app shortcuts below), plus
+                 runway://departure/{id} and runway://home (W2, tapped from
+                 the departure widget). launchMode stays singleTask
+                 (unchanged, verified above) — a deep link while the app is
+                 already running is delivered to the existing Activity via
+                 onNewIntent rather than spawning a second instance, which is
+                 exactly what @capacitor/app's handleOnNewIntent (see
+                 node_modules/@capacitor/app/android/.../AppPlugin.java)
+                 expects to receive appUrlOpen events from. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -62,6 +63,21 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_pruefung_info" />
+        </receiver>
+
+        <!-- Widgets increment W2: the departure home-screen widget
+             provider. Same exported="true" reasoning as PruefungWidgetProvider
+             above — this is the standard shape every AppWidgetProvider
+             needs, not something specific to this widget. -->
+        <receiver
+            android:name=".DepartureWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_departure_info" />
         </receiver>
 
         <provider

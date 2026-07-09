@@ -3,17 +3,20 @@ import type { URLOpenListenerEvent } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import type { Screen } from '../App';
 
-// The ONLY file that imports @capacitor/app. Two `runway://...` routes this
-// increment defines (spec §4): `runway://exam` (Prüfung overview) and
-// `runway://new-departure` (a blank DepartureSetup) — reached from the
-// Prüfung widget's tap target (PruefungWidgetProvider.java) and from the
-// static home-screen shortcuts (res/xml/shortcuts.xml). Kept decoupled from
-// `../lib/navigationRef` the same way notifications.ts's
-// registerNotificationNavigation is: this file only turns a URL into a
-// Screen and hands it to a caller-supplied function, rather than importing
-// navigationRef directly — main.tsx is what wires the two together, same
-// shape as its registerNotificationNavigation(navigateToDeparture) call
-// just above where this is used.
+// The ONLY file that imports @capacitor/app. Routes this app defines:
+// `runway://exam` (Prüfung overview) and `runway://new-departure` (a blank
+// DepartureSetup) from W1 — reached from the Prüfung widget's tap target
+// (PruefungWidgetProvider.java) and the static home-screen shortcuts
+// (res/xml/shortcuts.xml) — plus two more from W2:
+// `runway://departure/{id}` (a specific departure's live Runway screen) from
+// the departure widget's tap target (DepartureWidgetProvider.java), and
+// `runway://home` from that same widget's "no departure planned" fallback
+// tap target. Kept decoupled from `../lib/navigationRef` the same way
+// notifications.ts's registerNotificationNavigation is: this file only turns
+// a URL into a Screen and hands it to a caller-supplied function, rather
+// than importing navigationRef directly — main.tsx is what wires the two
+// together, same shape as its registerNotificationNavigation(
+// navigateToDeparture) call just above where this is used.
 
 /** Parses a `runway://...` URL into the Screen it means, or null for
  * anything unrecognised (a future scheme addition, a malformed URL, or a
@@ -36,6 +39,19 @@ function screenForUrl(url: string): Screen | null {
       return { name: 'exam' };
     case 'new-departure':
       return { name: 'departureSetup' };
+    case 'departure': {
+      // `runway://departure/{id}` — the id is the first path segment after
+      // the host. `.filter(Boolean)` drops the empty string a leading `/`
+      // would otherwise produce, so both "runway://departure/abc" and a
+      // stray "runway://departure//abc" resolve the same id, and a
+      // malformed URL with no id at all (`runway://departure`) falls
+      // through to the null below rather than navigating with an empty
+      // departureId.
+      const id = parsed.pathname.split('/').filter(Boolean)[0];
+      return id ? { name: 'runway', departureId: id } : null;
+    }
+    case 'home':
+      return { name: 'home' };
     default:
       return null;
   }

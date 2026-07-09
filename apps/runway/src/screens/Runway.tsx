@@ -16,6 +16,7 @@ import { hapticImpact } from '../native/haptics';
 import { cancelDepartureAlarms } from '../native/notifications';
 import { readLiveTravelConfig } from '../lib/liveTravelSettings';
 import { useLiveTravel } from '../hooks/useLiveTravel';
+import { refreshWidgets } from '../native/widgets';
 
 /** Same confirm copy as Home's "Remove" action on a planned departure (M1) —
  * abandoning from either screen is the same operation with the same
@@ -169,6 +170,10 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     await db.departures.update(departure.id, { status: 'left', leftAt: new Date().toISOString() });
     // Terminal status - no more staged alerts make sense once you've left.
     await cancelDepartureAlarms(departure.id);
+    // Widgets increment: 'left' is no longer 'planned'/'running', so this
+    // departure drops out of the widget's source pool — refresh so it
+    // doesn't keep showing "Leave now" after you already have.
+    void refreshWidgets();
     setJustLeft(true);
   };
 
@@ -181,6 +186,9 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     if (!window.confirm(ABANDON_CONFIRM)) return;
     await db.departures.update(departure.id, { status: 'abandoned' });
     await cancelDepartureAlarms(departure.id);
+    // Widgets increment: same reasoning as handleLeave above — 'abandoned'
+    // takes this departure out of the widget's source pool.
+    void refreshWidgets();
     onNavigate({ name: 'home' });
   };
 

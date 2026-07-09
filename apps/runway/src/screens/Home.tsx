@@ -16,12 +16,15 @@ import {
 import { computeSuggestions } from '../lib/calibration';
 import type { Suggestion } from '../lib/calibration';
 import { useNow } from '../hooks/useNow';
-
-/** M4's cutoff for "stale" - a planned/running departure whose appointment
- * is more than this far in the past moves out of Upcoming and into its own
- * dimmed section, so a missed morning appointment doesn't sit forever at
- * the top of the list you check every time you're about to leave. */
-const PAST_DEPARTURE_THRESHOLD_MS = 60 * 60_000;
+import { refreshWidgets } from '../native/widgets';
+// M4's cutoff for "stale" - a planned/running departure whose appointment is
+// more than this far in the past moves out of Upcoming and into its own
+// dimmed section, so a missed morning appointment doesn't sit forever at the
+// top of the list you check every time you're about to leave. Widgets
+// increment: moved to its own lib file so the departure widget's
+// source-selection logic (src/lib/widgetSnapshot.ts) can share the exact
+// same number rather than redeclaring it.
+import { PAST_DEPARTURE_THRESHOLD_MS } from '../lib/departureThreshold';
 
 /** Same confirm copy as the Runway screen's "Abandon this departure" (M1/M2)
  * - removing a departure from Home and abandoning it mid-run are the same
@@ -146,6 +149,10 @@ export function Home({ onNavigate }: HomeProps) {
     if (!window.confirm(REMOVE_CONFIRM)) return;
     await db.departures.update(departure.id, { status: 'abandoned' });
     await cancelDepartureAlarms(departure.id);
+    // Widgets increment: an abandoned departure is no longer eligible to be
+    // the widget's source departure — refresh so a removed "Klinik 14:30"
+    // doesn't linger on the home screen.
+    void refreshWidgets();
   }
 
   // Departures that have left but have no recorded arrival result yet -
@@ -204,8 +211,13 @@ export function Home({ onNavigate }: HomeProps) {
   const [revealingLateFor, setRevealingLateFor] = useState<string | null>(null);
   const [lateMinutesInput, setLateMinutesInput] = useState('');
 
+  // Widgets increment: all three arrival-capture writes below move the
+  // departure's status to 'done', which takes it out of the widget's
+  // planned/running source pool — each refreshes so a captured departure
+  // doesn't keep showing as "next" on the home screen.
   async function recordArrival(departure: Departure, result: 'early' | 'onTime') {
     await db.departures.update(departure.id, { status: 'done', arrivalResult: result, arrivalLateMinutes: null });
+    void refreshWidgets();
   }
 
   async function confirmLate(departure: Departure) {
@@ -214,10 +226,12 @@ export function Home({ onNavigate }: HomeProps) {
     await db.departures.update(departure.id, { status: 'done', arrivalResult: 'late', arrivalLateMinutes: minutes });
     setRevealingLateFor(null);
     setLateMinutesInput('');
+    void refreshWidgets();
   }
 
   async function skipArrival(departure: Departure) {
     await db.departures.update(departure.id, { status: 'done' });
+    void refreshWidgets();
   }
 
   return (

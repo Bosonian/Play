@@ -43,22 +43,29 @@ export function formatSlackLine(slackMinutes: number): string {
   return `${magnitude} min ${suffix}`;
 }
 
-/** "Appointment 14:30" when `appointmentAt` falls on the same calendar day
- * as `now`; "Appointment Thu 10 Jul 14:30" otherwise — the date-anchored
- * form only earns its keep once "today" stops being obvious from context.
- * `now` is an explicit argument (not read internally) for the same reason
- * projection.ts takes one: testable without mocking the system clock, and
- * a caller that already has a `now` from useNow() can pass it straight
- * through instead of this reaching for a second, possibly-different clock
- * read. */
-export function formatAppointmentLine(appointmentAt: Date, now: Date): string {
+/** "14:30" when `dateTime` falls on the same calendar day as `now`; "Thu 10
+ * Jul 14:30" otherwise — the date-anchored form only earns its keep once
+ * "today" stops being obvious from context. Extracted from
+ * formatAppointmentLine (which just adds its own "Appointment " prefix on
+ * top) so the departure widget's appointmentLine (src/lib/widgetSnapshot.ts)
+ * can reuse the exact same same-day judgment without a second, possibly
+ * drifting copy of the day-comparison logic. `now` is an explicit argument
+ * (not read internally) for the same reason projection.ts takes one:
+ * testable without mocking the system clock, and a caller that already has
+ * a `now` from useNow() can pass it straight through instead of this
+ * reaching for a second, possibly-different clock read. */
+export function formatDateTimeShort(dateTime: Date, now: Date): string {
   const sameDay =
-    appointmentAt.getFullYear() === now.getFullYear() &&
-    appointmentAt.getMonth() === now.getMonth() &&
-    appointmentAt.getDate() === now.getDate();
-  return sameDay
-    ? `Appointment ${formatTime(appointmentAt)}`
-    : `Appointment ${formatDateDisplay(appointmentAt)} ${formatTime(appointmentAt)}`;
+    dateTime.getFullYear() === now.getFullYear() &&
+    dateTime.getMonth() === now.getMonth() &&
+    dateTime.getDate() === now.getDate();
+  return sameDay ? formatTime(dateTime) : `${formatDateDisplay(dateTime)} ${formatTime(dateTime)}`;
+}
+
+/** "Appointment 14:30" / "Appointment Thu 10 Jul 14:30" — see
+ * formatDateTimeShort above for the same-day judgment this just prefixes. */
+export function formatAppointmentLine(appointmentAt: Date, now: Date): string {
+  return `Appointment ${formatDateTimeShort(appointmentAt, now)}`;
 }
 
 /** "1 Nov 2026" — long-form date display for anchors that sit months away

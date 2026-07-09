@@ -5,6 +5,7 @@ import { fetchDriveMinutes } from '../lib/routesApi';
 import { shouldUpdateTravelMinutes } from '../lib/liveTravelUpdate';
 import { getCurrentPosition } from '../native/geolocation';
 import { scheduleDepartureAlarms } from '../native/notifications';
+import { refreshWidgets } from '../native/widgets';
 
 const REFRESH_INTERVAL_MS = 3 * 60_000; // 3 min
 const MIN_INTERVAL_MS = 150_000; // 150 s — see refresh() below for why this is checked separately from the interval itself.
@@ -139,6 +140,14 @@ export function useLiveTravel(
           // between the modify and this schedule call.
           if (updatedDeparture?.status === 'running' && !cancelled) {
             await scheduleDepartureAlarms(updatedDeparture);
+            // Widgets increment: travelMinutes just moved, which moves
+            // leaveBy — the departure widget's planLine reads that value,
+            // so it needs the same refresh scheduleDepartureAlarms just
+            // triggered for the alarm side. Same status guard as the call
+            // just above: a leave landing in this exact gap must not
+            // refresh a widget snapshot for a departure that's no longer
+            // 'running'.
+            void refreshWidgets();
           }
         }
         // <3 min drift: intentionally no write, no reschedule — the state

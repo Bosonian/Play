@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widgets increment W2: metadata for the departure widget
+     (DepartureWidgetProvider.java), referenced from the <receiver>
+     meta-data in AndroidManifest.xml. Sizing/period/preview reasoning is
+     identical to widget_pruefung_info.xml (see that file's own comment) —
+     same nominal 3-cell-wide, 1-cell-tall placement, same bumped 64dp
+     minHeight for three stacked lines, same untested-against-a-real-
+     launcher caveat (no Android SDK/emulator in this environment).
+
+     updatePeriodMillis: 6 hours, same reasoning as the Prüfung widget's —
+     this widget's own "now vs. appointmentEpochMs" expiry check
+     (DepartureWidgetProvider.renderSnapshot) is itself a display-plumbing
+     time slide, not something that needs a faster system-level tick;
+     refreshWidgets() already pushes an immediate redraw whenever a
+     departure that could change what this widget shows is saved. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="180dp"
+    android:minHeight="64dp"
+    android:updatePeriodMillis="21600000"
+    android:initialLayout="@layout/widget_departure"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />

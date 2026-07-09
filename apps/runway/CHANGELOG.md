@@ -5,6 +5,32 @@ via the `runway-latest.apk` asset at
 https://github.com/Bosonian/Play/releases/tag/runway-latest — it carries
 whichever version built last.
 
+## 0.11.0
+- Second home-screen widget: the next departure. Three lines — name,
+  appointment time, and a "Leave by 14:10 · start by 13:35" plan line that
+  drops the "start by" half once every prep step is checked. Shows the
+  soonest 'planned'/'running' departure whose appointment hasn't slipped
+  more than an hour into the past (the same cutoff Home's own
+  Upcoming/Past split uses — pulled into a shared lib constant,
+  `src/lib/departureThreshold.ts`, so the two can't drift apart); falls back
+  to "No departure planned." — tapping that fallback opens Home — when
+  nothing qualifies. **Expiry rule:** unlike the Prüfung widget's "Ready by"
+  date, which stays correct on its own by sliding forward with the real
+  calendar, a departure fact goes stale outright — the native widget
+  re-checks `now` against the snapshot's `appointmentEpochMs` on every
+  redraw and falls back rather than keep showing a stale "Klinik 14:30"
+  from a departure that's since been left, missed, or removed while the
+  app was closed.
+- Two more deep links, `runway://departure/{id}` and `runway://home`,
+  reached from the new widget's tap targets. `WidgetBridgePlugin` now pokes
+  both widget providers on every snapshot write, not just the Prüfung one.
+- `refreshWidgets()` gained five more call sites: DepartureSetup's save,
+  Runway's handleLeave and handleAbandon, Home's removeDeparture and its
+  three arrival-capture writes, and useLiveTravel's ≥3-min drift write
+  (leaveBy moves when travelMinutes does, and the widget's plan line shows
+  leaveBy) — see that function's own doc comment in src/native/widgets.ts
+  for the full, current call-site list.
+
 ## 0.10.0
 - Home-screen widget for Prüfung mode: ready-by date, exam anchor, and
   this-week's hours, refreshed explicitly after every sprint/exam/topic/

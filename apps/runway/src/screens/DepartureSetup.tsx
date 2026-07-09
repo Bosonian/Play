@@ -13,6 +13,7 @@ import { ensurePermissions, scheduleDepartureAlarms } from '../native/notificati
 import { readLiveTravelConfig } from '../lib/liveTravelSettings';
 import { fetchDriveMinutes } from '../lib/routesApi';
 import { getCurrentPosition } from '../native/geolocation';
+import { refreshWidgets } from '../native/widgets';
 
 interface DepartureSetupProps {
   templateId?: string;
@@ -206,6 +207,11 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
       };
       await db.departures.add(savedDeparture);
     }
+
+    // Widgets increment: name/appointment/steps/travel — everything the
+    // departure widget's three lines read — may have just changed, or a
+    // brand-new departure may now be the soonest planned one.
+    void refreshWidgets();
 
     // Alarms only make sense for a departure that hasn't started yet — an
     // edit to a 'running' or terminal departure would schedule alerts for a

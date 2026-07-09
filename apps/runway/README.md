@@ -88,13 +88,17 @@ The exam overview also carries a next-move card: a single suggested topic and sp
 
 There is no way to delete an exam in v1 — after the exam, starting fresh means clearing app data or waiting for v1.5's archive.
 
-## Home-screen widget
+## Home-screen widgets
 
-A 3×1 Prüfung widget shows three lines: **"Ready by {date}"** (coloured calm/tight/late, the same thresholds as the exam overview), the exam anchor ("Exam window opens ..." or "Exam ..."), and this week's hours ("This week 1.5 of 6.5 h"). Tapping it opens straight to the Prüfung overview.
+Two 3×1 widgets, both fed from the same snapshot mechanism (see below).
 
-**The honest staleness design:** the widget does not poll or recompute anything on its own between app opens. Everything it shows is a snapshot the app pushes explicitly — after a sprint ends, after the exam/topics/a milestone are saved — never on a timer. Between those moments, the widget keeps its display current in only one narrow way: the "Ready by" date slides forward 1:1 with the real calendar (the app hands it a day-offset from "today", not a fixed date), so the *date itself* stays right even while the app is closed. Everything else — the underlying pace, the remaining hours, whether this week's line still describes the current week — is frozen at whatever it was the last time the app ran. The this-week line disappears once the real calendar has moved past the week it was computed for, rather than silently claiming to describe a week that's already over.
+**Prüfung widget** shows three lines: **"Ready by {date}"** (coloured calm/tight/late, the same thresholds as the exam overview), the exam anchor ("Exam window opens ..." or "Exam ..."), and this week's hours ("This week 1.5 of 6.5 h"). Tapping it opens straight to the Prüfung overview.
 
-**Add the widget:** long-press the home screen → Widgets → Runway.
+**Departure widget** (added 0.11.0) shows the next upcoming departure: its name, appointment time, and a plan line — **"Leave by 14:10 · start by 13:35"** while prep is still under way, shortening to just **"Leave by 14:10"** once every step is checked. It shows the soonest 'planned'/'running' departure whose appointment hasn't slipped more than an hour into the past (the same cutoff Home's own Upcoming/Past split uses), or **"No departure planned."** when nothing qualifies — tapping that fallback opens Home; tapping a real departure opens its live Runway screen.
+
+**The honest staleness design:** neither widget polls or recomputes anything on its own between app opens. Everything either shows is a snapshot the app pushes explicitly — after a sprint ends, after the exam/topics/a milestone are saved, after a departure is saved/started/left/abandoned/removed or its live travel time drifts — never on a timer. Between those moments, the Prüfung widget keeps its display current in only one narrow way: the "Ready by" date slides forward 1:1 with the real calendar (the app hands it a day-offset from "today", not a fixed date), so the *date itself* stays right even while the app is closed. Everything else on that widget — the underlying pace, the remaining hours, whether this week's line still describes the current week — is frozen at whatever it was the last time the app ran, and the this-week line disappears once the real calendar has moved past the week it was computed for. The departure widget takes a stricter line on staleness: a departure fact doesn't have a graceful "still roughly true" reading the way a ready-by date does, so rather than slide anything forward, the widget re-checks the real clock against the snapshot's appointment time on every redraw and falls back to "No departure planned." the moment more than an hour has passed since that appointment — a stale "Klinik 14:30" from a departure that's since been left, missed, or removed while the app was closed never lingers on the home screen.
+
+**Add a widget:** long-press the home screen → Widgets → Runway → pick Prüfung or Departure.
 
 **Static shortcuts** ("New departure", "Prüfung") are also available by long-pressing the app icon — no widget placement required for those.
 
