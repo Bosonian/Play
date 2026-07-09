@@ -74,18 +74,25 @@ jobs:
           path: apps/runway/android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
 
-      - name: Compute release file name
+      # Filename is a fixed constant (runway-latest.apk), not versioned per
+      # build (m5) — softprops/action-gh-release overwrites an existing
+      # asset of the same name on the same tag, so each rebuild REPLACES
+      # the one release asset instead of accumulating a new sha-named file
+      # every push. Version + commit identity move to the release body
+      # instead, where they're still visible but don't fragment the asset
+      # list.
+      - name: Compute release metadata
         id: vars
         run: |
           VERSION_NAME=$(grep -m1 'versionName' apps/runway/android/app/build.gradle | sed -E 's/.*versionName "([^"]+)".*/\1/')
           SHORT_SHA=$(git rev-parse --short HEAD)
-          APK_NAME="runway-v${VERSION_NAME}-${SHORT_SHA}.apk"
-          echo "apk_name=${APK_NAME}" >> "$GITHUB_OUTPUT"
+          echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Rename APK for release
         run: |
           cp apps/runway/android/app/build/outputs/apk/release/app-release.apk \
-             "apps/runway/android/app/build/outputs/apk/release/${{ steps.vars.outputs.apk_name }}"
+             apps/runway/android/app/build/outputs/apk/release/runway-latest.apk
 
       - name: Publish / refresh runway-latest release
         uses: softprops/action-gh-release@v2
@@ -93,8 +100,10 @@ jobs:
           tag_name: runway-latest
           name: Runway (latest build)
           prerelease: true
-          files: apps/runway/android/app/build/outputs/apk/release/${{ steps.vars.outputs.apk_name }}
+          files: apps/runway/android/app/build/outputs/apk/release/runway-latest.apk
           body: |
+            Build: v${{ steps.vars.outputs.version_name }} (${{ steps.vars.outputs.short_sha }})
+
             Automatically rebuilt release APK for Runway, refreshed on every push
             to `apps/runway/`. This is not a Play Store release — it is a
             personal sideloaded build, signed with the keystore committed at
@@ -103,7 +112,7 @@ jobs:
 
             **Install on the S25 Ultra:**
             1. Open this page in Chrome on the phone.
-            2. Download `${{ steps.vars.outputs.apk_name }}`.
+            2. Download `runway-latest.apk`.
             3. Open the downloaded file; Chrome will ask permission to install
                unknown apps the first time — allow it for Chrome.
             4. Install. Updates install over the existing app; Dexie data

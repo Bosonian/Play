@@ -66,6 +66,22 @@ export async function ensurePermissions(): Promise<boolean> {
 }
 
 /**
+ * Whether Runway currently has permission to post notifications at all —
+ * distinct from `ensurePermissions()`, which *requests* permission (and
+ * therefore surfaces the Android system dialog); this only *reads* the
+ * current state, so it's safe to call from a passive Home-screen banner
+ * check without accidentally re-prompting the user. 'granted' on web/dev,
+ * same reasoning as `getExactAlarmStatus` below — there's no such
+ * permission to check outside native, and a banner should never appear
+ * there.
+ */
+export async function getNotificationPermissionStatus(): Promise<'granted' | 'denied'> {
+  if (!Capacitor.isNativePlatform()) return 'granted';
+  const current = await LocalNotifications.checkPermissions();
+  return current.display === 'granted' ? 'granted' : 'denied';
+}
+
+/**
  * djb2 string hash folded to an unsigned 32-bit int. Used only to turn a
  * departure's UUID into a deterministic number — this is not a
  * cryptographic hash, collisions are theoretically possible, and that's an

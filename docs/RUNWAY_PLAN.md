@@ -4,7 +4,7 @@
 
 *Revision 2: v1 ships as an installable Android APK (Capacitor shell around the web app) instead of a plain PWA, per your request. This upgrades notifications from "reliable only while the app is open" to real alarm-clock-grade scheduled alarms. Sections 5.5, 6 and 7 changed; the research and core mechanic are untouched.*
 
-**Status: plan for review. Nothing is built yet.** Per your safety preferences this document is the "explain the plan in plain English before executing" step, and it ends with the questions that need your explicit approval before any code is written.
+**Status: built.** v1 (0.5.0) is implemented in `apps/runway/` per this plan — six increments plus a whole-app adversarial review round. The §9 questions were answered: name Runway, sub-app in this repo, committed keystore (see `apps/runway/README.md` for the tradeoff), scope as drawn. Remaining before calling it 1.0.0: the on-device field test (§7 session 6 checkpoint), including the cold-start notification-tap case flagged in `src/native/notifications.ts`.
 
 ---
 

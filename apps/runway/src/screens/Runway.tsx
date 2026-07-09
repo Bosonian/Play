@@ -10,10 +10,15 @@ import { computeProjection } from '../lib/projection';
 import type { Projection } from '../lib/projection';
 import { currentStepElapsed } from '../lib/currentStepElapsed';
 import { useNow } from '../hooks/useNow';
-import { formatTime } from '../lib/format';
+import { formatAppointmentLine, formatSlackLine, formatTime } from '../lib/format';
 import { allowSleep, keepAwake } from '../native/keepAwake';
 import { hapticImpact } from '../native/haptics';
 import { cancelDepartureAlarms } from '../native/notifications';
+
+/** Same confirm copy as Home's "Remove" action on a planned departure (M1) —
+ * abandoning from either screen is the same operation with the same
+ * consequence, so it should read as the same sentence in both places. */
+const ABANDON_CONFIRM = 'Remove this departure? Its alarms are cancelled.';
 
 /** Google Maps turn-by-turn URL — no API key needed, Android routes this to
  * the Maps app when one's installed. Shared by both handoff points (leave
@@ -57,19 +62,6 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   // the persisted status) is what distinguishes those two moments.
   const [justLeft, setJustLeft] = useState(false);
 
-  // Starting a run: flip 'planned' -> 'running' and stamp startedAt, once.
-  // Guarded by the status check itself rather than a ref - once this write
-  // lands, departure.status is 'running' on the next render and the
-  // condition is false, so this can't loop or re-stamp startedAt.
-  useEffect(() => {
-    if (departure && departure.status === 'planned') {
-      void db.departures.update(departure.id, {
-        status: 'running',
-        startedAt: departure.startedAt ?? new Date().toISOString(),
-      });
-    }
-  }, [departure]);
-
   // Keep the screen on for exactly as long as a run is live. Keyed on
   // status rather than just mount/unmount because this component stays
   // mounted across the 'running' -> 'left' transition (the justLeft
@@ -101,12 +93,44 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   // the `if (!departure) return` guard above) because hoisting means it
   // could, in principle, run before the guard. A `const` closure created
   // after the guard keeps the narrowed (non-undefined) type.
+  // Per-step transactional flip via Dexie's `.modify()`, not a whole-array
+  // read-modify-write - two fast taps (different steps, or the same step
+  // twice) otherwise race: both reads see the same stale `departure.steps`
+  // from the closure, and whichever write lands second silently clobbers
+  // the first tap's change. `.modify()` runs its callback inside Dexie's
+  // own transaction against the current row, so each tap reads fresh state
+  // no matter how close together they land (M5).
+  //
+  // Checking a step also implies starting the run if the departure is
+  // still 'planned' - diving straight into the checklist without pressing
+  // "Start getting ready" first is a forgivable shortcut, not an error
+  // state, and folding the status/startedAt transition into the same
+  // `.modify()` call as M3's `handleStart` avoids a second race between
+  // "did this tap start the run" and "did this tap check the step".
   const toggleStep = async (step: DepartureStep) => {
     void hapticImpact('light');
-    const steps = departure.steps.map((s) =>
-      s.id === step.id ? { ...s, checkedAt: s.checkedAt === null ? new Date().toISOString() : null } : s,
-    );
-    await db.departures.update(departure.id, { steps });
+    await db.departures.where('id').equals(departure.id).modify((d) => {
+      if (d.status === 'planned') {
+        d.status = 'running';
+        d.startedAt = d.startedAt ?? new Date().toISOString();
+      }
+      const s = d.steps.find((x) => x.id === step.id);
+      if (s) s.checkedAt = s.checkedAt === null ? new Date().toISOString() : null;
+    });
+  };
+
+  // 'planned' -> 'running' without checking a step - the explicit "Start
+  // getting ready" button (M3). Same transactional shape as toggleStep for
+  // the same reason: a fast tap here immediately followed by a step tap
+  // shouldn't be able to race on `startedAt`.
+  const handleStart = async () => {
+    void hapticImpact('light');
+    await db.departures.where('id').equals(departure.id).modify((d) => {
+      if (d.status === 'planned') {
+        d.status = 'running';
+        d.startedAt = d.startedAt ?? new Date().toISOString();
+      }
+    });
   };
 
   const handleLeave = async () => {
@@ -115,6 +139,18 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     // Terminal status - no more staged alerts make sense once you've left.
     await cancelDepartureAlarms(departure.id);
     setJustLeft(true);
+  };
+
+  // M1/M2: abandoning is available from the live Runway screen for either
+  // 'planned' or 'running' - this is the only place 'abandoned' is
+  // actually reachable from. Same confirm copy and same consequence
+  // (status 'abandoned' + cancelled alarms) as Home's "Remove" action on a
+  // planned card; the two differ only in where they navigate afterwards.
+  const handleAbandon = async () => {
+    if (!window.confirm(ABANDON_CONFIRM)) return;
+    await db.departures.update(departure.id, { status: 'abandoned' });
+    await cancelDepartureAlarms(departure.id);
+    onNavigate({ name: 'home' });
   };
 
   if (justLeft) {
@@ -167,9 +203,10 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     );
   }
 
-  // Live view - status is 'running', or the instant of 'planned' before the
-  // effect above lands its write. RUNWAY_PLAN.md §4's one equation,
-  // recomputed every tick from `now`.
+  // Live view - status is 'planned' (not yet started - the "Start getting
+  // ready" button below is shown, but the same live projection and step
+  // list are already visible; M3) or 'running' (a run is under way).
+  // RUNWAY_PLAN.md §4's one equation, recomputed every tick from `now`.
   const projection = computeProjection(now, departure);
   const elapsed = currentStepElapsed(now, departure);
   const textAccent = STATE_TEXT[projection.state];
@@ -203,14 +240,18 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
           {formatTime(projection.projectedArrival)}
         </p>
         <p className="text-lg tabular-nums text-slate-500">
-          Appointment {formatTime(new Date(departure.appointmentAt))}
+          {formatAppointmentLine(new Date(departure.appointmentAt), now)}
         </p>
         <p className={`text-base font-medium tabular-nums ${textAccent}`}>
-          {projection.slackMinutes >= 0
-            ? `${projection.slackMinutes} min of slack`
-            : `${Math.abs(projection.slackMinutes)} min past your appointment`}
+          {formatSlackLine(projection.slackMinutes)}
         </p>
       </div>
+
+      {departure.status === 'planned' && (
+        <Button onClick={() => void handleStart()} className="w-full">
+          Start getting ready
+        </Button>
+      )}
 
       {allChecked ? (
         <div className={`flex flex-col items-center gap-2 rounded-lg border ${border} bg-slate-900 p-6 text-center`}>
@@ -303,6 +344,16 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
       {Capacitor.isNativePlatform() && (
         <p className="text-center text-sm text-slate-600">Screen stays on while this is open.</p>
       )}
+
+      {/* Quiet, at the very bottom, on purpose - abandoning is a real but
+          uncommon action and shouldn't compete visually with the live
+          projection or the step list above it (M1/M2). */}
+      <button
+        onClick={() => void handleAbandon()}
+        className="min-h-11 self-center text-sm font-medium text-slate-600 hover:text-red-400"
+      >
+        Abandon this departure
+      </button>
     </div>
   );
 }

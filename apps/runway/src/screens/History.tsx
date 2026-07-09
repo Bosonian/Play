@@ -71,9 +71,11 @@ export function History({ onNavigate }: HistoryProps) {
 
       {medianSlip !== null && (
         <p className="tabular-nums text-slate-400">
-          {medianSlip < 0
-            ? `Median slip: ${Math.abs(medianSlip)} min early.`
-            : `Median slip over these departures: ${medianSlip} min.`}
+          {medianSlip === 0
+            ? 'Median slip over these departures: on time.'
+            : medianSlip > 0
+              ? `Median slip over these departures: ${medianSlip} min late.`
+              : `Median slip over these departures: ${Math.abs(medianSlip)} min early.`}
         </p>
       )}
 

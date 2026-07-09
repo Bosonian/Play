@@ -93,6 +93,24 @@ describe('computeAlarmTimes', () => {
     expect(alarms.every((a) => a.at.getTime() > now.getTime())).toBe(true);
   });
 
+  it('buffer < 5 min: wrapUp fires after leaveSoon (accepted copy-order oddity, not a missed alarm)', () => {
+    const departure = makeDeparture({ bufferMinutes: 2 });
+    const alarms = computeAlarmTimes(NOW, departure);
+
+    const wrapUp = alarms.find((a) => a.slot === 1)!;
+    const leaveSoon = alarms.find((a) => a.slot === 2)!;
+    const leaveNow = alarms.find((a) => a.slot === 3)!;
+
+    // leaveNow = appointment(09:00) - travel(20) = 08:40.
+    expect(leaveNow.at.toISOString()).toBe('2026-07-09T08:40:00.000Z');
+    // wrapUp = leaveNow - buffer(2) = 08:38.
+    expect(wrapUp.at.toISOString()).toBe('2026-07-09T08:38:00.000Z');
+    // leaveSoon = leaveNow - 5 (fixed) = 08:35 - earlier than wrapUp, i.e.
+    // "Leave in 5 minutes" fires before "Wrap up" once buffer < 5.
+    expect(leaveSoon.at.toISOString()).toBe('2026-07-09T08:35:00.000Z');
+    expect(wrapUp.at.getTime()).toBeGreaterThan(leaveSoon.at.getTime());
+  });
+
   it('filters everything when the whole departure is already in the past', () => {
     const departure = makeDeparture();
     const now = new Date('2026-07-09T09:30:00.000Z'); // after the appointment itself

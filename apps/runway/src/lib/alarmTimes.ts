@@ -47,10 +47,17 @@ function addMinutes(date: Date, minutes: number): Date {
  * DepartureSetup on a departure whose "start getting ready" time already
  * passed makes the phone buzz right away — surprising, not useful.
  *
- * Ordering (startBy <= wrapUp <= leaveSoon <= leaveNow) always holds given
- * non-negative bufferMinutes/travelMinutes/step minutes, but is NOT
- * enforced by dedup here — a degenerate case (near-zero prep and buffer)
- * can produce coincident times, and that's fine: scheduling two
+ * Ordering (startBy <= wrapUp <= leaveSoon <= leaveNow) holds only when
+ * bufferMinutes >= 5 — leaveSoon is pinned to a fixed "leaveNow − 5" offset
+ * regardless of the buffer, so a smaller buffer pulls wrapUp (leaveNow −
+ * bufferMinutes) later than leaveSoon. In that case "Wrap up." fires
+ * *after* "Leave in 5 minutes." — a copy-order oddity, not a missed alarm:
+ * both notifications are still scheduled and still fire, just not in the
+ * order their labels would suggest. See alarmTimes.test.ts for a pinned
+ * example of this case.
+ *
+ * Not enforced by dedup either way — a degenerate case (near-zero prep and
+ * buffer) can produce coincident times, and that's fine: scheduling two
  * notifications for the same instant is harmless, and silently merging them
  * would hide a case worth the user noticing (their prep plan has collapsed
  * to nothing).

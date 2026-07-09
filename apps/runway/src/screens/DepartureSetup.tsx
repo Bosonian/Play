@@ -97,9 +97,16 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
     if (!appointmentIsValid) errors.push('Set an appointment date and time.');
     else if (!appointmentInFuture) errors.push('Appointment must be in the future.');
     if (travelMinutes < 0) errors.push('Travel minutes cannot be negative.');
+    if (bufferMinutes < 0) errors.push('Buffer minutes cannot be negative.');
+    if (steps.some((step) => step.plannedMinutes < 0)) errors.push('Step minutes cannot be negative.');
     if (steps.length === 0) errors.push('Add at least one step.');
   }
-  const canSave = appointmentInFuture && travelMinutes >= 0 && steps.length > 0;
+  const canSave =
+    appointmentInFuture &&
+    travelMinutes >= 0 &&
+    bufferMinutes >= 0 &&
+    steps.every((step) => step.plannedMinutes >= 0) &&
+    steps.length > 0;
 
   // Live preview — same equation as the Runway screen, evaluated with
   // every step unchecked (nothing has started yet). computeStartBy answers
@@ -157,16 +164,35 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
     }
 
     // Alarms only make sense for a departure that hasn't started yet — an
-    // edit to an already-'running' or terminal departure (not a v1 path
-    // today, but the guard costs nothing) shouldn't schedule new alerts.
+    // edit to a 'running' or terminal departure would schedule alerts for a
+    // plan that's already moot, so the status check matters here even
+    // though Home's Edit action already only offers editing while
+    // 'planned' (belt and suspenders: this function has no way to know
+    // *why* it was called). Editing a 'planned' departure lands here too —
+    // scheduleDepartureAlarms cancels whatever was scheduled from the
+    // previous save before scheduling the new times (src/native/
+    // notifications.ts), so an edit always reschedules, unconditionally,
+    // for the only path this branch can take (planned).
+    //
     // Permission is requested here, lazily, on first save — never at app
-    // launch (CLAUDE.md: no permission ambush) — and saving never blocks on
-    // the answer: a 'denied' result still leaves the departure saved, the
-    // Home screen's exact-alarm banner (increment-4 §6) is the non-blocking
-    // surface for "alerts may not fire", not this form.
+    // launch (CLAUDE.md: no permission ambush). The plugin's schedule()
+    // REJECTS outright when permission is denied, so this never lets that
+    // throw block the save that already landed in Dexie above: `granted`
+    // gates whether we even attempt to schedule, and the try/catch is a
+    // second backstop for anything else the native call could throw. A
+    // 'denied' or failed result still leaves the departure saved and
+    // navigation still happens — Home's notification-permission banner
+    // (B1) is the non-blocking surface for "alerts won't fire", not this
+    // form.
     if (savedDeparture.status === 'planned') {
-      await ensurePermissions();
-      await scheduleDepartureAlarms(savedDeparture);
+      try {
+        const granted = await ensurePermissions();
+        if (granted) {
+          await scheduleDepartureAlarms(savedDeparture);
+        }
+      } catch (err) {
+        console.warn('Runway: failed to schedule departure alarms', err);
+      }
     }
 
     onNavigate({ name: 'home' });
@@ -215,12 +241,31 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
         />
       </div>
 
-      <NumberField
-        label="Travel minutes"
-        hint="From a quick look at Maps. This won't auto-update with live traffic."
-        value={travelMinutes}
-        onChange={setTravelMinutes}
-      />
+      <div className="flex flex-wrap items-end gap-3">
+        <NumberField
+          label="Travel minutes"
+          hint="From a quick look at Maps. This won't auto-update with live traffic."
+          value={travelMinutes}
+          onChange={setTravelMinutes}
+        />
+        {/* Only offered once there's a destination to route to — an empty
+            Maps search is worse than no link at all. RUNWAY_PLAN.md §5.1
+            committed to this "one tap to glance" deep link for v1. */}
+        {destination.trim() !== '' && (
+          <button
+            type="button"
+            onClick={() =>
+              window.open(
+                `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`,
+                '_blank',
+              )
+            }
+            className="min-h-11 rounded-md px-2 text-sm font-medium text-sky-400 hover:text-sky-300"
+          >
+            Check route in Maps
+          </button>
+        )}
+      </div>
 
       <NumberField
         label="Friction buffer"

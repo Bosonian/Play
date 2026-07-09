@@ -22,7 +22,7 @@ Every push touching `apps/runway/**` rebuilds the Android APK via GitHub Actions
 To install on the S25 Ultra:
 
 1. Open that release page in Chrome on the phone.
-2. Download the `runway-v<version>-<sha>.apk` asset.
+2. Download the `runway-latest.apk` asset — the filename stays constant across builds, so each release replaces it rather than piling up sha-named files; the release body names the exact version and commit it was built from.
 3. Open the downloaded file. The first time, Chrome will ask permission to install unknown apps — allow it for Chrome (Settings → Apps → Special access → Install unknown apps).
 4. Install. Updates install over the existing app and Dexie data survives; it does **not** survive an uninstall.
 
