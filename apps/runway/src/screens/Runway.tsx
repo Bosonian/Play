@@ -230,8 +230,20 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   // calibration suggestions.
   const applyReplan = async (result: Extract<CompressResult, { fits: true }>) => {
     void hapticImpact('light');
+    // Merge the compressed plannedMinutes onto the CURRENT rows by id
+    // instead of assigning the whole array from the render-time snapshot —
+    // a step checked in the same instant as the Apply tap would otherwise
+    // have its fresh checkedAt clobbered back to the stale value shown in
+    // the confirm block (same race class as toggleStep's own .modify).
+    const compressedMinutesById = new Map(result.steps.map((s) => [s.id, s.plannedMinutes]));
     await db.departures.where('id').equals(departure.id).modify((d) => {
-      d.steps = result.steps;
+      for (const step of d.steps) {
+        const compressed = compressedMinutesById.get(step.id);
+        // Only unchecked-at-compression-time steps were compressed; a step
+        // checked since then keeps its checkedAt AND gets the new planned
+        // minutes, which is harmless — it's history the moment it's checked.
+        if (compressed !== undefined) step.plannedMinutes = compressed;
+      }
       d.bufferMinutes = result.bufferMinutes;
     });
     // wrapUp shifts because the buffer changed (alarmTimes.ts) - reschedule
@@ -374,7 +386,21 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
           never a modal, never applied without the explicit "Apply" tap
           below. */}
       {replanOpen && replanResult ? (
-        replanResult.fits ? (
+        replanResult.fits && replanNeededMinutes <= replanAvailableMinutes ? (
+          // compressPlan never expands a plan, so when the remaining plan
+          // already fits the time left it returns it unchanged — offering an
+          // Apply here would be a button that does nothing ("replan makes no
+          // change", reported from real use). Say the true thing instead.
+          <div className="flex flex-col gap-3 rounded-lg border border-slate-800 bg-slate-900 p-4">
+            <p className="text-sm text-slate-200">
+              The plan already fits — {replanAvailableMinutes - replanNeededMinutes} min to spare. Nothing to
+              compress.
+            </p>
+            <Button variant="secondary" onClick={() => setReplanOpen(false)}>
+              Close
+            </Button>
+          </div>
+        ) : replanResult.fits ? (
           <div className="flex flex-col gap-3 rounded-lg border border-sky-800/60 bg-sky-950/30 p-4">
             <p className="text-sm text-slate-200">
               You have {replanAvailableMinutes} min to the door. The remaining plan needs {replanNeededMinutes}.

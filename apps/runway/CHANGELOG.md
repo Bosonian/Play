@@ -5,6 +5,14 @@ via the `runway-latest.apk` asset at
 https://github.com/Bosonian/Play/releases/tag/runway-latest — it carries
 whichever version built last.
 
+## 0.12.1
+- Fix from first real use: "Replan from now" on a plan that already fits
+  said nothing and offered a no-op Apply. It now states the true thing:
+  "The plan already fits — N min to spare. Nothing to compress." Replan
+  only ever compresses; it never expands a plan.
+- Hardened Apply against the check-a-step-while-applying race (per-id
+  merge instead of whole-array write).
+
 ## 0.12.0
 - Recover instead of forfeit — three ways back in when a departure plan has
   already slipped, instead of the only options being "push through" or
