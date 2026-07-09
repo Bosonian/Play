@@ -36,8 +36,14 @@ export type Screen =
   // Increment 3: ExamOverview's "Start a sprint" action navigates here —
   // topic → length → start ritual (src/screens/SprintSetup.tsx) — which in
   // turn navigates to the live sprint screen below once a Sprint row
-  // exists to point at.
-  | { name: 'sprintSetup' }
+  // exists to point at. `topicId`/`plannedMinutes` (guided-layer increment)
+  // are an optional prefill: ExamOverview's next-move card passes both when
+  // its "Start" button is tapped, so this screen preselects the suggested
+  // topic and length but still requires the start ritual to be completed —
+  // the prefill only removes the topic/length decisions, never the ritual
+  // gate. Omitted (as from the plain "Start a sprint" button, or the card's
+  // own "Choose differently" link) means the ordinary blank form.
+  | { name: 'sprintSetup'; topicId?: string; plannedMinutes?: number }
   | { name: 'sprint'; sprintId: string }
   // Increment 4: ExamOverview's "Add milestone" link and each milestone
   // row's "Edit" action both land here — a single list+form screen (see
@@ -83,7 +89,7 @@ export default function App() {
     case 'topicEdit':
       return <TopicEdit examId={screen.examId} onNavigate={setScreen} />;
     case 'sprintSetup':
-      return <SprintSetup onNavigate={setScreen} />;
+      return <SprintSetup topicId={screen.topicId} plannedMinutes={screen.plannedMinutes} onNavigate={setScreen} />;
     case 'sprint':
       return <Sprint sprintId={screen.sprintId} onNavigate={setScreen} />;
     case 'milestoneEdit':

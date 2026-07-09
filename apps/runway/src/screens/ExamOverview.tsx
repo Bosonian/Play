@@ -15,6 +15,9 @@ import {
   zombieSprints,
 } from '../lib/examProjection';
 import type { ExamProjectionResult } from '../lib/examProjection';
+import { nextMove } from '../lib/nextMove';
+import type { NextMove } from '../lib/nextMove';
+import { PRUEFUNG_GUIDED_DONE_KEY, isGuidedPassActive, markGuidedPassDone } from '../lib/guidedPass';
 import {
   formatDateLong,
   formatDateMedium,
@@ -45,6 +48,18 @@ const STATE_TEXT: Record<ExamProjectionResult['state'], string> = {
 // pace, so this copy can't quietly drift out of sync with the number it's
 // describing.
 const PACE_ASSUMPTION_LINE = `Pace is an assumption (${DEFAULT_PACE_HOURS_PER_WEEK} h/week) until sprints are logged.`;
+
+// Next-move card copy (guided-layer increment §1). One line of reasoning
+// per `NextMove['reason']`, kept as a lookup rather than inline in the JSX
+// below so the reasoning is always visible right next to the suggestion —
+// "a suggestion with its work shown, never an oracle" (increment brief) —
+// and so a new reason added to nextMove.ts later can't compile without its
+// copy being added here too.
+const NEXT_MOVE_REASON_LINE: Record<NextMove['reason'], (topicName: string) => string> = {
+  momentum: (topicName) => `Continuing ${topicName} — recently worked.`,
+  behind: (topicName) => `${topicName} is furthest behind its estimate.`,
+  start: () => 'Nothing logged yet. First topic in your list.',
+};
 
 // findLiveSprint/zombieSprints/LIVE_SPRINT_THRESHOLD_MS (examProjection.ts)
 // draw the line between "still genuinely running" (the quiet banner below)
@@ -93,6 +108,14 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
     [exam],
   );
 
+  // Guided-layer increment (§2): read up front, alongside the other Dexie
+  // queries above, rather than after the early return below — hooks have
+  // to run unconditionally on every render, so this can't wait until
+  // `exam`/`topics`/etc. are confirmed loaded the way the plain variables
+  // further down can.
+  const guidedSetting = useLiveQuery(() => db.settings.get(PRUEFUNG_GUIDED_DONE_KEY), []);
+  const guidedPassActive = isGuidedPassActive(guidedSetting);
+
   // A readyDate doesn't need second precision the way the live Runway
   // screen's projected arrival does — a minute-level tick keeps "Ready by
   // ..." honest as the day rolls over without re-rendering this screen 60x
@@ -112,6 +135,11 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
   const textAccent = STATE_TEXT[projection.state];
   const thisWeekHours = hoursThisWeek(now, sprints);
 
+  // Next-move card's suggestion (guided-layer increment §1) — see
+  // showNextMoveArea below, where this combines with `liveSprint` (defined
+  // further down) to decide whether the card actually renders.
+  const nextMoveResult = nextMove(now, topics, sprints);
+
   // `milestones` is already chronological ascending (Dexie's sortBy('at')
   // above) so both slices below stay in that same order without a second
   // sort: upcoming milestones read soonest-first, and taking the LAST
@@ -124,6 +152,33 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
 
   const liveSprint = findLiveSprint(sprints, now);
   const liveSprintTopicName = liveSprint ? topics.find((topic) => topic.id === liveSprint.topicId)?.name : undefined;
+
+  // Next-move card visibility (guided-layer increment §1): hidden when
+  // there's nothing to suggest (nextMove() returned null — no topics, or
+  // every topic already at its estimate) and hidden while a live sprint
+  // exists, because the quiet "A sprint is running" pointer further down
+  // already owns that state — suggesting a *next* move while one is
+  // already under way would be a second, contradictory thing to decide.
+  const showNextMoveArea = nextMoveResult !== null && !liveSprint;
+  // The one-time walkthrough card (§2) replaces the ordinary next-move card
+  // for exactly one appearance: while the guided pass hasn't finished yet
+  // AND there's something to suggest. Tapping either of its two actions
+  // (Start or Later) sets pruefungGuidedDone, so this condition can only
+  // ever be true once per install — after that this always falls through
+  // to the ordinary card below.
+  const showGuidedCard = showNextMoveArea && guidedPassActive;
+
+  // Shared by both the ordinary and guided-walkthrough "Start" buttons:
+  // the ritual gate on SprintSetup still applies either way (App.tsx's
+  // Screen comment) — this only prefills the topic/length choice, it never
+  // routes around the start ritual itself. Ending the guided pass here (not
+  // just on "Later.") means starting the very first sprint already counts
+  // as "walkthrough done" — there's no reason to show onboarding copy again
+  // to someone who's already sprinting.
+  function startNextMove(target: NextMove) {
+    if (guidedPassActive) void markGuidedPassDone();
+    onNavigate({ name: 'sprintSetup', topicId: target.topicId, plannedMinutes: target.plannedMinutes });
+  }
 
   // Zombie reconciliation (F3): a sprint the live screen never got to end
   // (crash, force-close, forgotten) is unreachable through normal
@@ -206,6 +261,50 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
         {!projection.paceIsMeasured && <p className="text-sm text-slate-500">{PACE_ASSUMPTION_LINE}</p>}
       </div>
 
+      {/* Next-move card (guided-layer increment §1) — directly under the
+          actionable pace line, above milestones. Two mutually-exclusive
+          variants share this one slot: the one-time guided-walkthrough
+          framing (§2) while that's still active, and the ordinary
+          always-on next-move card once it isn't. Both always show their
+          reasoning alongside the suggestion — never just a button with no
+          explanation — and both route through SprintSetup's start ritual
+          exactly like every other way into a sprint; neither skips it. */}
+      {showNextMoveArea && nextMoveResult && (
+        showGuidedCard ? (
+          <div className="flex flex-col gap-3 rounded-md border border-sky-800/60 bg-sky-950/30 px-4 py-3">
+            <p className="text-slate-100">A 25-minute sprint breaks the seal. Start one now?</p>
+            <div className="flex gap-3">
+              <Button onClick={() => startNextMove(nextMoveResult)} className="flex-1">
+                Start
+              </Button>
+              <Button variant="secondary" onClick={() => void markGuidedPassDone()} className="flex-1">
+                Later.
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3 rounded-md border border-slate-800 bg-slate-900 px-4 py-3">
+            <div>
+              <p className="text-slate-100">
+                Next: {nextMoveResult.plannedMinutes} min on {nextMoveResult.topicName}.
+              </p>
+              <p className="text-sm text-slate-500">{NEXT_MOVE_REASON_LINE[nextMoveResult.reason](nextMoveResult.topicName)}</p>
+            </div>
+            <div className="flex items-center gap-4">
+              <Button onClick={() => startNextMove(nextMoveResult)} className="flex-1">
+                Start
+              </Button>
+              <button
+                onClick={() => onNavigate({ name: 'sprintSetup' })}
+                className="min-h-11 text-sm font-medium text-slate-400 hover:text-slate-200"
+              >
+                Choose differently
+              </button>
+            </div>
+          </div>
+        )
+      )}
+
       {/* Zombie reconciliation card (F3) — placed ahead of "Start a sprint"
           so an unresolved sprint from a crash or a forgotten end gets
           noticed before starting fresh work, but it's a resolve-when-ready
@@ -232,9 +331,18 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
         </div>
       )}
 
-      <Button onClick={() => onNavigate({ name: 'sprintSetup' })} className="w-full">
-        Start a sprint
-      </Button>
+      {/* Falls back to a plain, unprefilled "Start a sprint" whenever the
+          next-move card isn't showing — no topics yet, every topic already
+          at its estimate, or a live sprint already running (its own quiet
+          pointer is further down). Kept as the one remaining path into
+          SprintSetup in those states rather than removed outright: the
+          card replaces this button when it can offer a real suggestion, it
+          doesn't replace the ability to start a sprint at all. */}
+      {!showNextMoveArea && (
+        <Button onClick={() => onNavigate({ name: 'sprintSetup' })} className="w-full">
+          Start a sprint
+        </Button>
+      )}
 
       {/* Milestones — the real external dates (RUNWAY_PRUFUNG_PLAN.md §3,
           §4.1, increment 4). Placed right after the primary "Start a

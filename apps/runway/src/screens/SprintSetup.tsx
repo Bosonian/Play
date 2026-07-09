@@ -11,6 +11,10 @@ import { ensurePermissions, scheduleSprintEndAlarm } from '../native/notificatio
 import { hapticImpact } from '../native/haptics';
 
 interface SprintSetupProps {
+  /** Prefill from ExamOverview's next-move card (guided-layer increment) —
+   * present only when reached via that card's "Start" button. */
+  topicId?: string;
+  plannedMinutes?: number;
   onNavigate: (screen: Screen) => void;
 }
 
@@ -49,7 +53,7 @@ interface RitualItemDraft {
  * itself makes for reading the single exam directly rather than taking an
  * examId prop.
  */
-export function SprintSetup({ onNavigate }: SprintSetupProps) {
+export function SprintSetup({ topicId, plannedMinutes, onNavigate }: SprintSetupProps) {
   const exam = useLiveQuery(() => db.exams.toCollection().first(), []);
   const topics = useLiveQuery(
     async () => (exam ? db.topics.where('examId').equals(exam.id).sortBy('order') : []),
@@ -76,8 +80,19 @@ export function SprintSetup({ onNavigate }: SprintSetupProps) {
   const liveSprint = findLiveSprint(sprints ?? [], now);
   const liveSprintTopicName = liveSprint ? topics?.find((topic) => topic.id === liveSprint.topicId)?.name : undefined;
 
-  const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
-  const [selectedMinutes, setSelectedMinutes] = useState<SprintLength | null>(null);
+  // Seeded once from props, not re-validated against `topics` once they
+  // load: a prefilled topicId/plannedMinutes arrives only from an
+  // immediate navigation right after ExamOverview's nextMove() computed it
+  // against live data, so the gap in which the topic could vanish out from
+  // under it (a concurrent edit in another tab, in the same instant) isn't
+  // a case this single-user app needs to guard against. The ritual
+  // checklist below still has to be completed regardless of prefill — the
+  // prefill only removes the topic/length taps, never the initiation
+  // ritual itself.
+  const [selectedTopicId, setSelectedTopicId] = useState<string | null>(topicId ?? null);
+  const [selectedMinutes, setSelectedMinutes] = useState<SprintLength | null>(
+    plannedMinutes === 25 || plannedMinutes === 50 || plannedMinutes === 90 ? plannedMinutes : null,
+  );
   const [ritualItems, setRitualItems] = useState<RitualItemDraft[]>([]);
   const [ritualLoaded, setRitualLoaded] = useState(false);
   const [submitting, setSubmitting] = useState(false);

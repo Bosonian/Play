@@ -5,6 +5,7 @@ import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { TextField } from '../ui/TextField';
 import { ScreenHeader } from '../ui/ScreenHeader';
+import { PRUEFUNG_GUIDED_DONE_KEY, isGuidedPassActive } from '../lib/guidedPass';
 
 interface ExamSetupProps {
   examId?: string;
@@ -32,6 +33,13 @@ export function ExamSetup({ examId, onNavigate }: ExamSetupProps) {
     [examId],
   );
   const existing = examId ? explicitExam : anyExistingExam;
+
+  // Guided-layer increment (§2): the first-open walkthrough's guidance line
+  // and its "save chains straight to TopicEdit" behaviour both key off this
+  // one flag — see lib/guidedPass.ts for why `undefined` (still loading)
+  // reads as "active" here rather than "hidden".
+  const guidedSetting = useLiveQuery(() => db.settings.get(PRUEFUNG_GUIDED_DONE_KEY), []);
+  const guidedPassActive = isGuidedPassActive(guidedSetting);
 
   const [name, setName] = useState('');
   // Left blank rather than defaulted to today: unlike a departure's
@@ -81,6 +89,7 @@ export function ExamSetup({ examId, onNavigate }: ExamSetupProps) {
     const now = new Date().toISOString();
     const examDateValue = examDate.trim() === '' ? null : examDate;
 
+    let savedExamId: string;
     if (existing) {
       await db.exams.update(existing.id, {
         name: name.trim(),
@@ -88,7 +97,7 @@ export function ExamSetup({ examId, onNavigate }: ExamSetupProps) {
         examDate: examDateValue,
         updatedAt: now,
       });
-      onNavigate({ name: 'exam' });
+      savedExamId = existing.id;
     } else {
       const id = crypto.randomUUID();
       await db.exams.add({
@@ -99,8 +108,15 @@ export function ExamSetup({ examId, onNavigate }: ExamSetupProps) {
         createdAt: now,
         updatedAt: now,
       });
-      onNavigate({ name: 'exam' });
+      savedExamId = id;
     }
+
+    // Guided-layer increment (§2): while the walkthrough is still active,
+    // Save chains straight into TopicEdit instead of the overview — "the
+    // exam, then its topics, then a first sprint" (the guidance line
+    // below), so the next screen the walkthrough shows is the one that
+    // continues that chain, not a detour through the overview first.
+    onNavigate(guidedPassActive ? { name: 'topicEdit', examId: savedExamId } : { name: 'exam' });
   }
 
   return (
@@ -111,6 +127,16 @@ export function ExamSetup({ examId, onNavigate }: ExamSetupProps) {
           onBack={() => onNavigate(existing ? { name: 'exam' } : { name: 'home' })}
         />
       </div>
+
+      {/* Guided-layer increment (§2): only for the actual create path — an
+          exam already exists once `existing` is set, so this is a re-edit,
+          not the first-open walkthrough, even if the flag hasn't been set
+          yet for some other reason. */}
+      {!existing && guidedPassActive && (
+        <p className="text-sm text-slate-500">
+          Two minutes of setup: the exam, then its topics, then a first sprint.
+        </p>
+      )}
 
       <TextField
         label="Name"

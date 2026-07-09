@@ -67,13 +67,17 @@ export function Home({ onNavigate }: HomeProps) {
   // more careful than that.
   const exam = useLiveQuery(() => db.exams.toCollection().first(), []);
 
-  // undefined while the settings row is still loading (first Dexie read
-  // after app open) — the card stays hidden during that instant rather
-  // than flashing on then off, since undefined !== 'true' would otherwise
-  // read as "not dismissed yet" for one render.
-  const firstRunSetting = useLiveQuery(() => db.settings.get(FIRST_RUN_DISMISSED_KEY), []);
-  const showFirstRunCard =
-    Capacitor.isNativePlatform() && firstRunSetting !== undefined && firstRunSetting?.value !== 'true';
+  // db.settings.get() resolves to undefined for a missing row — the same
+  // value useLiveQuery yields while the query is still loading. Left as-is,
+  // "fresh install, row never written" was indistinguishable from
+  // "loading" and the card never showed at all. The ?? null sentinel
+  // splits the two: undefined = still loading (card hidden, no flash),
+  // null = loaded and never dismissed (card shows).
+  const firstRunSetting = useLiveQuery(
+    async () => (await db.settings.get(FIRST_RUN_DISMISSED_KEY)) ?? null,
+    [],
+  );
+  const showFirstRunCard = Capacitor.isNativePlatform() && firstRunSetting === null;
 
   async function dismissFirstRunCard() {
     await db.settings.put({ key: FIRST_RUN_DISMISSED_KEY, value: 'true' });

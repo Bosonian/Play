@@ -5,6 +5,8 @@ import type { Topic } from '../db/types';
 import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { ScreenHeader } from '../ui/ScreenHeader';
+import { PRUEFUNG_GUIDED_DONE_KEY, isGuidedPassActive } from '../lib/guidedPass';
+import { FACHARZT_NEUROLOGIE_TEMPLATE } from '../content/facharztNeurologieTemplate';
 
 interface TopicEditProps {
   examId: string;
@@ -29,6 +31,11 @@ const HAS_SPRINTS_MESSAGE = 'This topic has logged sprints. Topics with history 
 const MAX_ESTIMATED_HOURS = 10000;
 const ESTIMATED_HOURS_RANGE_MESSAGE = 'Estimated hours must be between 0 and 10000.';
 
+/** Total placeholder hours across the draft template (§3) — computed once,
+ * not hand-maintained as a second number that could drift from the array
+ * it's summing. */
+const TEMPLATE_TOTAL_HOURS = FACHARZT_NEUROLOGIE_TEMPLATE.reduce((sum, topic) => sum + topic.estimatedHours, 0);
+
 /**
  * Add/remove/rename/reorder for an exam's topics (RUNWAY_PRUFUNG_PLAN.md
  * §4). Structurally this mirrors TemplateEdit's step editor — a local
@@ -48,6 +55,11 @@ export function TopicEdit({ examId, onNavigate }: TopicEditProps) {
 
   const [topics, setTopics] = useState<Topic[]>([]);
 
+  // Guided-layer increment (§2): this screen's guidance line is keyed off
+  // the same flag as ExamSetup's — see lib/guidedPass.ts.
+  const guidedSetting = useLiveQuery(() => db.settings.get(PRUEFUNG_GUIDED_DONE_KEY), []);
+  const guidedPassActive = isGuidedPassActive(guidedSetting);
+
   // Populate once on load, same "runs when the query's identity changes,
   // which in practice means once" pattern as TemplateEdit's steps — this
   // screen is the only writer of the topics table while it's open, so
@@ -61,6 +73,23 @@ export function TopicEdit({ examId, onNavigate }: TopicEditProps) {
       ...prev,
       { id: crypto.randomUUID(), examId, name: '', estimatedHours: 0, order: prev.length },
     ]);
+  }
+
+  /** "Insert template" (§3): bulk-adds the draft topic list into the local,
+   * unsaved editor state — same as every other edit on this screen, nothing
+   * touches the database until "Save topics" is tapped. Only offered while
+   * `topics` is empty (see the JSX below) and there's no existing state to
+   * merge with, so this can safely replace rather than append. */
+  function insertTemplate() {
+    setTopics(
+      FACHARZT_NEUROLOGIE_TEMPLATE.map((templateTopic, index) => ({
+        id: crypto.randomUUID(),
+        examId,
+        name: templateTopic.name,
+        estimatedHours: templateTopic.estimatedHours,
+        order: index,
+      })),
+    );
   }
 
   // Only a topic that's already in the database can possibly have logged
@@ -144,10 +173,36 @@ export function TopicEdit({ examId, onNavigate }: TopicEditProps) {
         <ScreenHeader title="Edit topics" onBack={() => onNavigate({ name: 'exam' })} />
       </div>
 
-      {savedTopics && topics.length === 0 && (
+      {/* Guided-layer increment (§2): the walkthrough's second line. Shown
+          regardless of whether the topic list is empty — it's about how to
+          fill in the estimates about to be entered, not about there being
+          nothing yet. */}
+      {guidedPassActive && (
         <p className="text-sm text-slate-500">
-          No topics yet. Add the chapters the exam covers, with honest hour estimates.
+          Honest hour estimates beat hopeful ones — the projection is only as true as these numbers.
         </p>
+      )}
+
+      {savedTopics && topics.length === 0 && (
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-slate-500">
+            No topics yet. Add the chapters the exam covers, with honest hour estimates.
+          </p>
+          {/* Draft template offer (§3) - never shown once any topic exists
+              (this whole block is inside the `topics.length === 0` guard),
+              so there's no risk of it silently re-appearing and inviting a
+              second bulk-insert on top of real data. */}
+          <div className="flex flex-col gap-2 rounded-md border border-slate-800 bg-slate-900 p-3">
+            <p className="text-sm text-slate-400">
+              Start from a template — Facharzt Neurologie draft, {FACHARZT_NEUROLOGIE_TEMPLATE.length} topics, ~
+              {TEMPLATE_TOTAL_HOURS} h. Adjust names and hours to the actual exam contents; the numbers are
+              placeholders, not guidance.
+            </p>
+            <Button variant="secondary" onClick={insertTemplate} className="self-start">
+              Insert template
+            </Button>
+          </div>
+        </div>
       )}
 
       <div className="flex flex-col gap-2">
