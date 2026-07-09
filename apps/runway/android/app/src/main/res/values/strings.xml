@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Runway</string>
+    <string name="title_activity_main">Runway</string>
+    <string name="package_name">de.bosonian.runway</string>
+    <string name="custom_url_scheme">de.bosonian.runway</string>
+</resources>

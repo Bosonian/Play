@@ -1,0 +1,110 @@
+name: Runway APK
+
+on:
+  push:
+    branches:
+      - claude/adhd-time-perception-app-9v0uj4
+      - main
+    paths:
+      - 'apps/runway/**'
+      - '.github/workflows/runway-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# A stale in-progress APK build is worthless once a newer push exists, unlike
+# the Pages deploy (which we let finish so the live site is never half-built).
+concurrency:
+  group: runway-apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/runway/package-lock.json
+
+      - name: Install dependencies
+        working-directory: apps/runway
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: apps/runway
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: apps/runway
+        run: npm run test
+
+      - name: Build web app
+        working-directory: apps/runway
+        run: npm run build
+
+      - name: Sync Capacitor Android project
+        working-directory: apps/runway
+        run: npx cap sync android
+
+      - name: Make gradlew executable
+        working-directory: apps/runway/android
+        run: chmod +x gradlew
+
+      - name: Build release APK
+        working-directory: apps/runway/android
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: runway-apk
+          path: apps/runway/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+
+      - name: Compute release file name
+        id: vars
+        run: |
+          VERSION_NAME=$(grep -m1 'versionName' apps/runway/android/app/build.gradle | sed -E 's/.*versionName "([^"]+)".*/\1/')
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          APK_NAME="runway-v${VERSION_NAME}-${SHORT_SHA}.apk"
+          echo "apk_name=${APK_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Rename APK for release
+        run: |
+          cp apps/runway/android/app/build/outputs/apk/release/app-release.apk \
+             "apps/runway/android/app/build/outputs/apk/release/${{ steps.vars.outputs.apk_name }}"
+
+      - name: Publish / refresh runway-latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: runway-latest
+          name: Runway (latest build)
+          prerelease: true
+          files: apps/runway/android/app/build/outputs/apk/release/${{ steps.vars.outputs.apk_name }}
+          body: |
+            Automatically rebuilt release APK for Runway, refreshed on every push
+            to `apps/runway/`. This is not a Play Store release — it is a
+            personal sideloaded build, signed with the keystore committed at
+            `apps/runway/signing/runway.keystore` (see `apps/runway/README.md`
+            for the signing tradeoff).
+
+            **Install on the S25 Ultra:**
+            1. Open this page in Chrome on the phone.
+            2. Download `${{ steps.vars.outputs.apk_name }}`.
+            3. Open the downloaded file; Chrome will ask permission to install
+               unknown apps the first time — allow it for Chrome.
+            4. Install. Updates install over the existing app; Dexie data
+               survives updates (not uninstalls).
