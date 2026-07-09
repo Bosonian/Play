@@ -22,6 +22,11 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # A healthy run takes ~2 minutes; the GitHub default timeout is 6 hours.
+    # Runner-side flakes (job cancelled by the platform, no failed steps —
+    # seen twice on 2026-07-09) can leave a run dangling far longer than any
+    # real build, so cap it well above healthy but far below the default.
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
