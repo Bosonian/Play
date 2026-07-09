@@ -1,7 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 import type { ActionPerformed, Channel, ScheduleOptions } from '@capacitor/local-notifications';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import type { Departure } from '../db/types';
+import type { Departure, Sprint } from '../db/types';
 import { computeAlarmTimes } from '../lib/alarmTimes';
 
 // The ONLY file in this app that imports @capacitor/local-notifications
@@ -15,6 +15,7 @@ import { computeAlarmTimes } from '../lib/alarmTimes';
 const STAGED_CHANNEL_ID = 'runway-staged';
 const LEAVE_CHANNEL_ID = 'runway-leave';
 const SLOT_COUNT = 4;
+const MS_PER_MINUTE = 60_000;
 
 let channelsReady = false;
 
@@ -108,13 +109,43 @@ function hashString(input: string): number {
  * 0x1fffffff * 4 + 3 = 2147483647 = 2^31 - 1 — with no overlap between the
  * four slots of the same departure.
  */
-function notificationId(departureId: string, slot: number): number {
+export function notificationId(departureId: string, slot: number): number {
   const base = hashString(departureId) % 0x1fffffff;
   return base * SLOT_COUNT + slot;
 }
 
 function allSlotIds(departureId: string): number[] {
   return [0, 1, 2, 3].map((slot) => notificationId(departureId, slot));
+}
+
+/**
+ * Deterministic notification id for a sprint's single end-of-sprint alarm.
+ *
+ * A sprint only ever gets one alarm (not four staged ones like a
+ * departure), so there's no real slot to assign — but the id still has to
+ * live somewhere that can't collide with `notificationId`'s departure ids.
+ * The tempting-looking fix is a disjoint numeric range (e.g. widen
+ * SLOT_COUNT, or shift sprint ids into the top half of the 31-bit space).
+ * Both are wrong: SLOT_COUNT must stay 4, because changing it would change
+ * what `notificationId(someExistingDepartureId, slot)` computes for every
+ * departure already on a user's device, and cancelDepartureAlarms() has no
+ * record of *what was actually scheduled* — only the ability to recompute
+ * the same ids again. Silently recomputing different ids means an old
+ * alarm can never be found and cancelled again.
+ *
+ * The actual fix: don't build a new range at all. Reuse
+ * `notificationId(sprintId, 0)` as-is. This is safe because a departure id
+ * and a sprint id are both `crypto.randomUUID()` values drawn from two
+ * different tables that this app never compares to each other — so a hash
+ * collision between "some departure's slot-0 startBy alarm" and "some
+ * sprint's end alarm" is exactly the same already-documented,
+ * theoretically-possible-but-accepted collision class `hashString()`
+ * above already lives with (worst case: one alert silently overwrites or
+ * cancels the other at that id, not data corruption). See
+ * notifications.test.ts for the bit-width assertion this relies on.
+ */
+export function sprintNotificationId(sprintId: string): number {
+  return notificationId(sprintId, 0);
 }
 
 /**
@@ -162,6 +193,54 @@ export async function scheduleDepartureAlarms(departure: Departure): Promise<voi
     })),
   };
   await LocalNotifications.schedule(options);
+}
+
+/**
+ * Schedules the single alarm for a sprint's planned end, on the same
+ * high-importance 'runway-leave' channel a departure's "leave now" alert
+ * uses — a sprint's timer going off is a real event (RUNWAY_PRUFUNG_PLAN.md
+ * §5: "a timer ringing is real, not simulated"), not a softer nudge.
+ *
+ * Scheduled once, at sprint start, for startedAt + plannedMinutes. Reaching
+ * that instant does NOT end the sprint (Sprint.tsx keeps the countdown
+ * running past zero, into overrun) — this alarm is purely informational,
+ * telling Deepak the box of time is up, not stopping anything itself.
+ *
+ * No-ops if that instant has already passed — scheduling a notification for
+ * a moment already behind us isn't meaningful, and there's no legitimate
+ * caller of this that would ever need it (it's only ever invoked once, at
+ * sprint creation, with a startedAt of "now").
+ */
+export async function scheduleSprintEndAlarm(sprint: Sprint, topicName: string): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  await ensureChannels();
+
+  const endAt = new Date(new Date(sprint.startedAt).getTime() + sprint.plannedMinutes * MS_PER_MINUTE);
+  if (endAt.getTime() <= Date.now()) return;
+
+  await LocalNotifications.schedule({
+    notifications: [
+      {
+        id: sprintNotificationId(sprint.id),
+        title: 'Runway',
+        body: `Sprint complete. ${topicName}`,
+        channelId: LEAVE_CHANNEL_ID,
+        schedule: { at: endAt, allowWhileIdle: true },
+        extra: { sprintId: sprint.id },
+      },
+    ],
+  });
+}
+
+/**
+ * Cancels a sprint's end alarm, if one is still pending — same "safe to
+ * call unconditionally" reasoning as cancelDepartureAlarms: cancel()
+ * silently ignores an id that was never scheduled, already fired, or
+ * already cancelled.
+ */
+export async function cancelSprintEndAlarm(sprintId: string): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  await LocalNotifications.cancel({ notifications: [{ id: sprintNotificationId(sprintId) }] });
 }
 
 /**

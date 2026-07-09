@@ -8,6 +8,7 @@ import { ExamOverview } from './screens/ExamOverview';
 import { ExamSetup } from './screens/ExamSetup';
 import { TopicEdit } from './screens/TopicEdit';
 import { SprintSetup } from './screens/SprintSetup';
+import { Sprint } from './screens/Sprint';
 import { setNavigationRef } from './lib/navigationRef';
 
 // Navigation as plain React state, not a router library. There's no
@@ -31,11 +32,12 @@ export type Screen =
   | { name: 'exam' }
   | { name: 'examSetup'; examId?: string }
   | { name: 'topicEdit'; examId: string }
-  // Increment 2: ExamOverview's "Start a sprint" action navigates here.
-  // Placeholder screen only (src/screens/SprintSetup.tsx) — increment 3
-  // replaces it with the real setup flow; this exists now so the button
-  // has somewhere real to go and the type-checks stay honest about it.
-  | { name: 'sprintSetup' };
+  // Increment 3: ExamOverview's "Start a sprint" action navigates here —
+  // topic → length → start ritual (src/screens/SprintSetup.tsx) — which in
+  // turn navigates to the live sprint screen below once a Sprint row
+  // exists to point at.
+  | { name: 'sprintSetup' }
+  | { name: 'sprint'; sprintId: string };
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'home' });
@@ -76,5 +78,7 @@ export default function App() {
       return <TopicEdit examId={screen.examId} onNavigate={setScreen} />;
     case 'sprintSetup':
       return <SprintSetup onNavigate={setScreen} />;
+    case 'sprint':
+      return <Sprint sprintId={screen.sprintId} onNavigate={setScreen} />;
   }
 }

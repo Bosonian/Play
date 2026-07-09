@@ -39,6 +39,20 @@ const STATE_TEXT: Record<ExamProjectionResult['state'], string> = {
 // describing.
 const PACE_ASSUMPTION_LINE = `Pace is an assumption (${DEFAULT_PACE_HOURS_PER_WEEK} h/week) until sprints are logged.`;
 
+// How long an unfinished sprint (endedAt === null) still counts as
+// currently-running for the "A sprint is running" banner below. A crash or
+// force-close can leave a sprint stuck with no endedAt forever; without a
+// cutoff, that dead row would haunt this screen indefinitely, always
+// inviting a tap into a sprint that isn't actually happening.
+//
+// This threshold ONLY controls the banner. It has no bearing on the hour
+// math above: examProjection.ts's loggedHoursByTopic already skips every
+// sprint with endedAt === null unconditionally, with no age check of its
+// own - an unfinished sprint (crashed or merely still live) contributes
+// zero logged hours either way, which is the correct answer regardless of
+// how old it is.
+const LIVE_SPRINT_THRESHOLD_MS = 12 * 60 * 60_000;
+
 /**
  * Prüfung's home screen (RUNWAY_PRUFUNG_PLAN.md §4.1) — the real thing this
  * time. Increment 1 shipped a placeholder (name, anchor line, topic count);
@@ -80,6 +94,13 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
   const loggedByTopic = loggedHoursByTopic(sprints);
   const textAccent = STATE_TEXT[projection.state];
   const thisWeekHours = hoursThisWeek(now, sprints);
+
+  // LIVE_SPRINT_THRESHOLD_MS above is what keeps a crashed, never-ended
+  // sprint from pinning this banner up forever.
+  const liveSprint = sprints.find(
+    (sprint) => sprint.endedAt === null && now.getTime() - new Date(sprint.startedAt).getTime() < LIVE_SPRINT_THRESHOLD_MS,
+  );
+  const liveSprintTopicName = liveSprint ? topics.find((topic) => topic.id === liveSprint.topicId)?.name : undefined;
 
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-6 px-4 pb-12 pt-safe-top">
@@ -151,6 +172,18 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
           );
         })}
       </div>
+
+      {/* Quiet by design (plan §1: "not a fake-urgency machine") — this is
+          a pointer back to real work already in progress, not a nudge to
+          start something. */}
+      {liveSprint && (
+        <button
+          onClick={() => onNavigate({ name: 'sprint', sprintId: liveSprint.id })}
+          className="min-h-11 self-start text-sm font-medium text-slate-400 hover:text-slate-200"
+        >
+          A sprint is running: {liveSprintTopicName ?? 'Untitled topic'}.
+        </button>
+      )}
 
       <div className="flex flex-col items-start gap-1">
         <button

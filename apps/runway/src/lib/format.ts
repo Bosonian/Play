@@ -125,3 +125,20 @@ export function formatRequiredPaceLine(
   const required = requiredPaceHoursPerWeek.toFixed(1);
   return `Ready by ${formatDateMedium(anchor)} needs ${required} h/week. This week: ${hoursThisWeek.toFixed(1)} of ${required}.`;
 }
+
+/** "24:59" while a sprint still has time left in its planned box; "+3:12"
+ * once it's run past that (a negative `remainingSeconds` — the Sprint
+ * screen deliberately does not clamp the countdown at 0:00, because
+ * stopping the clock there would falsify the log: the sprint isn't over
+ * until the user ends it, so time keeps counting, just upward and in the
+ * overrun tone). mm:ss always, no hours component the way formatSlackLine
+ * gains one past two hours — a sprint's plannedMinutes tops out at 90, so
+ * that branch would never actually fire here. */
+export function formatCountdown(remainingSeconds: number): string {
+  const overrun = remainingSeconds < 0;
+  const magnitude = Math.abs(remainingSeconds);
+  const minutes = Math.floor(magnitude / 60);
+  const seconds = magnitude % 60;
+  const clock = `${minutes}:${String(seconds).padStart(2, '0')}`;
+  return overrun ? `+${clock}` : clock;
+}

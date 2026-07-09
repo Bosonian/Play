@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   formatAppointmentLine,
+  formatCountdown,
   formatDateLong,
   formatDateMedium,
   formatExamAnchorLine,
@@ -94,5 +95,27 @@ describe('formatRequiredPaceLine', () => {
   it('says the window is open instead of a rate once requiredPace is null', () => {
     const anchor = new Date('2026-11-01T00:00:00');
     expect(formatRequiredPaceLine(anchor, null, 2)).toBe('The exam window is open.');
+  });
+});
+
+describe('formatCountdown', () => {
+  it('mm:ss while time remains', () => {
+    expect(formatCountdown(24 * 60 + 59)).toBe('24:59');
+  });
+
+  it('pads single-digit seconds', () => {
+    expect(formatCountdown(5 * 60 + 5)).toBe('5:05');
+  });
+
+  it('zero reads as 0:00, not an overrun', () => {
+    expect(formatCountdown(0)).toBe('0:00');
+  });
+
+  it('switches to a leading "+" and counts up once negative (overrun)', () => {
+    expect(formatCountdown(-(3 * 60 + 12))).toBe('+3:12');
+  });
+
+  it('pads overrun seconds too', () => {
+    expect(formatCountdown(-65)).toBe('+1:05');
   });
 });
