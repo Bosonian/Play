@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { formatAppointmentLine, formatDateLong, formatExamAnchorLine, formatSlackLine } from './format';
+import {
+  formatAppointmentLine,
+  formatDateLong,
+  formatDateMedium,
+  formatExamAnchorLine,
+  formatExamMarginLine,
+  formatRequiredPaceLine,
+  formatSlackLine,
+} from './format';
 
 describe('formatSlackLine', () => {
   it('plain minutes, ahead of schedule', () => {
@@ -52,5 +60,39 @@ describe('formatExamAnchorLine', () => {
     expect(formatExamAnchorLine({ windowStart: '2026-11-01', examDate: '2026-11-14' })).toBe(
       'Exam 14 Nov 2026',
     );
+  });
+});
+
+describe('formatDateMedium', () => {
+  it('day and short month, no weekday, no year', () => {
+    expect(formatDateMedium(new Date('2026-12-14T00:00:00'))).toBe('14 Dec');
+  });
+});
+
+describe('formatExamMarginLine', () => {
+  it('positive slack reads as margin', () => {
+    expect(formatExamMarginLine(9)).toBe('9 days of margin');
+  });
+
+  it('negative slack reads as past the exam, magnitude only', () => {
+    expect(formatExamMarginLine(-3)).toBe('3 days past the exam');
+  });
+
+  it('zero slack reads as margin (the boundary is inclusive on the calm side)', () => {
+    expect(formatExamMarginLine(0)).toBe('0 days of margin');
+  });
+});
+
+describe('formatRequiredPaceLine', () => {
+  it('states the required pace and this week’s progress toward it, one decimal each', () => {
+    const anchor = new Date('2026-11-01T00:00:00');
+    expect(formatRequiredPaceLine(anchor, 6.5, 2)).toBe(
+      'Ready by 1 Nov needs 6.5 h/week. This week: 2.0 of 6.5.',
+    );
+  });
+
+  it('says the window is open instead of a rate once requiredPace is null', () => {
+    const anchor = new Date('2026-11-01T00:00:00');
+    expect(formatRequiredPaceLine(anchor, null, 2)).toBe('The exam window is open.');
   });
 });

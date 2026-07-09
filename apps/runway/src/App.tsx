@@ -7,6 +7,7 @@ import { History } from './screens/History';
 import { ExamOverview } from './screens/ExamOverview';
 import { ExamSetup } from './screens/ExamSetup';
 import { TopicEdit } from './screens/TopicEdit';
+import { SprintSetup } from './screens/SprintSetup';
 import { setNavigationRef } from './lib/navigationRef';
 
 // Navigation as plain React state, not a router library. There's no
@@ -29,7 +30,12 @@ export type Screen =
   // that.
   | { name: 'exam' }
   | { name: 'examSetup'; examId?: string }
-  | { name: 'topicEdit'; examId: string };
+  | { name: 'topicEdit'; examId: string }
+  // Increment 2: ExamOverview's "Start a sprint" action navigates here.
+  // Placeholder screen only (src/screens/SprintSetup.tsx) — increment 3
+  // replaces it with the real setup flow; this exists now so the button
+  // has somewhere real to go and the type-checks stay honest about it.
+  | { name: 'sprintSetup' };
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'home' });
@@ -68,5 +74,7 @@ export default function App() {
       return <ExamSetup examId={screen.examId} onNavigate={setScreen} />;
     case 'topicEdit':
       return <TopicEdit examId={screen.examId} onNavigate={setScreen} />;
+    case 'sprintSetup':
+      return <SprintSetup onNavigate={setScreen} />;
   }
 }

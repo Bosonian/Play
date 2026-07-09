@@ -71,6 +71,18 @@ export function formatDateLong(date: Date): string {
   return format(date, 'd MMM yyyy');
 }
 
+/** "14 Dec" — day + short month, no weekday, no year. Used only for the
+ * exam overview's "Ready by" centerpiece: unlike formatDateLong's anchor
+ * dates (which sit far enough out — a whole exam season away — that the
+ * year is part of being exact), a readyDate is always within a few months
+ * of `now` by construction, so the year would be redundant noise on the
+ * biggest number on the screen. Distinct from formatDateDisplay's "Wed 9
+ * Jul" too: no weekday, because "Ready by" isn't read as "which day of the
+ * week do I have to act by" the way an appointment is. */
+export function formatDateMedium(date: Date): string {
+  return format(date, 'd MMM');
+}
+
 /** "Exam window opens 1 Nov 2026" before the exact date is known; "Exam 1
  * Nov 2026" once it is — RUNWAY_PRUFUNG_PLAN.md §3: `examDate` "overrides
  * windowStart as the anchor" the moment it's set, and that's exactly the
@@ -84,4 +96,32 @@ export function formatExamAnchorLine(exam: Pick<Exam, 'windowStart' | 'examDate'
   const anchor = exam.examDate ?? exam.windowStart;
   const label = formatDateLong(new Date(`${anchor}T00:00:00`));
   return exam.examDate ? `Exam ${label}` : `Exam window opens ${label}`;
+}
+
+/** "{n} days of margin" / "{n} days past the exam" — the exam overview's
+ * slack line for every state except 'done' (which has its own fixed
+ * sentence, handled by the caller rather than here, since it doesn't
+ * depend on slackDays at all). Only ever called with a non-null
+ * slackDays — the 'late'-via-zero-pace ("Never") state has no margin
+ * figure to report and the screen omits this line entirely in that case. */
+export function formatExamMarginLine(slackDays: number): string {
+  return slackDays >= 0 ? `${slackDays} days of margin` : `${Math.abs(slackDays)} days past the exam`;
+}
+
+/** "Ready by 1 Nov needs 6.5 h/week. This week: 2.0 of 6.5." — the exam
+ * overview's actionable line (RUNWAY_PRUFUNG_PLAN.md §2). `anchor` here is
+ * the exam's own anchor date (window start or exact date), not the
+ * projected readyDate — the sentence reads as "here's the rate that gets
+ * you ready in time for the exam", not a restatement of the centerpiece.
+ * `requiredPaceHoursPerWeek` of `null` means the anchor is today or
+ * already past, at which point "hours/week needed" isn't a meaningful
+ * number — the line says so instead of dividing by zero. */
+export function formatRequiredPaceLine(
+  anchor: Date,
+  requiredPaceHoursPerWeek: number | null,
+  hoursThisWeek: number,
+): string {
+  if (requiredPaceHoursPerWeek === null) return 'The exam window is open.';
+  const required = requiredPaceHoursPerWeek.toFixed(1);
+  return `Ready by ${formatDateMedium(anchor)} needs ${required} h/week. This week: ${hoursThisWeek.toFixed(1)} of ${required}.`;
 }
