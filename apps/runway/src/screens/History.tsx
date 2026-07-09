@@ -95,7 +95,7 @@ export function History({ onNavigate }: HistoryProps) {
                     <>
                       {' · '}
                       left {formatTime(new Date(departure.leftAt))} ({slip >= 0 ? '+' : ''}
-                      {slip})
+                      {slip} min)
                     </>
                   )}
                 </p>

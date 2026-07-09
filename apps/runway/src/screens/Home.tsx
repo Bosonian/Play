@@ -32,8 +32,24 @@ function suggestionKey(suggestion: Suggestion): string {
   return `${suggestion.templateId}::${suggestion.stepName}`;
 }
 
+/** Key into the `settings` table (db/db.ts v2) for the first-run card's
+ * dismissal — see the "Done — don't show this again" handler below. */
+const FIRST_RUN_DISMISSED_KEY = 'firstRunDismissed';
+
 export function Home({ onNavigate }: HomeProps) {
   const templates = useLiveQuery(() => db.templates.toArray(), []);
+
+  // undefined while the settings row is still loading (first Dexie read
+  // after app open) — the card stays hidden during that instant rather
+  // than flashing on then off, since undefined !== 'true' would otherwise
+  // read as "not dismissed yet" for one render.
+  const firstRunSetting = useLiveQuery(() => db.settings.get(FIRST_RUN_DISMISSED_KEY), []);
+  const showFirstRunCard =
+    Capacitor.isNativePlatform() && firstRunSetting !== undefined && firstRunSetting?.value !== 'true';
+
+  async function dismissFirstRunCard() {
+    await db.settings.put({ key: FIRST_RUN_DISMISSED_KEY, value: 'true' });
+  }
 
   // Checked once per Home mount, native only. "Dismissable-per-session"
   // (increment-4 §6) means exactly that — plain component state, not
@@ -137,6 +153,26 @@ export function Home({ onNavigate }: HomeProps) {
       <header className="pt-8">
         <h1 className="text-2xl font-semibold text-slate-100">Runway</h1>
       </header>
+
+      {showFirstRunCard && (
+        <div className="flex flex-col gap-3 rounded-lg border border-slate-800 bg-slate-900 p-4">
+          <h2 className="font-medium text-slate-100">Before your first departure</h2>
+          <p className="text-sm text-slate-300">
+            Runway wakes you through a departure with scheduled alarms. Two Android settings decide
+            whether they arrive on time:
+          </p>
+          <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm text-slate-300">
+            <li>Allow notifications when Runway asks — this happens when you save your first departure.</li>
+            <li>
+              In Settings → Apps → Runway → Battery, choose Unrestricted. Samsung&apos;s battery
+              optimizer defers alarms otherwise.
+            </li>
+          </ol>
+          <Button onClick={() => void dismissFirstRunCard()} className="mt-1">
+            Done — don&apos;t show this again.
+          </Button>
+        </div>
+      )}
 
       {exactAlarmsOff && !bannerDismissed && (
         <div className="flex items-start gap-3 rounded-lg border border-amber-700/60 bg-amber-950/40 px-4 py-3">

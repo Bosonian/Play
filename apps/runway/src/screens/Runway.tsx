@@ -250,11 +250,11 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
                         elapsed.elapsedMinutes > currentStep.plannedMinutes ? overrunTone : 'text-slate-500'
                       }`}
                     >
-                      {elapsed.elapsedMinutes}m on this step · planned {currentStep.plannedMinutes}m
+                      {elapsed.elapsedMinutes} min on this step · planned {currentStep.plannedMinutes} min
                     </span>
                   ) : (
                     <span className="text-sm tabular-nums text-slate-500">
-                      planned {currentStep.plannedMinutes}m
+                      planned {currentStep.plannedMinutes} min
                     </span>
                   )}
                 </span>

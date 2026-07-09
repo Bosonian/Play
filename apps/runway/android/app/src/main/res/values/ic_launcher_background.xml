@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#FFFFFF</color>
+    <!-- Adaptive-icon background layer color. Must match the <rect fill>
+         in apps/runway/assets/icon-background.svg and BG_COLOR in
+         apps/runway/scripts/generate-icons.mjs — kept as a plain color
+         resource (not a rasterized drawable) because Android's
+         adaptive-icon XML accepts a solid @color directly, which is
+         simpler than generating a redundant background PNG at every
+         density. -->
+    <color name="ic_launcher_background">#020617</color>
 </resources>

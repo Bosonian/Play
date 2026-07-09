@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { Departure, Template } from './types';
+import type { Departure, Setting, Template } from './types';
 
 // Dexie's index string only lists the fields we actually query by
 // (`id` is the implicit primary key for both tables). `appointmentAt` and
@@ -9,12 +9,26 @@ import type { Departure, Template } from './types';
 class RunwayDB extends Dexie {
   templates!: EntityTable<Template, 'id'>;
   departures!: EntityTable<Departure, 'id'>;
+  settings!: EntityTable<Setting, 'key'>;
 
   constructor() {
     super('runway');
     this.version(1).stores({
       templates: 'id',
       departures: 'id, appointmentAt, status',
+    });
+    // v2 (increment 6): adds `settings`, a key-value table for small
+    // app-level flags — first user is the first-run setup card's
+    // dismissal. Dexie handles this upgrade automatically for existing
+    // installs: it only *adds* a store here, doesn't touch `templates` or
+    // `departures`, so every existing row in those tables is untouched and
+    // the new `settings` table simply starts empty. No explicit .upgrade()
+    // callback is needed because there's no data to migrate — a brand-new
+    // empty table needs no transformation from what came before.
+    this.version(2).stores({
+      templates: 'id',
+      departures: 'id, appointmentAt, status',
+      settings: 'key',
     });
   }
 }

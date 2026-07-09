@@ -71,3 +71,17 @@ export interface Departure {
   arrivalLateMinutes: number | null;
   createdAt: string;
 }
+
+/**
+ * A flat key-value row for small app-level flags that don't warrant their
+ * own table — added in increment 6 for the first-run setup card's dismissal
+ * ("has Deepak seen and closed it once"). Values are always strings; a
+ * boolean flag is stored as the literal string `'true'`, not as a JS
+ * boolean, because Dexie can store either but a single consistent
+ * representation means every future settings key reads the same way
+ * without a per-key convention to remember.
+ */
+export interface Setting {
+  key: string;
+  value: string;
+}
