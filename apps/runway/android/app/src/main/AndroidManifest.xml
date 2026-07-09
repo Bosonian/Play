@@ -38,4 +38,19 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Exact, Doze-proof scheduled alarms (RUNWAY_PLAN.md §5.5). Runway's
+         core function IS alarms, which is exactly what USE_EXACT_ALARM is
+         for: unlike SCHEDULE_EXACT_ALARM it's auto-granted at install with
+         no runtime permission dialog. It only takes effect at
+         targetSdkVersion 33+ (this app targets 35, see
+         android/variables.gradle) and is subject to Google Play policy
+         review for apps that misuse it — irrelevant here since this APK is
+         sideloaded, never published. POST_NOTIFICATIONS,
+         RECEIVE_BOOT_COMPLETED and WAKE_LOCK are already declared by
+         @capacitor/local-notifications' own manifest (see
+         node_modules/@capacitor/local-notifications/android/.../AndroidManifest.xml)
+         and merged in automatically by Gradle's manifest merger; they don't
+         need to be repeated here. -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 </manifest>

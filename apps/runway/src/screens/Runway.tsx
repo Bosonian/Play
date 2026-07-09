@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
 import type { Departure, DepartureStep } from '../db/types';
@@ -10,6 +11,16 @@ import type { Projection } from '../lib/projection';
 import { currentStepElapsed } from '../lib/currentStepElapsed';
 import { useNow } from '../hooks/useNow';
 import { formatTime } from '../lib/format';
+import { allowSleep, keepAwake } from '../native/keepAwake';
+import { hapticImpact } from '../native/haptics';
+import { cancelDepartureAlarms } from '../native/notifications';
+
+/** Google Maps turn-by-turn URL — no API key needed, Android routes this to
+ * the Maps app when one's installed. Shared by both handoff points (leave
+ * block and the post-departure confirmation). */
+function mapsUrl(destination: string): string {
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`;
+}
 
 interface RunwayProps {
   departureId: string;
@@ -59,6 +70,21 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     }
   }, [departure]);
 
+  // Keep the screen on for exactly as long as a run is live. Keyed on
+  // status rather than just mount/unmount because this component stays
+  // mounted across the 'running' -> 'left' transition (the justLeft
+  // confirmation is rendered by this same component) — the cleanup here is
+  // what releases the lock the instant status stops being 'running',
+  // whether that's because the departure finished or because the screen
+  // itself unmounts (React runs cleanups in both cases).
+  useEffect(() => {
+    if (departure?.status !== 'running') return;
+    void keepAwake();
+    return () => {
+      void allowSleep();
+    };
+  }, [departure?.status]);
+
   if (!departure) {
     // Still loading from Dexie (or a stale id) - nothing to show yet.
     return (
@@ -76,6 +102,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   // could, in principle, run before the guard. A `const` closure created
   // after the guard keeps the narrowed (non-undefined) type.
   const toggleStep = async (step: DepartureStep) => {
+    void hapticImpact('light');
     const steps = departure.steps.map((s) =>
       s.id === step.id ? { ...s, checkedAt: s.checkedAt === null ? new Date().toISOString() : null } : s,
     );
@@ -83,7 +110,10 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   };
 
   const handleLeave = async () => {
+    void hapticImpact('heavy');
     await db.departures.update(departure.id, { status: 'left', leftAt: new Date().toISOString() });
+    // Terminal status - no more staged alerts make sense once you've left.
+    await cancelDepartureAlarms(departure.id);
     setJustLeft(true);
   };
 
@@ -97,9 +127,14 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
         <p className="mt-4 text-2xl font-semibold tabular-nums text-slate-100">
           Logged {formatTime(new Date(departure.leftAt ?? new Date().toISOString()))}. Safe travels.
         </p>
-        <Button onClick={() => onNavigate({ name: 'home' })} className="mt-8 w-full">
-          Back to home
-        </Button>
+        <div className="mt-8 flex w-full flex-col gap-3">
+          {departure.destination && (
+            <Button variant="secondary" onClick={() => window.open(mapsUrl(departure.destination), '_blank')}>
+              Open Maps
+            </Button>
+          )}
+          <Button onClick={() => onNavigate({ name: 'home' })}>Back to home</Button>
+        </div>
       </div>
     );
   }
@@ -170,6 +205,15 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
           <Button onClick={handleLeave} className="mt-4 w-full">
             I&apos;m out the door
           </Button>
+          {departure.destination && (
+            <Button
+              variant="secondary"
+              onClick={() => window.open(mapsUrl(departure.destination), '_blank')}
+              className="w-full"
+            >
+              Open Maps
+            </Button>
+          )}
         </div>
       ) : (
         <div className="flex flex-col gap-4">
@@ -238,6 +282,10 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
             </div>
           )}
         </div>
+      )}
+
+      {Capacitor.isNativePlatform() && (
+        <p className="text-center text-sm text-slate-600">Screen stays on while this is open.</p>
       )}
     </div>
   );

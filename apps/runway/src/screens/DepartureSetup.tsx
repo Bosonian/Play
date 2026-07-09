@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
-import type { DepartureStep } from '../db/types';
+import type { Departure, DepartureStep } from '../db/types';
 import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { NumberField } from '../ui/NumberField';
@@ -9,6 +9,7 @@ import { TextField } from '../ui/TextField';
 import { ScreenHeader } from '../ui/ScreenHeader';
 import { computeProjection, computeStartBy } from '../lib/projection';
 import { formatDateInput, formatTime, formatTimeInput } from '../lib/format';
+import { ensurePermissions, scheduleDepartureAlarms } from '../native/notifications';
 
 interface DepartureSetupProps {
   templateId?: string;
@@ -127,33 +128,47 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
     if (!canSave || !appointmentAtDate) return;
 
     const nowIso = new Date().toISOString();
+    const sharedFields = {
+      name: name.trim() || destination.trim() || 'Departure',
+      destination: destination.trim(),
+      appointmentAt: appointmentAtDate.toISOString(),
+      travelMinutes,
+      bufferMinutes,
+      steps,
+    };
+
+    let savedDeparture: Departure;
     if (departureId && existingDeparture) {
-      await db.departures.update(departureId, {
-        name: name.trim() || destination.trim() || 'Departure',
-        destination: destination.trim(),
-        appointmentAt: appointmentAtDate.toISOString(),
-        travelMinutes,
-        bufferMinutes,
-        steps,
-      });
+      await db.departures.update(departureId, sharedFields);
+      savedDeparture = { ...existingDeparture, ...sharedFields };
     } else {
-      await db.departures.add({
+      savedDeparture = {
         id: crypto.randomUUID(),
         templateId: templateId ?? null,
-        name: name.trim() || destination.trim() || 'Departure',
-        destination: destination.trim(),
-        appointmentAt: appointmentAtDate.toISOString(),
-        travelMinutes,
-        bufferMinutes,
-        steps,
+        ...sharedFields,
         status: 'planned',
         startedAt: null,
         leftAt: null,
         arrivalResult: null,
         arrivalLateMinutes: null,
         createdAt: nowIso,
-      });
+      };
+      await db.departures.add(savedDeparture);
     }
+
+    // Alarms only make sense for a departure that hasn't started yet — an
+    // edit to an already-'running' or terminal departure (not a v1 path
+    // today, but the guard costs nothing) shouldn't schedule new alerts.
+    // Permission is requested here, lazily, on first save — never at app
+    // launch (CLAUDE.md: no permission ambush) — and saving never blocks on
+    // the answer: a 'denied' result still leaves the departure saved, the
+    // Home screen's exact-alarm banner (increment-4 §6) is the non-blocking
+    // surface for "alerts may not fire", not this form.
+    if (savedDeparture.status === 'planned') {
+      await ensurePermissions();
+      await scheduleDepartureAlarms(savedDeparture);
+    }
+
     onNavigate({ name: 'home' });
   }
 

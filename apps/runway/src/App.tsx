@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Home } from './screens/Home';
 import { TemplateEdit } from './screens/TemplateEdit';
 import { DepartureSetup } from './screens/DepartureSetup';
 import { Runway } from './screens/Runway';
+import { setNavigationRef } from './lib/navigationRef';
 
 // Navigation as plain React state, not a router library. There's no
 // deep-linkable URL requirement in increment 1 (no shareable departure
@@ -18,6 +19,17 @@ export type Screen =
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'home' });
+
+  // Makes `setScreen` reachable from outside the component tree. The actual
+  // notification-tap listener is registered in main.tsx, before this
+  // component ever mounts (see src/lib/navigationRef.ts for why: it needs
+  // to attach as early as possible to have a chance at catching a
+  // cold-start tap) — this effect is the other half of that handoff, and
+  // also replays any navigation that arrived before this ran.
+  useEffect(() => {
+    setNavigationRef(setScreen);
+    return () => setNavigationRef(null);
+  }, []);
 
   switch (screen.name) {
     case 'home':

@@ -1,9 +1,12 @@
+import { useEffect, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
 import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { formatDateDisplay, formatTime } from '../lib/format';
+import { getExactAlarmStatus, openExactAlarmSettings } from '../native/notifications';
 
 interface HomeProps {
   onNavigate: (screen: Screen) => void;
@@ -11,6 +14,20 @@ interface HomeProps {
 
 export function Home({ onNavigate }: HomeProps) {
   const templates = useLiveQuery(() => db.templates.toArray(), []);
+
+  // Checked once per Home mount, native only. "Dismissable-per-session"
+  // (increment-4 §6) means exactly that — plain component state, not
+  // persisted to Dexie or localStorage, so the banner is back next time the
+  // app is reopened if the setting is still off. Deliberately not re-checked
+  // on every render: the user has to leave Android settings and come back to
+  // change it, which already remounts Home along the way.
+  const [exactAlarmsOff, setExactAlarmsOff] = useState(false);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    void getExactAlarmStatus().then((status) => setExactAlarmsOff(status !== 'granted'));
+  }, []);
 
   // planned/running departures, soonest appointment first — that ordering
   // is what makes "Upcoming" useful at a glance rather than a junk drawer.
@@ -28,6 +45,29 @@ export function Home({ onNavigate }: HomeProps) {
       <header className="pt-8">
         <h1 className="text-2xl font-semibold text-slate-100">Runway</h1>
       </header>
+
+      {exactAlarmsOff && !bannerDismissed && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-700/60 bg-amber-950/40 px-4 py-3">
+          <p className="flex-1 text-sm text-amber-200">
+            Exact alarms are off for Runway. Scheduled alerts may arrive late or not at all.
+          </p>
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              onClick={() => void openExactAlarmSettings()}
+              className="min-h-11 rounded-md px-2 text-sm font-medium text-amber-300 hover:text-amber-200"
+            >
+              Open settings
+            </button>
+            <button
+              onClick={() => setBannerDismissed(true)}
+              aria-label="Dismiss"
+              className="flex min-h-11 min-w-11 items-center justify-center text-amber-500 hover:text-amber-300"
+            >
+              &times;
+            </button>
+          </div>
+        </div>
+      )}
 
       <Button onClick={() => onNavigate({ name: 'departureSetup' })} className="w-full">
         New departure
