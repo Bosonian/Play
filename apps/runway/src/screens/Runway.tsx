@@ -118,6 +118,14 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   };
 
   if (justLeft) {
+    // leaveBy (appointment minus travel) doesn't depend on `now` - see
+    // projection.ts - so the argument passed here is arbitrary. appointmentAt
+    // is used rather than the live clock so this stays a fixed fact about
+    // *this* departure rather than looking like it tracks the wall clock.
+    const leaveBy = computeProjection(new Date(departure.appointmentAt), departure).leaveBy;
+    const leftAtDate = new Date(departure.leftAt ?? new Date().toISOString());
+    const slipMinutes = Math.round((leftAtDate.getTime() - leaveBy.getTime()) / 60_000);
+
     return (
       <div className="mx-auto flex min-h-screen max-w-lg flex-col items-center justify-center gap-2 px-4 pb-12 pt-safe-top text-center">
         <p className="text-lg text-slate-100">{departure.name}</p>
@@ -125,7 +133,15 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
           Appointment {formatTime(new Date(departure.appointmentAt))}
         </p>
         <p className="mt-4 text-2xl font-semibold tabular-nums text-slate-100">
-          Logged {formatTime(new Date(departure.leftAt ?? new Date().toISOString()))}. Safe travels.
+          Logged {formatTime(leftAtDate)}. Safe travels.
+        </p>
+        <p className="tabular-nums text-slate-400">Planned to leave by {formatTime(leaveBy)}.</p>
+        <p className="tabular-nums text-slate-400">
+          {slipMinutes === 0
+            ? 'Out the door on time.'
+            : slipMinutes > 0
+              ? `Out the door ${slipMinutes} min late.`
+              : `Out the door ${Math.abs(slipMinutes)} min early.`}
         </p>
         <div className="mt-8 flex w-full flex-col gap-3">
           {departure.destination && (

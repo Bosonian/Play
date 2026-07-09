@@ -3,6 +3,7 @@ import { Home } from './screens/Home';
 import { TemplateEdit } from './screens/TemplateEdit';
 import { DepartureSetup } from './screens/DepartureSetup';
 import { Runway } from './screens/Runway';
+import { History } from './screens/History';
 import { setNavigationRef } from './lib/navigationRef';
 
 // Navigation as plain React state, not a router library. There's no
@@ -15,7 +16,8 @@ export type Screen =
   | { name: 'home' }
   | { name: 'templateEdit'; id?: string }
   | { name: 'departureSetup'; templateId?: string; departureId?: string }
-  | { name: 'runway'; departureId: string };
+  | { name: 'runway'; departureId: string }
+  | { name: 'history' };
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'home' });
@@ -46,5 +48,7 @@ export default function App() {
       );
     case 'runway':
       return <Runway departureId={screen.departureId} onNavigate={setScreen} />;
+    case 'history':
+      return <History onNavigate={setScreen} />;
   }
 }
