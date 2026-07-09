@@ -7,6 +7,7 @@ import { registerNotificationNavigation } from './native/notifications';
 import { registerDeepLinkNavigation } from './native/deepLinks';
 import { refreshWidgets } from './native/widgets';
 import { navigateToDeparture, navigateToScreen } from './lib/navigationRef';
+import { materializeScheduledDepartures } from './lib/materialize';
 
 // Registered here, before the first render, rather than inside App — this
 // is the earliest point in the app's lifecycle a listener can attach, which
@@ -30,6 +31,18 @@ void registerDeepLinkNavigation(navigateToScreen);
 // comment for the full list of call sites and why an explicit list beats a
 // generic Dexie hook.
 void refreshWidgets();
+
+// Recurring-departures increment: plans the next HORIZON_DAYS of scheduled
+// departures (and sweeps stale auto-created ones) on every app open — see
+// materialize.ts's own doc comment for why this runs here as well as after
+// a TemplateEdit save, and for the "weekly open keeps alarms armed" caveat
+// this fire-and-forget call carries. Placed after refreshWidgets rather
+// than before it: materializeScheduledDepartures does its own widget
+// refresh internally once it knows whether anything actually changed, so
+// ordering relative to the unconditional call above doesn't matter, but
+// keeping the two Dexie-reading startup calls adjacent makes this list
+// easier to scan.
+void materializeScheduledDepartures();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

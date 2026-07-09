@@ -23,6 +23,7 @@ function makeDeparture(overrides: Partial<Departure> = {}): Departure {
     arrivalLateMinutes: null,
     createdAt: '2026-07-09T07:00:00.000Z',
     originalAppointmentAt: '2026-07-09T09:00:00.000Z',
+    scheduledForDate: null,
     ...overrides,
   };
 }
@@ -142,6 +143,7 @@ describe('computeSuggestions', () => {
     ],
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
+    schedule: null,
   };
 
   function showeredRun(id: string, showerMinutes: number): Departure {

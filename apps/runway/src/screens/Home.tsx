@@ -41,6 +41,15 @@ interface HomeProps {
  * visit - nothing is lost, they're just not all dumped on screen together. */
 const MAX_VISIBLE_SUGGESTIONS = 2;
 
+/** Cap on Upcoming cards shown at once (recurring-departures increment;
+ * CLAUDE.md's "defaults lean toward less, not more"). A recurring template
+ * can materialize up to HORIZON_DAYS (7) departures at once, which without
+ * a cap would turn Upcoming into a scroll of a whole week's identical
+ * "Klinik 08:00" cards - the nearest few are what's actually actionable
+ * right now; the rest are still fully there, just summarized below the
+ * fold rather than every single one rendered. */
+const MAX_VISIBLE_UPCOMING = 5;
+
 /** "Not now" dismissals, scoped to templateId+stepName. A module-level Set
  * (not component state) so a dismissal survives navigating away from Home
  * and back - it only resets on a full app reload, which is what "for this
@@ -141,6 +150,13 @@ export function Home({ onNavigate }: HomeProps) {
   const pastDepartures = upcoming?.filter(
     (departure) => new Date(departure.appointmentAt).getTime() < now.getTime() - PAST_DEPARTURE_THRESHOLD_MS,
   );
+
+  // Recurring-departures increment: cap the rendered list, don't cap the
+  // data. `upcomingDepartures` (unsliced) is still what feeds the "N
+  // planned" count and every other reader of the full list — only the JSX
+  // below reads `visibleUpcomingDepartures`.
+  const visibleUpcomingDepartures = upcomingDepartures?.slice(0, MAX_VISIBLE_UPCOMING);
+  const hiddenUpcomingCount = Math.max(0, (upcomingDepartures?.length ?? 0) - MAX_VISIBLE_UPCOMING);
 
   // Shared by the "Remove" action on a planned Upcoming/Past card and has
   // no Runway-screen equivalent to defer to here - Home is the only place
@@ -456,7 +472,7 @@ export function Home({ onNavigate }: HomeProps) {
         )}
 
         <div className="flex flex-col gap-2">
-          {upcomingDepartures?.map((departure) => (
+          {visibleUpcomingDepartures?.map((departure) => (
             <div key={departure.id} className="flex flex-col gap-1">
               <Card onClick={() => onNavigate({ name: 'runway', departureId: departure.id })}>
                 <div className="flex items-center justify-between">
@@ -518,6 +534,10 @@ export function Home({ onNavigate }: HomeProps) {
             </div>
           ))}
         </div>
+
+        {hiddenUpcomingCount > 0 && (
+          <p className="text-sm text-slate-500">+{hiddenUpcomingCount} more planned</p>
+        )}
       </section>
 
       {/* M4: appointments that slipped more than an hour into the past

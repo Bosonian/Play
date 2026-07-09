@@ -42,6 +42,18 @@ A plan that's already fallen behind used to leave two options: push through a sc
 - **Snooze**, on the "Start getting ready." alarm only — ten more minutes, one tap, no need to open the app. The later alarms ("Wrap up", "Leave in 5", "Leave now") don't offer this: the appointment doesn't move because the alarm did, so snoozing those would just be a later, equally real lateness.
 - **Edit a running departure**, from Home — for when reality moved (the appointment got pushed back, a step is taking longer than planned), not for erasing a run that's going badly. Steps already checked off stay locked; everything else can still change, and alarms reschedule to match.
 
+## Recurring departures
+
+A Template can carry a repeating schedule instead of only being a one-tap starting point for a single departure. On TemplateEdit, turn on "Repeat this departure," set a 24-hour time, and pick the days (Monday-first chips, matching this app's week-starts-Monday convention everywhere else) it repeats on — "reach work at 08:00 Mon–Fri," for instance.
+
+**How it works:** every time Runway opens, and again right after a scheduled template is saved, `materializeScheduledDepartures()` (`src/lib/materialize.ts`) looks up to 7 days ahead and creates whichever of those days' departures don't already exist — same fields, same step copying, same alarm scheduling as adding a departure from a template by hand. A day that's already been materialized once is never re-created, even if you remove that departure afterwards: bringing back a morning you deliberately cleared would be nagging, not help. Editing a scheduled template's steps, time, days, travel, or buffer replaces only the FUTURE departures you haven't touched yet (haven't started, appointment still ahead) with fresh ones reflecting the edit — anything already started stays exactly as it is, because that run is yours now, not the template's to rewrite.
+
+**Open Runway at least once a week to keep alarms armed.** The materializer only plans 7 days out and only runs while the app is open — there is no background scheduler in this version. If Runway goes unopened for more than a week, the days beyond the last materialization simply never get created (and never alert), until the next time you open it.
+
+A machine-created departure you never engage with (never started) gets quietly deleted, alarms cancelled, once it's more than 12 hours past its appointment — it was never a real commitment, so it doesn't linger in the Past section as one. A departure you did start keeps the normal history/calibration lifecycle like any other.
+
+Home's Upcoming list caps at the nearest 5 departures regardless of how many are planned, with a quiet "+N more planned" line for the rest — a fully-scheduled week is still there, just not all dumped on one screen at once.
+
 ## Live travel times
 
 Departure mode can replace the manually-entered travel estimate with a live drive-time figure from Google's Routes API, factoring in current traffic. It is entirely optional — off by default, and every part of the app works without it, falling back to the travel minutes you typed in.
@@ -121,6 +133,7 @@ Cut from v1 deliberately, not forgotten:
 - **Settings deep-link plugin** — so the first-run card's battery-optimization step could open Settings → Apps → Runway → Battery directly instead of describing the path in words.
 - **Live traffic while the app is closed** — the live-travel increment (see "Live travel times" above) only refreshes while the Runway screen is open; a background-fetch path (foreground service or WorkManager) that keeps `travelMinutes` current — and therefore keeps scheduled alarms current — even with the app closed is future work, not built here.
 - **Calendar import** — read-only Google Calendar import to create departures from existing appointments instead of typing them in (RUNWAY_PLAN.md §5.6).
+- **WorkManager-based recurring-departure materializer** — the current materializer (see "Recurring departures" above) only runs while the app is in the foreground, at open and after a template save, so its 7-day planning horizon quietly stalls if Runway goes unopened for more than a week. A native WorkManager job that can materialize (and re-arm alarms) on a schedule without the app being opened at all would remove that weekly-open requirement.
 - **Weekly planning nudge** — an optional reminder to plan the coming week's sprints. Left unbuilt in v1: RUNWAY_PRUFUNG_PLAN.md §5 marks it default-OFF and borderline (it edges toward the fake-urgency pattern this mode deliberately avoids); worth reconsidering only if Deepak asks for it knowingly.
 - **Exam archive / start-new-exam flow** — v1 supports exactly one exam with no delete path (see "Prüfung mode" above); needed before a second Facharzt-scale exam could ever be prepped for in this app.
 - **Topic estimate suggestions (≥3 sprints per topic, ≥25% drift — suggest, never apply)** — the calibration pattern departure mode already has (`src/lib/calibration.ts`'s `computeSuggestions`) applied to topic `estimatedHours`. Cut from v1 because it needs real logged-sprint history to have any signal at all — building it before there's data to test it against would be guessing at what "meaningfully drifted" looks like in practice.

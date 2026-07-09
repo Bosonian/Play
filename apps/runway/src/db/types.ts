@@ -15,6 +15,24 @@ export interface StepTemplate {
 }
 
 /**
+ * A repeating schedule attached to a Template — "reach work at 08:00
+ * Mon-Fri" — that src/lib/materialize.ts reads to auto-plan real
+ * Departures ahead of time (recurring-departures increment). `time` is a
+ * plain "HH:mm" 24-hour string, not a Date, because a schedule is not
+ * anchored to any one day: it's evaluated fresh against each future
+ * calendar date it matches. `days` uses ISO weekday numbers (1 Monday .. 7
+ * Sunday, see src/lib/recurrence.ts's occurrenceDates) to match CLAUDE.md's
+ * Monday-first week convention, and is non-empty whenever a schedule
+ * exists — an empty-days schedule would mean "repeats on no day", which is
+ * indistinguishable from no schedule at all, so TemplateEdit's validation
+ * never lets one be saved.
+ */
+export interface TemplateSchedule {
+  time: string;
+  days: number[];
+}
+
+/**
  * A reusable departure blueprint: a destination, how long it takes to get
  * there, and the prep routine that precedes leaving. Templates exist so a
  * repeat outing ("Klinik", "piano lesson") takes seconds to set up, per
@@ -29,6 +47,18 @@ export interface Template {
   steps: StepTemplate[];
   createdAt: string;
   updatedAt: string;
+  /**
+   * Non-null when this template auto-plans real departures on a repeating
+   * schedule (recurring-departures increment). Not indexed — same
+   * "document, no Dexie version bump" treatment as Departure's
+   * `originalAppointmentAt` (see db.ts's version() comments for which
+   * fields DO need one) — so **every** read of this field must treat
+   * `undefined` (a row written before this field existed) the same as
+   * `null` (== null, never === null), exactly the class of bug the
+   * v0.13.0 review caught and fixed for `originalAppointmentAt`. Don't
+   * repeat it here.
+   */
+  schedule: TemplateSchedule | null;
 }
 
 /**
@@ -107,6 +137,22 @@ export interface Departure {
    * the whole point of this field for exactly the rows it exists to help).
    */
   originalAppointmentAt: string | null;
+  /**
+   * ISO date ("YYYY-MM-DD") this departure was auto-created for by
+   * src/lib/materialize.ts's materializer, or `null` for a departure
+   * someone actually typed in through DepartureSetup (recurring-departures
+   * increment). This is the field the materializer's "never re-create an
+   * abandoned occurrence" rule (see materialize.ts) reads: it looks for an
+   * existing departure with the SAME templateId and scheduledForDate
+   * before creating a new one, regardless of that existing row's current
+   * `status` — a date that's already been materialized once is never
+   * materialized again, even after the user removes it.
+   *
+   * Same undefined-as-null rule as `schedule` on Template above: `null` on
+   * every pre-existing row (this field didn't exist before them), read
+   * everywhere as `scheduledForDate == null`, never `=== null`.
+   */
+  scheduledForDate: string | null;
 }
 
 /**

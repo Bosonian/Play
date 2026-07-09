@@ -5,6 +5,48 @@ via the `runway-latest.apk` asset at
 https://github.com/Bosonian/Play/releases/tag/runway-latest — it carries
 whichever version built last.
 
+## 0.14.0
+- Recurring departures: a Template can now carry a repeating schedule —
+  "reach work at 08:00 Mon-Fri" — via a new "Repeat" section on
+  TemplateEdit (a toggle, a 24h time field, and Monday-first M T W T F S S
+  day chips). `src/lib/materialize.ts`'s `materializeScheduledDepartures()`
+  reads every scheduled template and auto-plans real departures up to 7
+  days ahead (`src/lib/recurrence.ts`'s `occurrenceDates`, pure and
+  unit-tested, 8 new cases including a DST-week sanity check), creating
+  them exactly the way DepartureSetup's own create path does — fresh step
+  ids, `status: 'planned'`, alarms scheduled the same way. Runs on every app
+  open (`main.tsx`) and again right after a template save
+  (`TemplateEdit.tsx`), so a schedule/step/travel edit propagates into the
+  week that's already planned — but only for FUTURE, UNTOUCHED rows (never
+  re-materialize over a departure Deepak has already started).
+  - **Never re-creates an abandoned occurrence.** The materializer's dedup
+    key is `(templateId, scheduledForDate)` alone, independent of that
+    date's departure's current status — if a materialized morning is
+    removed, it stays gone; silently bringing it back would be nagging, not
+    help.
+  - **Stale auto-rows are hard-deleted, not demoted to History.** A
+    machine-created departure nobody ever started (`startedAt` still null)
+    more than 12h past its appointment is deleted outright, alarms
+    cancelled — it was never a real commitment Deepak engaged with, so
+    letting it pile up in Home's "Past departure time" section would slowly
+    build a guilt list of mornings that were never real to begin with. A
+    departure he DID start keeps the ordinary lifecycle untouched.
+  - Home's Upcoming list is now capped at the nearest 5 departures, with a
+    quiet "+N more planned" line beyond that — a fully-scheduled week would
+    otherwise dump up to 7 near-identical cards on the one screen this app
+    is supposed to keep calm.
+  - **Stated plainly, not hidden:** the 7-day horizon means alarms only
+    stay armed if Runway is opened at least once a week — there is no
+    background materializer in this increment. A WorkManager-based native
+    materializer that doesn't depend on the app being opened is the v1.5
+    upgrade (see this README's own v1.5 list).
+  - New fields, both non-indexed (no Dexie version bump, same treatment as
+    `originalAppointmentAt`): `Template.schedule` (`{ time, days } | null`)
+    and `Departure.scheduledForDate` (`string | null`, the materializer's
+    join key). Every read treats a legacy row's missing property the same
+    as an explicit `null` — the exact bug class the 0.13.0 review caught
+    for `originalAppointmentAt`.
+
 ## 0.13.0
 - Fix from a real-device field report: appointment 17:00, opened Runway at
   18:14 (75 min past). "Replan from now" correctly showed the refusal ("No

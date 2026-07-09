@@ -225,6 +225,12 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
         arrivalResult: null,
         arrivalLateMinutes: null,
         createdAt: nowIso,
+        // A departure created here was typed in by hand (even if it started
+        // from a template) — only the materializer (src/lib/materialize.ts)
+        // stamps a non-null scheduledForDate, so its "never re-create an
+        // abandoned occurrence" dedup check never mistakes a manually-made
+        // departure for one it already materialized.
+        scheduledForDate: null,
       };
       await db.departures.add(savedDeparture);
     }
