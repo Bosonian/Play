@@ -46,6 +46,27 @@
                 android:name="android.app.shortcuts"
                 android:resource="@xml/shortcuts" />
 
+            <!-- Calendar/share-target increment (0.17.0): registers Runway
+                 as a share target for plain-text shares — the entry point
+                 for "share a place from Google Maps into Runway". category
+                 DEFAULT is required for an implicit ACTION_SEND to resolve
+                 here at all (without it, this filter is invisible to the
+                 share sheet); it's the same category the runway:// VIEW
+                 filter above already carries for the same reason. No
+                 BROWSABLE category here — that's specifically for web-link
+                 handling (a browser deciding whether to hand a URL to an
+                 app), which doesn't apply to a share-sheet target. The
+                 actual rewrite from this raw ACTION_SEND into a
+                 runway://share-target deep link happens in
+                 MainActivity.rewriteShareTargetIntent — see its own doc
+                 comment for why that trick means no new bridge code is
+                 needed here beyond this filter. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+
         </activity>
 
         <!-- Widgets increment: the Prüfung home-screen widget provider.
@@ -136,4 +157,13 @@
          install the app for no benefit. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <!-- Calendar increment (E1): read-only. Runway never writes to the
+         device calendar — no WRITE_CALENDAR here, ever — CalendarBridgePlugin
+         (android/app/src/main/java/de/bosonian/runway/CalendarBridgePlugin.java)
+         only queries CalendarContract.Instances. Requested lazily, the first
+         time Home's "Show calendar appointments here." is tapped — never at
+         app open — same no-permission-ambush rule the geolocation/exact-alarm
+         permissions above already follow. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
 </manifest>

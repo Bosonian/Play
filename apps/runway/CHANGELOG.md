@@ -5,6 +5,37 @@ via the `runway-latest.apk` asset at
 https://github.com/Bosonian/Play/releases/tag/runway-latest — it carries
 whichever version built last.
 
+## 0.17.0
+- Calendar and sharing (ecosystem increment E1) — two independent entry
+  points that both land in the same place, DepartureSetup prefilled:
+  - **Calendar read**: Home gains a "From your calendar" section (native
+    only) showing the next 48 h of timed device-calendar appointments
+    (all-day events skipped — no time to plan a departure against), capped
+    at 3, each with a "Plan departure" action that opens DepartureSetup
+    prefilled with the appointment's name and time. Off by default; a quiet
+    one-tap enable ("Show calendar appointments here.") requests
+    READ_CALENDAR lazily, on that tap only — never at app open. A denial
+    means the section renders nothing further for the rest of that session,
+    re-enablable from a new Settings → "Show calendar appointments on Home"
+    toggle. Read-only: Runway never writes to the calendar. New
+    `CalendarBridgePlugin.java` (queries `CalendarContract.Instances`, the
+    expanded-occurrence view, so recurring appointments show their actual
+    next occurrence rather than the series' original creation time),
+    `src/native/calendar.ts`, and `src/lib/calendarEvents.ts`'s
+    `eventsWithoutDepartures` — an event already planned for (any departure
+    status, appointment time within ±5 min) never resurfaces, so this
+    section can't turn into a repeat-nag for the same appointment.
+  - **Share target**: Runway now registers as an Android share target for
+    plain text. Sharing a place from Google Maps ("Share" → Runway) opens
+    DepartureSetup prefilled with the place name, stripped of the maps.app
+    link Maps includes alongside it (`src/lib/shareTarget.ts`'s
+    `parseSharedDestination`). Implemented as a same-file intent rewrite in
+    `MainActivity.java` (`rewriteShareTargetIntent`, in both `onCreate` and
+    `onNewIntent`) that turns the incoming `ACTION_SEND` into a
+    `runway://share-target?text=...` deep link — the existing widget-era
+    deep-link machinery then delivers it with zero new native bridge code.
+  - versionCode 23.
+
 ## 0.16.0
 - UI-polish increment: a visual-layer-only pass across every screen — no
   logic, data, or copy changed (a handful of class-level copy exceptions are

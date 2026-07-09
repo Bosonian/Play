@@ -2,6 +2,7 @@ import { App } from '@capacitor/app';
 import type { URLOpenListenerEvent } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import type { Screen } from '../App';
+import { parseSharedDestination } from '../lib/shareTarget';
 
 // The ONLY file that imports @capacitor/app. Routes this app defines:
 // `runway://exam` (Prüfung overview) and `runway://new-departure` (a blank
@@ -11,7 +12,10 @@ import type { Screen } from '../App';
 // `runway://departure/{id}` (a specific departure's live Runway screen) from
 // the departure widget's tap target (DepartureWidgetProvider.java), and
 // `runway://home` from that same widget's "no departure planned" fallback
-// tap target. Kept decoupled from `../lib/navigationRef` the same way
+// tap target. Calendar/share-target increment (E1) adds
+// `runway://share-target?text=...` — see MainActivity.rewriteShareTargetIntent
+// for how a raw Android share becomes this URL with no new native bridge
+// code. Kept decoupled from `../lib/navigationRef` the same way
 // notifications.ts's registerNotificationNavigation is: this file only turns
 // a URL into a Screen and hands it to a caller-supplied function, rather
 // than importing navigationRef directly — main.tsx is what wires the two
@@ -52,6 +56,20 @@ function screenForUrl(url: string): Screen | null {
     }
     case 'home':
       return { name: 'home' };
+    case 'share-target': {
+      // `text` is the raw, still-URL-encoded EXTRA_TEXT Android's share
+      // sheet handed MainActivity — `URL`'s own `searchParams` decodes it
+      // for us. parseSharedDestination (src/lib/shareTarget.ts) does the
+      // actual "strip the Maps link, keep the place name" work; an empty
+      // result (share had nothing usable — an all-URL share, or an empty
+      // one) still routes to departureSetup, just with no prefill, rather
+      // than being treated as an unrecognised URL.
+      const text = parsed.searchParams.get('text') ?? '';
+      const destination = parseSharedDestination(text);
+      return destination === ''
+        ? { name: 'departureSetup' }
+        : { name: 'departureSetup', prefillDestination: destination };
+    }
     default:
       return null;
   }

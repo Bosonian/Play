@@ -8,6 +8,8 @@ import { ScreenHeader } from '../ui/ScreenHeader';
 import { TextAction } from '../ui/TextAction';
 import { LIVE_TRAVEL_ENABLED_SETTING, ROUTES_API_KEY_SETTING } from '../lib/liveTravelSettings';
 import { DEFAULT_FEEDBACK_REPO, FEEDBACK_REPO_SETTING, FEEDBACK_TOKEN_SETTING } from '../lib/reportSettings';
+import { CALENDAR_ENABLED_SETTING } from '../lib/calendarSettings';
+import { requestCalendarAccess } from '../native/calendar';
 
 interface SettingsProps {
   onNavigate: (screen: Screen) => void;
@@ -55,6 +57,29 @@ export function Settings({ onNavigate }: SettingsProps) {
 
   async function toggleLiveTravel() {
     await db.settings.put({ key: LIVE_TRAVEL_ENABLED_SETTING, value: liveTravelEnabled ? 'false' : 'true' });
+  }
+
+  // Calendar increment (E1). Home's own lazy-enable TextAction is the FIRST
+  // ask; this checkbox is the re-enable path for after a decline (or a
+  // deliberate turn-off) — same settings row, 'calendarEnabled', read the
+  // same way. Turning ON re-runs the permission request rather than
+  // assuming a prior 'false' means the OS permission itself is still
+  // denied: Android returns GRANTED immediately, with no dialog, when the
+  // permission is already held (e.g. Deepak turned this off in-app once
+  // but never revoked it at the OS level) — see requestCalendarAccess's own
+  // doc comment. Turning OFF never revokes the OS permission (Android has
+  // no API for an app to do that to itself); it only stops Home from
+  // reading it.
+  const calendarEnabledSetting = useLiveQuery(() => db.settings.get(CALENDAR_ENABLED_SETTING), []);
+  const calendarEnabled = calendarEnabledSetting?.value === 'true';
+
+  async function toggleCalendar() {
+    if (calendarEnabled) {
+      await db.settings.put({ key: CALENDAR_ENABLED_SETTING, value: 'false' });
+      return;
+    }
+    const granted = await requestCalendarAccess();
+    await db.settings.put({ key: CALENDAR_ENABLED_SETTING, value: granted ? 'true' : 'false' });
   }
 
   // Field-reports increment: same two-rows-in-`settings` shape as the
@@ -132,6 +157,22 @@ export function Settings({ onNavigate }: SettingsProps) {
         Live travel adds a network dependency and a location permission. Everything still works
         without it — travel minutes fall back to your manual estimate.
       </p>
+
+      <section className="flex flex-col gap-2 rounded-xl border border-slate-800/60 bg-surface p-4">
+        <label className="flex items-center gap-3">
+          <input
+            type="checkbox"
+            checked={calendarEnabled}
+            onChange={() => void toggleCalendar()}
+            className="size-6 shrink-0 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+          />
+          <span className="flex-1 text-slate-100">Show calendar appointments on Home</span>
+        </label>
+        <p className="text-sm text-slate-500">
+          Reads your device calendar to suggest departures for upcoming appointments. Runway never
+          writes to your calendar.
+        </p>
+      </section>
 
       <section className="flex flex-col gap-3 border-t border-slate-800 pt-6">
         <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Feedback</h2>

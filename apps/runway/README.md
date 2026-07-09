@@ -109,6 +109,14 @@ The exam overview also carries a next-move card: a single suggested topic and sp
 
 There is no way to delete an exam in v1 — after the exam, starting fresh means clearing app data or waiting for v1.5's archive.
 
+## Calendar and sharing
+
+Two independent ways an appointment already sitting somewhere else on the phone can become a departure, without retyping it.
+
+**Calendar read** (Home → "From your calendar"): reads the next 48 hours of timed appointments (all-day events are skipped — there's no time-of-day to plan a departure against) across every visible device calendar, capped at 3 shown at once. Each card offers "Plan departure," which opens DepartureSetup prefilled with the appointment's name and time — the destination field is left for you to fill in, even when the calendar entry has a location, since a calendar location string is often not what you'd actually type into a route search. **Nothing is ever written to the calendar** — this is read-only, full stop, and the Android permission requested (`READ_CALENDAR`) reflects that; there is no `WRITE_CALENDAR` anywhere in this app. The permission is requested lazily, only the first time you tap "Show calendar appointments here." on Home — never at app open. If you decline, the section quietly stays empty for the rest of that session (no repeated prompts); turn it back on any time from Settings → "Show calendar appointments on Home." An appointment you've already planned a departure for (any status, including an abandoned one) never resurfaces here — the point of this section is to catch what you haven't planned yet, not to nag about what you have.
+
+**Share from Google Maps**: Runway registers as an Android share target for plain text. Tap Share on a place in Google Maps, choose Runway, and DepartureSetup opens prefilled with that place's name as the destination — the maps.app.goo.gl link Maps includes alongside the name is stripped out automatically. This works through the same `runway://` deep-link machinery the home-screen widgets already use (see below), not a separate mechanism: Android hands the shared text to `MainActivity`, which rewrites it into a `runway://share-target?...` URL before Capacitor ever sees it.
+
 ## Home-screen widgets
 
 Two 3×1 widgets, both fed from the same snapshot mechanism (see below).
@@ -150,7 +158,6 @@ Cut from v1 deliberately, not forgotten:
 - **Web push fallback** — a server-independent way to still get alerts if a future rebuild ever drops the native shell; much more feasible on Android than it would have been on iOS.
 - **Settings deep-link plugin** — so the first-run card's battery-optimization step could open Settings → Apps → Runway → Battery directly instead of describing the path in words.
 - **Live traffic while the app is closed** — the live-travel increment (see "Live travel times" above) only refreshes while the Runway screen is open; a background-fetch path (foreground service or WorkManager) that keeps `travelMinutes` current — and therefore keeps scheduled alarms current — even with the app closed is future work, not built here.
-- **Calendar import** — read-only Google Calendar import to create departures from existing appointments instead of typing them in (RUNWAY_PLAN.md §5.6).
 - **WorkManager-based recurring-departure materializer** — the current materializer (see "Recurring departures" above) only runs while the app is in the foreground, at open and after a template save, so its 7-day planning horizon quietly stalls if Runway goes unopened for more than a week. A native WorkManager job that can materialize (and re-arm alarms) on a schedule without the app being opened at all would remove that weekly-open requirement.
 - **Weekly planning nudge** — an optional reminder to plan the coming week's sprints. Left unbuilt in v1: RUNWAY_PRUFUNG_PLAN.md §5 marks it default-OFF and borderline (it edges toward the fake-urgency pattern this mode deliberately avoids); worth reconsidering only if Deepak asks for it knowingly.
 - **Exam archive / start-new-exam flow** — v1 supports exactly one exam with no delete path (see "Prüfung mode" above); needed before a second Facharzt-scale exam could ever be prepped for in this app.

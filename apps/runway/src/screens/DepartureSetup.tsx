@@ -18,10 +18,22 @@ import { refreshWidgets } from '../native/widgets';
 interface DepartureSetupProps {
   templateId?: string;
   departureId?: string;
+  // Calendar/share-target increment (E1) — see App.tsx's Screen union doc
+  // comment on the departureSetup case for who passes these and why.
+  prefillName?: string;
+  prefillDestination?: string;
+  prefillAppointmentIso?: string;
   onNavigate: (screen: Screen) => void;
 }
 
-export function DepartureSetup({ templateId, departureId, onNavigate }: DepartureSetupProps) {
+export function DepartureSetup({
+  templateId,
+  departureId,
+  prefillName,
+  prefillDestination,
+  prefillAppointmentIso,
+  onNavigate,
+}: DepartureSetupProps) {
   const existingDeparture = useLiveQuery(
     () => (departureId ? db.departures.get(departureId) : undefined),
     [departureId],
@@ -43,14 +55,33 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
   );
 
   const now = new Date();
-  const [name, setName] = useState('');
-  const [destination, setDestination] = useState('');
+  // Calendar/share-target increment (E1): prefill props apply ONCE, as the
+  // initial value of each field's own useState — not via a useEffect the
+  // way sourceTemplate below does, because these arrive synchronously as
+  // plain props (no Dexie read to wait on), unlike a template which has to
+  // resolve from a live query first. A lazy initializer (the `() => ...`
+  // form) only ever runs on this component's first render, which is
+  // exactly "applied once"; gating on `!departureId` is what keeps this
+  // CREATE-only — App.tsx's two prefill callers (Home's "Plan departure"
+  // action, the share-target deep link) never pass a departureId alongside
+  // a prefill anyway, but the guard makes that invariant true by
+  // construction rather than by caller discipline alone.
+  const [name, setName] = useState(() => (departureId ? '' : (prefillName ?? '')));
+  const [destination, setDestination] = useState(() => (departureId ? '' : (prefillDestination ?? '')));
   // Default date is today (CLAUDE.md: don't make the user re-pick what's
   // already obvious). Time is left blank — defaulting it to "now" would
   // silently fail the future-appointment validation for most real setups,
-  // so it's more honest to make the user choose.
-  const [appointmentDate, setAppointmentDate] = useState(formatDateInput(now));
-  const [appointmentTime, setAppointmentTime] = useState('');
+  // so it's more honest to make the user choose. A prefillAppointmentIso
+  // (calendar "Plan departure") overrides both defaults at once, since a
+  // calendar event's begin time is already both a real date and a real
+  // time — there's nothing left for the user to "more honestly" choose
+  // there the way there is for a from-scratch departure.
+  const [appointmentDate, setAppointmentDate] = useState(() =>
+    !departureId && prefillAppointmentIso ? formatDateInput(new Date(prefillAppointmentIso)) : formatDateInput(now),
+  );
+  const [appointmentTime, setAppointmentTime] = useState(() =>
+    !departureId && prefillAppointmentIso ? formatTimeInput(new Date(prefillAppointmentIso)) : '',
+  );
   const [travelMinutes, setTravelMinutes] = useState(20);
   const [bufferMinutes, setBufferMinutes] = useState(10);
   const [steps, setSteps] = useState<DepartureStep[]>([]);

@@ -7,17 +7,35 @@ import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { TextAction } from '../ui/TextAction';
-import { formatAppointmentLine, formatDateDisplay, formatScheduleDays, formatTime } from '../lib/format';
+import { formatAppointmentLine, formatDateDisplay, formatDateTimeShort, formatScheduleDays, formatTime } from '../lib/format';
 import {
   cancelDepartureAlarms,
   getExactAlarmStatus,
   getNotificationPermissionStatus,
   openExactAlarmSettings,
 } from '../native/notifications';
+import { getUpcomingCalendarEvents, requestCalendarAccess } from '../native/calendar';
+import type { CalendarEvent } from '../native/calendar';
+import { eventsWithoutDepartures } from '../lib/calendarEvents';
+import { CALENDAR_ENABLED_SETTING } from '../lib/calendarSettings';
 import { computeSuggestions } from '../lib/calibration';
 import type { Suggestion } from '../lib/calibration';
 import { useNow } from '../hooks/useNow';
 import { refreshWidgets } from '../native/widgets';
+
+/** Cap on "From your calendar" cards shown at once (E1; CLAUDE.md's
+ * "defaults lean toward less, not more") — same shape as
+ * MAX_VISIBLE_SUGGESTIONS/MAX_VISIBLE_UPCOMING below, just a smaller
+ * number: this section is a discovery prompt, not a primary list, so it
+ * earns even less room. */
+const MAX_VISIBLE_CALENDAR_EVENTS = 3;
+
+/** How far ahead "From your calendar" looks (E1 brief §A). Also the window
+ * getUpcomingCalendarEvents defaults to, but passed explicitly here rather
+ * than relying on that default — this is the one call site that actually
+ * cares what the number is (it's in this section's own copy/behaviour, not
+ * an implementation detail of the wrapper). */
+const CALENDAR_LOOKAHEAD_HOURS = 48;
 // M4's cutoff for "stale" - a planned/running departure whose appointment is
 // more than this far in the past moves out of Upcoming and into its own
 // dimmed section, so a missed morning appointment doesn't sit forever at the
@@ -128,6 +146,71 @@ export function Home({ onNavigate }: HomeProps) {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
+
+  // Calendar increment (E1). Three-state settings row, same undefined/null
+  // split the first-run card's own settings read uses above: `undefined`
+  // while the row is still loading (section renders nothing that tick, no
+  // flash), `null` (the row has never been written) means "never asked —
+  // show the lazy-enable prompt", and a real 'true'/'false' string means
+  // permission was granted or denied/turned-off respectively. Read via
+  // useLiveQuery (not local state) so a toggle flipped on Settings while
+  // Home is in the background is picked up the moment Home re-renders, no
+  // separate sync needed.
+  const calendarEnabledSetting = useLiveQuery(
+    async () => (await db.settings.get(CALENDAR_ENABLED_SETTING)) ?? null,
+    [],
+  );
+  const calendarNeverAsked = calendarEnabledSetting === null;
+  const calendarEnabled = calendarEnabledSetting?.value === 'true';
+
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[] | null>(null);
+
+  // Loads events on mount + visibilitychange, same "calendar changes outside
+  // the app" reasoning as the permission-banner effect just above — but only
+  // once reading is actually enabled; there's nothing to load while it's
+  // unset or declined. Deliberately does NOT call requestCalendarAccess()
+  // here — see calendar.ts's own comment on why this passive refresh must
+  // never itself trigger the OS permission dialog.
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform() || !calendarEnabled) return;
+
+    function loadEvents() {
+      void getUpcomingCalendarEvents(CALENDAR_LOOKAHEAD_HOURS).then(setCalendarEvents);
+    }
+
+    loadEvents();
+    function handleVisibilityChange() {
+      if (!document.hidden) loadEvents();
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [calendarEnabled]);
+
+  // Tapped from the section's lazy-enable TextAction. Denied is not an
+  // error to retry — per this increment's own no-nagging rule, a 'false'
+  // settings row after this means the section renders nothing further
+  // *for the rest of this session*; app CLAUDE.md's "no permission ambush"
+  // rule is exactly why this only ever fires from an explicit tap, never
+  // automatically. Re-enabling after a decline is possible again, but only
+  // from Settings' own "Calendar" toggle (Settings.tsx) — a deliberate,
+  // separate re-ask, not a retry loop this component runs on its own.
+  async function enableCalendar() {
+    const granted = await requestCalendarAccess();
+    await db.settings.put({ key: CALENDAR_ENABLED_SETTING, value: granted ? 'true' : 'false' });
+  }
+
+  // eventsWithoutDepartures (src/lib/calendarEvents.ts) needs every
+  // departure regardless of status, including 'abandoned' — see its own
+  // comment for why an abandoned departure still counts as "already
+  // decided", not an invitation to re-surface the same appointment. This is
+  // a genuinely separate query from `upcoming`/`calibrationDepartures`
+  // below, each of which is deliberately scoped to its own status subset.
+  const allDepartures = useLiveQuery(() => db.departures.toArray(), []);
+
+  const visibleCalendarEvents = useMemo(() => {
+    if (!calendarEvents || !allDepartures) return [];
+    return eventsWithoutDepartures(calendarEvents, allDepartures).slice(0, MAX_VISIBLE_CALENDAR_EVENTS);
+  }, [calendarEvents, allDepartures]);
 
   // planned/running departures, soonest appointment first — that ordering
   // is what makes "Upcoming" useful at a glance rather than a junk drawer.
@@ -449,6 +532,62 @@ export function Home({ onNavigate }: HomeProps) {
                     <TextAction onClick={() => void skipArrival(departure)}>Skip</TextAction>
                   </div>
                 )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Calendar increment (E1). Native only — there is no device calendar
+          to read on web/dev. Two mutually exclusive branches: the
+          never-asked prompt (one quiet TextAction, no events fetched yet)
+          and the loaded list (only once enabled AND there's at least one
+          event left after dedup) — a 'false' settings row (declined or
+          turned off in Settings) renders neither, same "no empty state,
+          no nagging" shape as Waiting on arrival above: an absence here
+          is not a thing to comment on. */}
+      {Capacitor.isNativePlatform() && calendarNeverAsked && (
+        <section className="flex flex-col gap-3">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">
+            From your calendar
+          </h2>
+          <TextAction onClick={() => void enableCalendar()} className="self-start">
+            Show calendar appointments here.
+          </TextAction>
+        </section>
+      )}
+
+      {Capacitor.isNativePlatform() && calendarEnabled && visibleCalendarEvents.length > 0 && (
+        <section className="flex flex-col gap-3">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">
+            From your calendar
+          </h2>
+          <div className="flex flex-col gap-2">
+            {visibleCalendarEvents.map((event) => (
+              <div
+                key={`${event.beginEpochMs}-${event.title}`}
+                className="rounded-xl border border-slate-800/60 bg-surface p-4"
+              >
+                <div className="flex items-center justify-between">
+                  <p className="font-medium text-slate-100">{event.title || 'Untitled event'}</p>
+                  <p className="text-sm tabular-nums text-slate-500">
+                    {formatDateTimeShort(new Date(event.beginEpochMs), now)}
+                  </p>
+                </div>
+                {event.location !== '' && <p className="text-sm text-slate-400">{event.location}</p>}
+                <div className="mt-3">
+                  <TextAction
+                    onClick={() =>
+                      onNavigate({
+                        name: 'departureSetup',
+                        prefillName: event.title,
+                        prefillAppointmentIso: new Date(event.beginEpochMs).toISOString(),
+                      })
+                    }
+                  >
+                    Plan departure
+                  </TextAction>
+                </div>
               </div>
             ))}
           </div>

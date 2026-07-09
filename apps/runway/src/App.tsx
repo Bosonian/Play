@@ -23,7 +23,25 @@ import { setNavigationRef } from './lib/navigationRef';
 export type Screen =
   | { name: 'home' }
   | { name: 'templateEdit'; id?: string }
-  | { name: 'departureSetup'; templateId?: string; departureId?: string }
+  // `prefillName`/`prefillDestination`/`prefillAppointmentIso` (calendar/
+  // share-target increment, E1): applied ONCE as DepartureSetup's initial
+  // form values on CREATE only, never on an edit (departureId set) — same
+  // one-shot shape as the existing templateId prefill, see DepartureSetup's
+  // own comment on its lazy useState initializers. Two independent
+  // callers pass these: Home's "Plan departure" action on a calendar event
+  // (name + appointmentAt, no destination — a calendar event's location
+  // field, when present, is shown on the card itself but deliberately not
+  // pushed into the destination field sight-unseen, see Home.tsx) and the
+  // share-target deep link (destination only, from
+  // src/lib/shareTarget.ts's parseSharedDestination).
+  | {
+      name: 'departureSetup';
+      templateId?: string;
+      departureId?: string;
+      prefillName?: string;
+      prefillDestination?: string;
+      prefillAppointmentIso?: string;
+    }
   | { name: 'runway'; departureId: string }
   | { name: 'history' }
   // Live-travel increment (RUNWAY_PLAN.md §5.1+§5.6): the Routes API key and
@@ -88,6 +106,9 @@ export default function App() {
           <DepartureSetup
             templateId={screen.templateId}
             departureId={screen.departureId}
+            prefillName={screen.prefillName}
+            prefillDestination={screen.prefillDestination}
+            prefillAppointmentIso={screen.prefillAppointmentIso}
             onNavigate={setScreen}
           />
         );
