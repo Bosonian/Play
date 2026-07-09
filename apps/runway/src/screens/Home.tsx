@@ -93,7 +93,14 @@ export function Home({ onNavigate }: HomeProps) {
             >
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="font-medium text-slate-100">{departure.name}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium text-slate-100">{departure.name}</p>
+                    {departure.status === 'running' && (
+                      <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-sky-400">
+                        Running
+                      </span>
+                    )}
+                  </div>
                   <p className="text-sm text-slate-400">{departure.destination || 'No destination set'}</p>
                 </div>
                 <div className="text-right">
