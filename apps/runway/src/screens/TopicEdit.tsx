@@ -198,7 +198,7 @@ export function TopicEdit({ examId, onNavigate }: TopicEditProps) {
               (this whole block is inside the `topics.length === 0` guard),
               so there's no risk of it silently re-appearing and inviting a
               second bulk-insert on top of real data. */}
-          <div className="flex flex-col gap-2 rounded-md border border-slate-800 bg-slate-900 p-3">
+          <div className="flex flex-col gap-2 rounded-xl border border-slate-800/60 bg-surface p-4">
             <p className="text-sm text-slate-400">
               Start from a template — Facharzt Neurologie draft, {FACHARZT_NEUROLOGIE_TEMPLATE.length} topics, ~
               {TEMPLATE_TOTAL_HOURS} h. Adjust names and hours to the actual exam contents; the numbers are
@@ -215,14 +215,14 @@ export function TopicEdit({ examId, onNavigate }: TopicEditProps) {
         {topics.map((topic, index) => (
           <div
             key={topic.id}
-            className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900 p-2"
+            className="flex items-center gap-2 rounded-lg border border-slate-800/60 bg-surface p-2"
           >
             <div className="flex flex-col">
               <button
                 onClick={() => moveTopic(topic.id, -1)}
                 disabled={index === 0}
                 aria-label={`Move ${topic.name || 'topic'} up`}
-                className="flex h-5 w-8 items-center justify-center text-slate-500 hover:text-slate-200 disabled:opacity-30"
+                className="flex h-5 w-8 items-center justify-center text-slate-500 transition-colors hover:text-slate-200 disabled:opacity-30"
               >
                 ▲
               </button>
@@ -230,7 +230,7 @@ export function TopicEdit({ examId, onNavigate }: TopicEditProps) {
                 onClick={() => moveTopic(topic.id, 1)}
                 disabled={index === topics.length - 1}
                 aria-label={`Move ${topic.name || 'topic'} down`}
-                className="flex h-5 w-8 items-center justify-center text-slate-500 hover:text-slate-200 disabled:opacity-30"
+                className="flex h-5 w-8 items-center justify-center text-slate-500 transition-colors hover:text-slate-200 disabled:opacity-30"
               >
                 ▼
               </button>
@@ -241,7 +241,7 @@ export function TopicEdit({ examId, onNavigate }: TopicEditProps) {
               onChange={(e) => updateTopic(topic.id, { name: e.target.value })}
               placeholder="Topic name"
               aria-label="Topic name"
-              className="min-h-11 flex-1 rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none"
+              className="min-h-12 flex-1 rounded-lg border border-slate-700 bg-raised px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none"
             />
 
             <input
@@ -256,14 +256,14 @@ export function TopicEdit({ examId, onNavigate }: TopicEditProps) {
                 const parsed = Number.parseFloat(e.target.value);
                 updateTopic(topic.id, { estimatedHours: Number.isNaN(parsed) ? 0 : parsed });
               }}
-              className="min-h-11 w-20 rounded-md border border-slate-800 bg-slate-950 px-2 py-2 text-slate-100 tabular-nums focus:border-sky-500 focus:outline-none"
+              className="min-h-12 w-20 rounded-lg border border-slate-700 bg-raised px-2 py-2 text-slate-100 tabular-nums focus:border-sky-500 focus:outline-none"
             />
             <span className="text-sm text-slate-500">h</span>
 
             <button
               onClick={() => void removeTopic(topic)}
               aria-label={`Remove ${topic.name || 'topic'}`}
-              className="flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-red-400"
+              className="flex min-h-12 min-w-12 items-center justify-center text-slate-500 transition-colors hover:text-red-400"
             >
               &times;
             </button>

@@ -252,19 +252,19 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
         onChange={setBufferMinutes}
       />
 
-      <section className="flex flex-col gap-3 rounded-md border border-slate-800 bg-slate-900 p-3">
+      <section className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
         <label className="flex items-center gap-3">
           <input
             type="checkbox"
             checked={repeatEnabled}
             onChange={(e) => setRepeatEnabled(e.target.checked)}
-            className="h-6 w-6 shrink-0 rounded border-slate-700 bg-slate-950 text-sky-500 focus:ring-sky-500"
+            className="size-6 shrink-0 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
           />
           <span className="flex-1 text-slate-100">Repeat this departure</span>
         </label>
 
         {repeatEnabled && (
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 motion-safe:animate-fade-in">
             <TextField
               label="Time"
               type="time"
@@ -283,10 +283,10 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
                     onClick={() => toggleRepeatDay(day.iso)}
                     aria-label={day.ariaLabel}
                     aria-pressed={selected}
-                    className={`flex min-h-11 min-w-11 flex-1 items-center justify-center rounded-md border text-sm font-medium ${
+                    className={`flex min-h-12 min-w-12 flex-1 items-center justify-center rounded-lg border text-sm font-medium transition-colors ${
                       selected
                         ? 'border-sky-500 bg-sky-500/20 text-sky-300'
-                        : 'border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200'
+                        : 'border-slate-700 bg-raised text-slate-400 hover:text-slate-200'
                     }`}
                   >
                     {day.label}
@@ -307,17 +307,17 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium uppercase tracking-wide text-slate-500">Steps</h2>
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Steps</h2>
 
         <div className="flex flex-col gap-2">
           {steps.map((step, index) => (
-            <div key={step.id} className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900 p-2">
+            <div key={step.id} className="flex items-center gap-2 rounded-lg border border-slate-800/60 bg-surface p-2">
               <div className="flex flex-col">
                 <button
                   onClick={() => moveStep(step.id, -1)}
                   disabled={index === 0}
                   aria-label={`Move ${step.name || 'step'} up`}
-                  className="flex h-5 w-8 items-center justify-center text-slate-500 hover:text-slate-200 disabled:opacity-30"
+                  className="flex h-5 w-8 items-center justify-center text-slate-500 transition-colors hover:text-slate-200 disabled:opacity-30"
                 >
                   ▲
                 </button>
@@ -325,7 +325,7 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
                   onClick={() => moveStep(step.id, 1)}
                   disabled={index === steps.length - 1}
                   aria-label={`Move ${step.name || 'step'} down`}
-                  className="flex h-5 w-8 items-center justify-center text-slate-500 hover:text-slate-200 disabled:opacity-30"
+                  className="flex h-5 w-8 items-center justify-center text-slate-500 transition-colors hover:text-slate-200 disabled:opacity-30"
                 >
                   ▼
                 </button>
@@ -336,7 +336,7 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
                 onChange={(e) => updateStep(step.id, { name: e.target.value })}
                 placeholder="Step name"
                 aria-label="Step name"
-                className="min-h-11 flex-1 rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none"
+                className="min-h-12 flex-1 rounded-lg border border-slate-700 bg-raised px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none"
               />
 
               <input
@@ -349,13 +349,13 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
                   const parsed = Number.parseInt(e.target.value, 10);
                   updateStep(step.id, { minutes: Number.isNaN(parsed) ? 0 : parsed });
                 }}
-                className="min-h-11 w-16 rounded-md border border-slate-800 bg-slate-950 px-2 py-2 text-slate-100 tabular-nums focus:border-sky-500 focus:outline-none"
+                className="min-h-12 w-16 rounded-lg border border-slate-700 bg-raised px-2 py-2 text-slate-100 tabular-nums focus:border-sky-500 focus:outline-none"
               />
 
               <button
                 onClick={() => removeStep(step.id)}
                 aria-label={`Remove ${step.name || 'step'}`}
-                className="flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-red-400"
+                className="flex min-h-12 min-w-12 items-center justify-center text-slate-500 transition-colors hover:text-red-400"
               >
                 &times;
               </button>

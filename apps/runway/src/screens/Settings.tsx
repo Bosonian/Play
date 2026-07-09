@@ -5,6 +5,7 @@ import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { TextField } from '../ui/TextField';
 import { ScreenHeader } from '../ui/ScreenHeader';
+import { TextAction } from '../ui/TextAction';
 import { LIVE_TRAVEL_ENABLED_SETTING, ROUTES_API_KEY_SETTING } from '../lib/liveTravelSettings';
 import { DEFAULT_FEEDBACK_REPO, FEEDBACK_REPO_SETTING, FEEDBACK_TOKEN_SETTING } from '../lib/reportSettings';
 
@@ -113,14 +114,14 @@ export function Settings({ onNavigate }: SettingsProps) {
         </div>
       </section>
 
-      <section className="flex flex-col gap-2 rounded-md border border-slate-800 bg-slate-900 p-3">
+      <section className="flex flex-col gap-2 rounded-xl border border-slate-800/60 bg-surface p-4">
         <label className="flex items-center gap-3">
           <input
             type="checkbox"
             checked={liveTravelEnabled}
             disabled={!hasKey}
             onChange={() => void toggleLiveTravel()}
-            className="h-6 w-6 shrink-0 rounded border-slate-700 bg-slate-950 text-sky-500 focus:ring-sky-500 disabled:opacity-40"
+            className="size-6 shrink-0 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:opacity-40"
           />
           <span className="flex-1 text-slate-100">Use live travel times</span>
         </label>
@@ -133,7 +134,7 @@ export function Settings({ onNavigate }: SettingsProps) {
       </p>
 
       <section className="flex flex-col gap-3 border-t border-slate-800 pt-6">
-        <h2 className="text-sm font-medium uppercase tracking-wide text-slate-500">Feedback</h2>
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Feedback</h2>
 
         <TextField
           label="GitHub token"
@@ -176,12 +177,9 @@ export function Settings({ onNavigate }: SettingsProps) {
           whenever a token is set and the device is online.
         </p>
 
-        <button
-          onClick={() => onNavigate({ name: 'report', fromScreen: 'settings' })}
-          className="min-h-11 self-start text-sm font-medium text-sky-400 hover:text-sky-300"
-        >
+        <TextAction onClick={() => onNavigate({ name: 'report', fromScreen: 'settings' })} className="self-start">
           Report a problem
-        </button>
+        </TextAction>
       </section>
     </div>
   );

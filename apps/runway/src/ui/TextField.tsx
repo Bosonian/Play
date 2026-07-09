@@ -10,7 +10,7 @@ interface TextFieldProps extends InputHTMLAttributes<HTMLInputElement> {
   containerClassName?: string;
 }
 
-// Labeled text input, min-h-11 touch target. `hint` renders below the input
+// Labeled text input, min-h-12 touch target. `hint` renders below the input
 // for the cases where a label alone would be ambiguous (per CLAUDE.md:
 // exact copy over vague copy) — e.g. "Travel time, in minutes, from a
 // quick look at Maps".
@@ -18,12 +18,12 @@ export function TextField({ label, hint, id, className = '', containerClassName 
   const inputId = id ?? `field-${label.replace(/\s+/g, '-').toLowerCase()}`;
   return (
     <div className={`flex flex-col gap-1.5 ${containerClassName}`}>
-      <label htmlFor={inputId} className="text-sm font-medium text-slate-300">
+      <label htmlFor={inputId} className="text-sm font-medium text-slate-400">
         {label}
       </label>
       <input
         id={inputId}
-        className={`min-h-11 rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none ${className}`}
+        className={`min-h-12 rounded-lg border border-slate-700 bg-raised px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none ${className}`}
         {...rest}
       />
       {hint && <p className="text-sm text-slate-500">{hint}</p>}

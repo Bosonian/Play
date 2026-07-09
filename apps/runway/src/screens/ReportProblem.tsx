@@ -5,6 +5,7 @@ import type { FieldReport } from '../db/types';
 import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { ScreenHeader } from '../ui/ScreenHeader';
+import { TextAction } from '../ui/TextAction';
 import { APP_VERSION } from '../lib/appVersion';
 import { syncPendingReports } from '../lib/reportSync';
 import { formatDateDisplay, formatTime } from '../lib/format';
@@ -167,19 +168,14 @@ export function ReportProblem({ fromScreen, onNavigate }: ReportProblemProps) {
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Describe what you saw and what you expected instead."
-            className="min-h-32 rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none"
+            className="min-h-32 rounded-lg border border-slate-700 bg-raised px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none"
           />
         </div>
 
         {screenshot ? (
-          <div className="flex items-center gap-3 rounded-md border border-slate-800 bg-slate-900 p-3">
-            <img src={screenshot.previewUrl} alt="Screenshot preview" className="h-16 w-16 rounded object-cover" />
-            <button
-              onClick={removeScreenshot}
-              className="min-h-11 rounded-md px-3 text-sm font-medium text-slate-500 hover:text-red-400"
-            >
-              Remove
-            </button>
+          <div className="flex items-center gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
+            <img src={screenshot.previewUrl} alt="Screenshot preview" className="h-16 w-16 rounded-lg object-cover" />
+            <TextAction onClick={removeScreenshot}>Remove</TextAction>
           </div>
         ) : (
           <div className="flex flex-col gap-1.5">
@@ -192,7 +188,7 @@ export function ReportProblem({ fromScreen, onNavigate }: ReportProblemProps) {
               type="file"
               accept="image/*"
               onChange={handleFileChange}
-              className="text-sm text-slate-400 file:mr-3 file:min-h-11 file:rounded-md file:border-0 file:bg-slate-800 file:px-4 file:py-2 file:text-sm file:font-medium file:text-slate-100 hover:file:bg-slate-700"
+              className="text-sm text-slate-400 file:mr-3 file:min-h-12 file:rounded-lg file:border-0 file:bg-slate-800 file:px-4 file:py-2 file:text-sm file:font-medium file:text-slate-100 hover:file:bg-slate-700"
             />
             {screenshotError && <p className="text-sm text-red-400">{screenshotError}</p>}
           </div>
@@ -204,7 +200,7 @@ export function ReportProblem({ fromScreen, onNavigate }: ReportProblemProps) {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium uppercase tracking-wide text-slate-500">Past reports</h2>
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Past reports</h2>
 
         {reports?.length === 0 && <p className="text-sm text-slate-500">No reports yet.</p>}
 
@@ -216,7 +212,7 @@ export function ReportProblem({ fromScreen, onNavigate }: ReportProblemProps) {
                 ? `${report.description.slice(0, DESCRIPTION_PREVIEW_CHARS)}…`
                 : report.description;
             return (
-              <div key={report.id} className="rounded-md border border-slate-800 bg-slate-900 p-3">
+              <div key={report.id} className="rounded-xl border border-slate-800/60 bg-surface p-4">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-slate-100">{preview}</p>
                   <p className="shrink-0 text-sm tabular-nums text-slate-500">
@@ -229,7 +225,7 @@ export function ReportProblem({ fromScreen, onNavigate }: ReportProblemProps) {
                       href={href}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-sm font-medium text-sky-400 hover:text-sky-300"
+                      className="text-sm font-medium text-sky-400 transition-colors hover:text-sky-300"
                     >
                       {text}
                     </a>
@@ -237,12 +233,7 @@ export function ReportProblem({ fromScreen, onNavigate }: ReportProblemProps) {
                     <p className="text-sm text-slate-400">{text}</p>
                   )}
                   {(report.status === 'failed' || report.status === 'pending') && (
-                    <button
-                      onClick={() => void retryReport(report)}
-                      className="min-h-11 rounded-md px-2 text-sm font-medium text-slate-500 hover:text-slate-300"
-                    >
-                      Retry
-                    </button>
+                    <TextAction onClick={() => void retryReport(report)}>Retry</TextAction>
                   )}
                 </div>
               </div>

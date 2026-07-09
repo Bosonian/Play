@@ -19,3 +19,13 @@ body {
    class (font-variant-numeric: tabular-nums) so digits don't jiggle in
    width as they change, e.g. "9:59" -> "10:00". No custom CSS needed —
    it ships with Tailwind v3. */
+
+/* UI-polish increment: the motion vocabulary (screen-mount fade, inline
+   panel fade-in, colour-state crossfades) is implemented entirely with
+   Tailwind utilities — `animate-fade-in` (keyframe in tailwind.config.ts)
+   and `transition-colors`/`transition-opacity` — always behind the
+   `motion-safe:` variant. That variant already compiles to
+   `@media (prefers-reduced-motion: no-preference)` with no config needed,
+   so there's nothing to add here; a reduced-motion user simply never
+   receives the animation/transition utility class and sees the end state
+   immediately. */

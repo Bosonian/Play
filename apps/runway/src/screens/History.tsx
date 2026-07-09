@@ -57,6 +57,23 @@ function arrivalResultLabel(departure: Departure): string {
   }
 }
 
+/** Moments (UI-polish increment): "early"/"on time" get the emerald-300
+ * acknowledgment tone exclusively; "late" stays red-400; no result yet
+ * ('—') stays the row's ordinary secondary tone. Kept separate from
+ * `arrivalResultLabel` above so the wording (unchanged) and the colour
+ * (new) are two independent decisions, not tangled into one function. */
+function arrivalResultClass(departure: Departure): string {
+  switch (departure.arrivalResult) {
+    case 'early':
+    case 'onTime':
+      return 'text-emerald-300';
+    case 'late':
+      return 'text-red-400';
+    case null:
+      return 'text-slate-400';
+  }
+}
+
 export function History({ onNavigate }: HistoryProps) {
   // Last 10 departures that actually happened, most recent appointment
   // first. Sorted ascending by the indexed field then reversed, rather
@@ -96,9 +113,9 @@ export function History({ onNavigate }: HistoryProps) {
         {entries?.map((departure) => {
           const slip = slipMinutes(departure);
           return (
-            <div key={departure.id} className="rounded-md border border-slate-800 bg-slate-900 p-3">
+            <div key={departure.id} className="rounded-xl border border-slate-800/60 bg-surface p-4">
               <div className="flex items-center justify-between">
-                <p className="font-medium text-slate-100">{departure.name}</p>
+                <p className="text-xl font-medium text-slate-100">{departure.name}</p>
                 <p className="text-sm text-slate-500">{formatDateDisplay(new Date(departure.appointmentAt))}</p>
               </div>
               <div className="mt-1 flex items-center justify-between text-sm tabular-nums text-slate-400">
@@ -112,7 +129,9 @@ export function History({ onNavigate }: HistoryProps) {
                     </>
                   )}
                 </p>
-                <p>{arrivalResultLabel(departure)}</p>
+                <p className={`motion-safe:transition-colors motion-safe:duration-300 ${arrivalResultClass(departure)}`}>
+                  {arrivalResultLabel(departure)}
+                </p>
               </div>
             </div>
           );

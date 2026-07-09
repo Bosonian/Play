@@ -6,6 +6,7 @@ import type { Departure, Template } from '../db/types';
 import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
+import { TextAction } from '../ui/TextAction';
 import { formatAppointmentLine, formatDateDisplay, formatScheduleDays, formatTime } from '../lib/format';
 import {
   cancelDepartureAlarms,
@@ -322,13 +323,13 @@ export function Home({ onNavigate }: HomeProps) {
       </header>
 
       {showFirstRunCard && (
-        <div className="flex flex-col gap-3 rounded-lg border border-slate-800 bg-slate-900 p-4">
+        <div className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
           <h2 className="font-medium text-slate-100">Before your first departure</h2>
-          <p className="text-sm text-slate-300">
+          <p className="text-sm text-slate-400">
             Runway wakes you through a departure with scheduled alarms. Two Android settings decide
             whether they arrive on time:
           </p>
-          <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm text-slate-300">
+          <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm text-slate-400">
             <li>Allow notifications when Runway asks — this happens when you save your first departure.</li>
             <li>
               In Settings → Apps → Runway → Battery, choose Unrestricted. Samsung&apos;s battery
@@ -342,21 +343,21 @@ export function Home({ onNavigate }: HomeProps) {
       )}
 
       {exactAlarmsOff && !bannerDismissed && (
-        <div className="flex items-start gap-3 rounded-lg border border-amber-700/60 bg-amber-950/40 px-4 py-3">
+        <div className="flex items-start gap-3 rounded-xl border border-amber-700/60 bg-amber-950/40 p-4">
           <p className="flex-1 text-sm text-amber-200">
             Exact alarms are off for Runway. Scheduled alerts may arrive late or not at all.
           </p>
           <div className="flex shrink-0 items-center gap-1">
             <button
               onClick={() => void openExactAlarmSettings()}
-              className="min-h-11 rounded-md px-2 text-sm font-medium text-amber-300 hover:text-amber-200"
+              className="min-h-12 rounded-lg px-2 text-sm font-medium text-amber-300 transition-colors hover:text-amber-200"
             >
               Open settings
             </button>
             <button
               onClick={() => setBannerDismissed(true)}
               aria-label="Dismiss"
-              className="flex min-h-11 min-w-11 items-center justify-center text-amber-500 hover:text-amber-300"
+              className="flex min-h-12 min-w-12 items-center justify-center text-amber-500 transition-colors hover:text-amber-300"
             >
               &times;
             </button>
@@ -370,7 +371,7 @@ export function Home({ onNavigate }: HomeProps) {
           (only for the exact-alarm toggle), so no button — just the
           instruction in the copy itself. */}
       {notificationsDenied && !notificationBannerDismissed && (
-        <div className="flex items-start gap-3 rounded-lg border border-amber-700/60 bg-amber-950/40 px-4 py-3">
+        <div className="flex items-start gap-3 rounded-xl border border-amber-700/60 bg-amber-950/40 p-4">
           <p className="flex-1 text-sm text-amber-200">
             Notifications are off for Runway. Scheduled alerts will not appear. Allow notifications in
             Settings, Apps, Runway, Notifications.
@@ -378,7 +379,7 @@ export function Home({ onNavigate }: HomeProps) {
           <button
             onClick={() => setNotificationBannerDismissed(true)}
             aria-label="Dismiss"
-            className="flex min-h-11 min-w-11 shrink-0 items-center justify-center text-amber-500 hover:text-amber-300"
+            className="flex min-h-12 min-w-12 shrink-0 items-center justify-center text-amber-500 transition-colors hover:text-amber-300"
           >
             &times;
           </button>
@@ -396,12 +397,12 @@ export function Home({ onNavigate }: HomeProps) {
           exactly the guilt-list shape increment-5 §2 rules out. */}
       {waitingOnArrival && waitingOnArrival.length > 0 && (
         <section className="flex flex-col gap-3">
-          <h2 className="text-sm font-medium uppercase tracking-wide text-slate-500">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">
             Waiting on arrival
           </h2>
           <div className="flex flex-col gap-2">
             {waitingOnArrival.map((departure) => (
-              <div key={departure.id} className="rounded-md border border-slate-800 bg-slate-900 p-3">
+              <div key={departure.id} className="rounded-xl border border-slate-800/60 bg-surface p-4">
                 <div className="flex items-center justify-between">
                   <p className="font-medium text-slate-100">{departure.name}</p>
                   <p className="text-sm tabular-nums text-slate-500">
@@ -410,7 +411,7 @@ export function Home({ onNavigate }: HomeProps) {
                 </div>
 
                 {revealingLateFor === departure.id ? (
-                  <div className="mt-3 flex items-center gap-2">
+                  <div className="mt-3 flex items-center gap-2 motion-safe:animate-fade-in">
                     <input
                       type="number"
                       inputMode="numeric"
@@ -420,20 +421,19 @@ export function Home({ onNavigate }: HomeProps) {
                       onChange={(e) => setLateMinutesInput(e.target.value)}
                       placeholder="min"
                       aria-label="Minutes late"
-                      className="min-h-11 w-20 rounded-md border border-slate-800 bg-slate-950 px-2 py-2 text-slate-100 tabular-nums focus:border-sky-500 focus:outline-none"
+                      className="min-h-12 w-20 rounded-lg border border-slate-700 bg-raised px-2 py-2 text-slate-100 tabular-nums focus:border-sky-500 focus:outline-none"
                     />
                     <Button onClick={() => void confirmLate(departure)} className="flex-1">
                       Confirm
                     </Button>
-                    <button
+                    <TextAction
                       onClick={() => {
                         setRevealingLateFor(null);
                         setLateMinutesInput('');
                       }}
-                      className="min-h-11 rounded-md px-3 text-sm font-medium text-slate-500 hover:text-slate-200"
                     >
                       Cancel
-                    </button>
+                    </TextAction>
                   </div>
                 ) : (
                   <div className="mt-3 flex items-center gap-2">
@@ -446,12 +446,7 @@ export function Home({ onNavigate }: HomeProps) {
                     <Button variant="secondary" onClick={() => setRevealingLateFor(departure.id)} className="flex-1">
                       Late
                     </Button>
-                    <button
-                      onClick={() => void skipArrival(departure)}
-                      className="min-h-11 rounded-md px-2 text-sm font-medium text-slate-500 hover:text-slate-300"
-                    >
-                      Skip
-                    </button>
+                    <TextAction onClick={() => void skipArrival(departure)}>Skip</TextAction>
                   </div>
                 )}
               </div>
@@ -465,7 +460,7 @@ export function Home({ onNavigate }: HomeProps) {
           {suggestions.map((suggestion) => (
             <div
               key={suggestionKey(suggestion)}
-              className="rounded-md border border-sky-800/60 bg-sky-950/30 p-3"
+              className="rounded-xl border border-sky-800/60 bg-sky-950/30 p-4"
             >
               <p className="text-sm text-slate-200">
                 You plan {suggestion.plannedMinutes} min for {suggestion.stepName}; your median over{' '}
@@ -486,13 +481,8 @@ export function Home({ onNavigate }: HomeProps) {
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-medium uppercase tracking-wide text-slate-500">Templates</h2>
-          <button
-            onClick={() => onNavigate({ name: 'templateEdit' })}
-            className="min-h-11 rounded-md px-2 text-sm font-medium text-sky-400 hover:text-sky-300"
-          >
-            New template
-          </button>
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Templates</h2>
+          <TextAction onClick={() => onNavigate({ name: 'templateEdit' })}>New template</TextAction>
         </div>
 
         {templates?.length === 0 && (
@@ -508,7 +498,7 @@ export function Home({ onNavigate }: HomeProps) {
                   onClick={() => onNavigate({ name: 'departureSetup', templateId: template.id })}
                   className="flex-1"
                 >
-                  <p className="font-medium text-slate-100">{template.name}</p>
+                  <p className="text-xl font-medium text-slate-100">{template.name}</p>
                   <p className="text-sm text-slate-400">
                     {template.destination || 'No destination set'}
                   </p>
@@ -516,13 +506,12 @@ export function Home({ onNavigate }: HomeProps) {
                     {totalPrepMinutes} min prep &middot; {template.travelMinutes} min travel
                   </p>
                 </Card>
-                <button
+                <TextAction
                   onClick={() => onNavigate({ name: 'templateEdit', id: template.id })}
                   aria-label={`Edit ${template.name}`}
-                  className="flex min-h-11 min-w-11 items-center justify-center rounded-md text-slate-500 hover:text-slate-200"
                 >
                   Edit
-                </button>
+                </TextAction>
               </div>
             );
           })}
@@ -530,7 +519,7 @@ export function Home({ onNavigate }: HomeProps) {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium uppercase tracking-wide text-slate-500">Upcoming</h2>
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Upcoming</h2>
 
         {upcoming?.length === 0 && (
           <p className="text-sm text-slate-500">No departure planned.</p>
@@ -545,7 +534,7 @@ export function Home({ onNavigate }: HomeProps) {
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="flex items-center gap-2">
-                        <p className="font-medium text-slate-100">{departure.name}</p>
+                        <p className="text-xl font-medium text-slate-100">{departure.name}</p>
                         {departure.status === 'running' && (
                           <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-sky-400">
                             Running
@@ -588,19 +577,11 @@ export function Home({ onNavigate }: HomeProps) {
                     path to the same confirm dialog. */}
                 {(departure.status === 'planned' || departure.status === 'running') && (
                   <div className="flex justify-end gap-1 px-1">
-                    <button
-                      onClick={() => onNavigate({ name: 'departureSetup', departureId: departure.id })}
-                      className="min-h-11 rounded-md px-2 text-sm font-medium text-slate-500 hover:text-slate-300"
-                    >
+                    <TextAction onClick={() => onNavigate({ name: 'departureSetup', departureId: departure.id })}>
                       Edit
-                    </button>
+                    </TextAction>
                     {departure.status === 'planned' && (
-                      <button
-                        onClick={() => void removeDeparture(departure)}
-                        className="min-h-11 rounded-md px-2 text-sm font-medium text-slate-500 hover:text-red-400"
-                      >
-                        Remove
-                      </button>
+                      <TextAction onClick={() => void removeDeparture(departure)}>Remove</TextAction>
                     )}
                   </div>
                 )}
@@ -621,10 +602,10 @@ export function Home({ onNavigate }: HomeProps) {
           departure. */}
       {pastDepartures && pastDepartures.length > 0 && (
         <section className="flex flex-col gap-3 opacity-60">
-          <h2 className="text-sm font-medium uppercase tracking-wide text-slate-500">Past departure time</h2>
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Past departure time</h2>
           <div className="flex flex-col gap-2">
             {pastDepartures.map((departure) => (
-              <div key={departure.id} className="rounded-md border border-slate-800 bg-slate-900 p-3">
+              <div key={departure.id} className="rounded-xl border border-slate-800/60 bg-surface p-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-medium text-slate-100">{departure.name}</p>
@@ -639,7 +620,7 @@ export function Home({ onNavigate }: HomeProps) {
                     </p>
                   </div>
                 </div>
-                <div className="mt-3 flex gap-2">
+                <div className="mt-3 flex items-center gap-2">
                   <Button
                     variant="secondary"
                     onClick={() => onNavigate({ name: 'runway', departureId: departure.id })}
@@ -647,12 +628,7 @@ export function Home({ onNavigate }: HomeProps) {
                   >
                     Open
                   </Button>
-                  <button
-                    onClick={() => void removeDeparture(departure)}
-                    className="min-h-11 rounded-md px-3 text-sm font-medium text-slate-500 hover:text-red-400"
-                  >
-                    Remove
-                  </button>
+                  <TextAction onClick={() => void removeDeparture(departure)}>Remove</TextAction>
                 </div>
               </div>
             ))}
@@ -661,30 +637,10 @@ export function Home({ onNavigate }: HomeProps) {
       )}
 
       <div className="flex items-center justify-center gap-6">
-        <button
-          onClick={() => onNavigate({ name: 'history' })}
-          className="min-h-11 text-sm font-medium text-slate-500 hover:text-slate-300"
-        >
-          History
-        </button>
-        <button
-          onClick={() => onNavigate(exam ? { name: 'exam' } : { name: 'examSetup' })}
-          className="min-h-11 text-sm font-medium text-slate-500 hover:text-slate-300"
-        >
-          Prüfung
-        </button>
-        <button
-          onClick={() => onNavigate({ name: 'settings' })}
-          className="min-h-11 text-sm font-medium text-slate-500 hover:text-slate-300"
-        >
-          Settings
-        </button>
-        <button
-          onClick={() => onNavigate({ name: 'report', fromScreen: 'home' })}
-          className="min-h-11 text-sm font-medium text-slate-500 hover:text-slate-300"
-        >
-          Report a problem
-        </button>
+        <TextAction onClick={() => onNavigate({ name: 'history' })}>History</TextAction>
+        <TextAction onClick={() => onNavigate(exam ? { name: 'exam' } : { name: 'examSetup' })}>Prüfung</TextAction>
+        <TextAction onClick={() => onNavigate({ name: 'settings' })}>Settings</TextAction>
+        <TextAction onClick={() => onNavigate({ name: 'report', fromScreen: 'home' })}>Report a problem</TextAction>
       </div>
     </div>
   );

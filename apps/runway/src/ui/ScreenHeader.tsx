@@ -14,7 +14,7 @@ export function ScreenHeader({ title, onBack }: ScreenHeaderProps) {
         <button
           onClick={onBack}
           aria-label="Back"
-          className="flex min-h-11 min-w-11 items-center justify-center rounded-md text-2xl text-slate-400 hover:text-slate-100"
+          className="flex min-h-12 min-w-12 items-center justify-center rounded-lg text-2xl text-slate-400 transition-colors hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
         >
           ‹
         </button>

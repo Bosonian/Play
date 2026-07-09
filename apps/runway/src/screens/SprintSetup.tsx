@@ -5,6 +5,7 @@ import type { Sprint } from '../db/types';
 import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { ScreenHeader } from '../ui/ScreenHeader';
+import { TextAction } from '../ui/TextAction';
 import { useNow } from '../hooks/useNow';
 import { findLiveSprint, loggedHoursByTopic } from '../lib/examProjection';
 import { ensurePermissions, scheduleSprintEndAlarm } from '../native/notifications';
@@ -236,17 +237,14 @@ export function SprintSetup({ topicId, plannedMinutes, onNavigate }: SprintSetup
       ) : topics.length === 0 ? (
         <div className="flex flex-col gap-3">
           <p className="text-sm text-slate-500">No topics yet. Add topics before starting a sprint.</p>
-          <button
-            onClick={() => onNavigate({ name: 'topicEdit', examId: exam.id })}
-            className="min-h-11 self-start text-sm font-medium text-sky-400 hover:text-sky-300"
-          >
+          <TextAction onClick={() => onNavigate({ name: 'topicEdit', examId: exam.id })} className="self-start">
             Edit topics
-          </button>
+          </TextAction>
         </div>
       ) : (
         <>
           <section className="flex flex-col gap-3">
-            <h2 className="text-sm font-medium uppercase tracking-wide text-slate-500">Topic</h2>
+            <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Topic</h2>
             <div className="flex flex-col gap-2">
               {topics.map((topic) => {
                 const selected = selectedTopicId === topic.id;
@@ -256,8 +254,8 @@ export function SprintSetup({ topicId, plannedMinutes, onNavigate }: SprintSetup
                     key={topic.id}
                     type="button"
                     onClick={() => setSelectedTopicId(topic.id)}
-                    className={`flex min-h-11 items-center justify-between rounded-md border px-4 py-3 text-left ${
-                      selected ? 'border-sky-500 bg-slate-900' : 'border-slate-800 bg-slate-900/60 hover:border-slate-700'
+                    className={`flex min-h-12 items-center justify-between rounded-xl border px-4 py-3 text-left transition-colors ${
+                      selected ? 'border-sky-500 bg-surface' : 'border-slate-800/60 bg-surface/60 hover:border-slate-700'
                     }`}
                   >
                     <span className="text-slate-100">{topic.name}</span>
@@ -271,7 +269,7 @@ export function SprintSetup({ topicId, plannedMinutes, onNavigate }: SprintSetup
           </section>
 
           <section className="flex flex-col gap-3">
-            <h2 className="text-sm font-medium uppercase tracking-wide text-slate-500">Length</h2>
+            <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Length</h2>
             <div className="flex gap-3">
               {SPRINT_LENGTHS.map((minutes) => {
                 const selected = selectedMinutes === minutes;
@@ -280,10 +278,10 @@ export function SprintSetup({ topicId, plannedMinutes, onNavigate }: SprintSetup
                     key={minutes}
                     type="button"
                     onClick={() => setSelectedMinutes(minutes)}
-                    className={`flex min-h-11 flex-1 flex-col items-center justify-center gap-0.5 rounded-md border py-4 text-2xl font-bold tabular-nums transition-colors ${
+                    className={`flex min-h-12 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl border py-4 text-2xl font-bold tabular-nums transition-colors ${
                       selected
                         ? 'border-sky-500 bg-sky-500 text-slate-950'
-                        : 'border-slate-800 bg-slate-900 text-slate-100 hover:border-slate-700'
+                        : 'border-slate-800/60 bg-surface text-slate-100 hover:border-slate-700'
                     }`}
                   >
                     {minutes}
@@ -295,31 +293,31 @@ export function SprintSetup({ topicId, plannedMinutes, onNavigate }: SprintSetup
           </section>
 
           <section className="flex flex-col gap-3">
-            <h2 className="text-sm font-medium uppercase tracking-wide text-slate-500">Before you start</h2>
+            <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Before you start</h2>
             <div className="flex flex-col gap-2">
               {ritualItems.map((item) => (
                 <div
                   key={item.id}
-                  className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900 p-2"
+                  className="flex items-center gap-2 rounded-lg border border-slate-800/60 bg-surface p-2"
                 >
                   <input
                     type="checkbox"
                     checked={item.checkedAt !== null}
                     onChange={() => toggleRitualItem(item.id)}
                     aria-label={`${item.name || 'Ritual step'} done`}
-                    className="h-6 w-6 shrink-0 rounded border-slate-700 bg-slate-950 text-sky-500 focus:ring-sky-500"
+                    className="size-6 shrink-0 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
                   />
                   <input
                     value={item.name}
                     onChange={(e) => renameRitualItem(item.id, e.target.value)}
                     placeholder="Ritual step"
                     aria-label="Ritual step name"
-                    className="min-h-11 flex-1 rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none"
+                    className="min-h-12 flex-1 rounded-lg border border-slate-700 bg-raised px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none"
                   />
                   <button
                     onClick={() => removeRitualItem(item.id)}
                     aria-label={`Remove ${item.name || 'ritual step'}`}
-                    className="flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-red-400"
+                    className="flex min-h-12 min-w-12 items-center justify-center text-slate-500 transition-colors hover:text-red-400"
                   >
                     &times;
                   </button>

@@ -5,6 +5,49 @@ via the `runway-latest.apk` asset at
 https://github.com/Bosonian/Play/releases/tag/runway-latest — it carries
 whichever version built last.
 
+## 0.16.0
+- UI-polish increment: a visual-layer-only pass across every screen — no
+  logic, data, or copy changed (a handful of class-level copy exceptions are
+  flagged in the PR description, not silently made). New fixed design
+  tokens: `surface`/`raised` card and input background colours
+  (`tailwind.config.ts`), a 150ms screen-mount fade (`App.tsx`, keyed by
+  screen name), and a small motion vocabulary — colour-state crossfades on
+  Runway's/ExamOverview's centerpiece text, borders, and slack/margin lines,
+  a strikethrough-and-dim fade on checked Runway steps, and a fade-in on
+  every inline confirmation panel (replan, re-anchor, "repeat" toggle). All
+  of it lives behind Tailwind's `motion-safe:` variant, so
+  `prefers-reduced-motion: reduce` gets every end state instantly, with no
+  animation/transition property applied at all.
+  - New `src/ui/TextAction.tsx`: the shared component for every quiet
+    text-only action (Home's footer nav, Runway's Replan/Abandon,
+    ExamOverview's Add milestone/Edit exam/Edit topics, MilestoneEdit's
+    Edit/Delete, ReportProblem's Retry, and more) — one shade of slate
+    (`text-slate-400` → `hover:text-slate-100`) everywhere, replacing a mix
+    of ad-hoc greys and, in several places, a sky-400 accent that the new
+    design system reserves for primary buttons and the two genuinely
+    external actions that keep it (DepartureSetup's "Check route in Maps"
+    and "Fetch live travel time"). Trade-off worth naming: Abandon/Remove/
+    Delete previously turned red on hover as a destructive-action cue;
+    `TextAction`'s fixed styling removes that (the confirm dialogs these
+    actions already require are still the actual safety net).
+  - `src/ui/Button.tsx` reworked to the fixed primary/secondary/danger
+    variants (inverted-text primary, outlined secondary, dark-red danger),
+    `min-h-12` (up from 44px), and a visible focus ring throughout.
+  - Checkboxes across every screen now use Tailwind's `accent-sky-500`
+    utility — the previous `text-sky-500` class was a no-op on a native
+    checkbox (no `accent-color` source), so this is a real, not merely
+    cosmetic, fix: checkboxes previously rendered in the OS/browser's
+    default tint rather than app-accent sky.
+  - New emerald-300 "Moments" acknowledgment tone, applied to exactly four
+    existing lines, wording unchanged: Runway's "out the door early/on
+    time" summary (late stays red), PostSprintView's "N min on topic" line,
+    ExamOverview's all-topics-at-estimate margin line, and History's
+    early/on-time result column (late stays red there too).
+  - Section headers normalized to 11px/`tracking-[0.15em]`/faint (slate-500)
+    everywhere; card shape normalized to `rounded-xl` + 60%-opacity border +
+    `p-4`; input shape normalized to `rounded-lg` + `min-h-12` +
+    `bg-raised`/`border-slate-700`.
+
 ## 0.15.1
 - Fix (field report #9): a recurring template's auto-materialized
   occurrences (up to `HORIZON_DAYS` = 7 of them, see `src/lib/recurrence.ts`)

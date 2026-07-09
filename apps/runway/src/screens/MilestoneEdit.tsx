@@ -6,6 +6,7 @@ import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { TextField } from '../ui/TextField';
 import { ScreenHeader } from '../ui/ScreenHeader';
+import { TextAction } from '../ui/TextAction';
 import { formatDateInput, formatDateLong, formatTime, formatTimeInput } from '../lib/format';
 import { cancelMilestoneAlarm, ensurePermissions, scheduleMilestoneAlarm } from '../native/notifications';
 import { refreshWidgets } from '../native/widgets';
@@ -173,7 +174,7 @@ export function MilestoneEdit({ examId, onNavigate }: MilestoneEditProps) {
           return (
             <div
               key={milestone.id}
-              className="flex items-center justify-between gap-2 rounded-md border border-slate-800 bg-slate-900 px-4 py-3"
+              className="flex items-center justify-between gap-2 rounded-xl border border-slate-800/60 bg-surface p-4"
             >
               <div className="flex flex-col">
                 <p className="text-slate-100">{milestone.name}</p>
@@ -181,19 +182,9 @@ export function MilestoneEdit({ examId, onNavigate }: MilestoneEditProps) {
                   {formatDateLong(at)} {formatTime(at)}
                 </p>
               </div>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => startEdit(milestone)}
-                  className="min-h-11 text-sm font-medium text-sky-400 hover:text-sky-300"
-                >
-                  Edit
-                </button>
-                <button
-                  onClick={() => void handleDelete(milestone)}
-                  className="min-h-11 text-sm font-medium text-slate-500 hover:text-red-400"
-                >
-                  Delete
-                </button>
+              <div className="flex gap-1">
+                <TextAction onClick={() => startEdit(milestone)}>Edit</TextAction>
+                <TextAction onClick={() => void handleDelete(milestone)}>Delete</TextAction>
               </div>
             </div>
           );
@@ -201,7 +192,7 @@ export function MilestoneEdit({ examId, onNavigate }: MilestoneEditProps) {
       </div>
 
       <section className="flex flex-col gap-4 border-t border-slate-800 pt-6">
-        <h2 className="text-sm font-medium uppercase tracking-wide text-slate-500">
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">
           {editingId ? 'Edit milestone' : 'Add milestone'}
         </h2>
 
@@ -232,7 +223,7 @@ export function MilestoneEdit({ examId, onNavigate }: MilestoneEditProps) {
         </div>
 
         <div className="flex flex-col gap-2">
-          <h3 className="text-sm font-medium uppercase tracking-wide text-slate-500">Topics covered</h3>
+          <h3 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Topics covered</h3>
           {(topics ?? []).length === 0 ? (
             <p className="text-sm text-slate-500">No topics yet — this milestone will cover the whole exam.</p>
           ) : (
@@ -240,14 +231,14 @@ export function MilestoneEdit({ examId, onNavigate }: MilestoneEditProps) {
               {topics?.map((topic) => (
                 <label
                   key={topic.id}
-                  className="flex min-h-11 items-center gap-2 rounded-md border border-slate-800 bg-slate-900 px-3 py-2"
+                  className="flex min-h-12 items-center gap-2 rounded-lg border border-slate-800/60 bg-surface px-3 py-2"
                 >
                   <input
                     type="checkbox"
                     checked={topicIds.has(topic.id)}
                     onChange={() => toggleTopic(topic.id)}
                     aria-label={topic.name || 'Topic'}
-                    className="h-6 w-6 shrink-0 rounded border-slate-700 bg-slate-950 text-sky-500 focus:ring-sky-500"
+                    className="size-6 shrink-0 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
                   />
                   <span className="text-slate-100">{topic.name}</span>
                 </label>

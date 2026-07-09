@@ -302,7 +302,7 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
           some step rows below are locked, rather than leaving that as an
           unexplained inconsistency in an otherwise fully-editable form. */}
       {isEditingRunning && (
-        <p className="text-sm text-slate-400">
+        <p className="rounded-xl border border-slate-800/60 bg-surface p-4 text-sm text-slate-400">
           This departure is already running. Steps already checked off are locked; everything else can still change.
         </p>
       )}
@@ -366,20 +366,25 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
                 '_blank',
               )
             }
-            className="min-h-11 rounded-md px-2 text-sm font-medium text-sky-400 hover:text-sky-300"
+            className="min-h-12 rounded-lg px-2 text-sm font-medium text-sky-400 transition-colors hover:text-sky-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
           >
             Check route in Maps
           </button>
         )}
         {/* Live-travel increment: only offered when the feature is on
             (Settings) and there's a destination to fetch a route to — same
-            gating the Maps link above uses, plus the settings check. */}
+            gating the Maps link above uses, plus the settings check. Both
+            this and "Check route in Maps" above keep the sky accent rather
+            than the plain TextAction slate — CLAUDE.md/design-system split:
+            sky is reserved for actions with a real external effect (open
+            Maps, hit a network API), TextAction slate is for quiet in-app
+            navigation and housekeeping. */}
         {liveTravelConfig?.enabled && destination.trim() !== '' && (
           <button
             type="button"
             onClick={() => void handleFetchLiveTravel()}
             disabled={fetchingLiveTravel}
-            className="min-h-11 rounded-md px-2 text-sm font-medium text-sky-400 hover:text-sky-300 disabled:opacity-40"
+            className="min-h-12 rounded-lg px-2 text-sm font-medium text-sky-400 transition-colors hover:text-sky-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:opacity-40"
           >
             {fetchingLiveTravel ? 'Fetching…' : 'Fetch live travel time'}
           </button>
@@ -399,7 +404,7 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
       />
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium uppercase tracking-wide text-slate-500">
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">
           Steps for this run
         </h2>
 
@@ -419,28 +424,28 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
               return (
                 <div
                   key={step.id}
-                  className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900/40 p-2 opacity-60"
+                  className="flex items-center gap-2 rounded-lg border border-slate-800/60 bg-surface p-2 opacity-60"
                 >
-                  <span className="min-h-11 flex flex-1 items-center px-3 text-slate-400 line-through">
+                  <span className="min-h-12 flex flex-1 items-center px-3 text-slate-400 line-through">
                     {step.name || 'Step'}
                   </span>
-                  <span className="min-h-11 flex w-16 items-center justify-end px-2 text-sm tabular-nums text-slate-500">
+                  <span className="min-h-12 flex w-16 items-center justify-end px-2 text-sm tabular-nums text-slate-500">
                     {step.plannedMinutes} min
                   </span>
-                  <span className="flex min-h-11 min-w-11 items-center justify-center text-xs font-medium uppercase tracking-wide text-slate-600">
+                  <span className="flex min-h-12 min-w-12 items-center justify-center text-xs font-medium uppercase tracking-wide text-slate-600">
                     done
                   </span>
                 </div>
               );
             }
             return (
-              <div key={step.id} className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900 p-2">
+              <div key={step.id} className="flex items-center gap-2 rounded-lg border border-slate-800/60 bg-surface p-2">
                 <input
                   value={step.name}
                   onChange={(e) => updateStep(step.id, { name: e.target.value })}
                   placeholder="Step name"
                   aria-label="Step name"
-                  className="min-h-11 flex-1 rounded-md border border-slate-800 bg-slate-950 px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none"
+                  className="min-h-12 flex-1 rounded-lg border border-slate-700 bg-raised px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none"
                 />
                 <input
                   type="number"
@@ -452,12 +457,12 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
                     const parsed = Number.parseInt(e.target.value, 10);
                     updateStep(step.id, { plannedMinutes: Number.isNaN(parsed) ? 0 : parsed });
                   }}
-                  className="min-h-11 w-16 rounded-md border border-slate-800 bg-slate-950 px-2 py-2 text-slate-100 tabular-nums focus:border-sky-500 focus:outline-none"
+                  className="min-h-12 w-16 rounded-lg border border-slate-700 bg-raised px-2 py-2 text-slate-100 tabular-nums focus:border-sky-500 focus:outline-none"
                 />
                 <button
                   onClick={() => removeStep(step.id)}
                   aria-label={`Remove ${step.name || 'step'}`}
-                  className="flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-red-400"
+                  className="flex min-h-12 min-w-12 items-center justify-center text-slate-500 transition-colors hover:text-red-400"
                 >
                   &times;
                 </button>
@@ -472,7 +477,7 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
       </section>
 
       {preview && (
-        <p className="tabular-nums text-slate-300">
+        <p className="tabular-nums text-slate-400">
           Start getting ready by <span className="font-semibold text-slate-100">{formatTime(preview.startBy)}</span>
           {' · '}
           Leave by <span className="font-semibold text-slate-100">{formatTime(preview.leaveBy)}</span>

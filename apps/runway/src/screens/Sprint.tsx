@@ -43,7 +43,11 @@ function PostSprintView({ sprint, topicName, onNavigate }: PostSprintViewProps) 
 
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col items-center justify-center gap-2 px-4 pb-12 pt-safe-top text-center">
-      <p className="text-2xl font-semibold tabular-nums text-slate-100">
+      {/* Moments (UI-polish increment): the acknowledgment-tone line for
+          finishing a sprint at all — unconditional, not tied to whether it
+          ran over or under the box, since the moment being marked is "the
+          work happened," not "you hit the target." */}
+      <p className="text-2xl font-semibold tracking-tight tabular-nums text-emerald-300">
         {sprintMinutes(sprint)} min on {topicName}.
       </p>
       {/* Omitted (not "0.0 h", not a placeholder) until the fresh query
@@ -255,7 +259,9 @@ export function Sprint({ sprintId, onNavigate }: SprintProps) {
           ExamOverview, not to a screen whose whole point is not thinking
           about anything except the current sprint. */}
       <div className="flex flex-col items-center gap-1 text-center">
-        <p className={`text-huge font-bold tabular-nums ${overrun ? 'text-amber-400' : 'text-slate-100'}`}>
+        <p
+          className={`text-huge font-bold tracking-tight tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${overrun ? 'text-amber-400' : 'text-slate-100'}`}
+        >
           {formatCountdown(remainingSeconds)}
         </p>
         <p className="text-lg text-slate-100">{topic?.name ?? ''}</p>

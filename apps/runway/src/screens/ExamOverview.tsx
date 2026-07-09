@@ -4,6 +4,7 @@ import type { Sprint } from '../db/types';
 import type { Screen } from '../App';
 import { ScreenHeader } from '../ui/ScreenHeader';
 import { Button } from '../ui/Button';
+import { TextAction } from '../ui/TextAction';
 import { useNow } from '../hooks/useNow';
 import {
   DEFAULT_PACE_HOURS_PER_WEEK,
@@ -229,15 +230,21 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
       </div>
 
       {/* THE CENTERPIECE — same text-huge treatment as the Runway screen's
-          projected arrival (RUNWAY_PLAN.md §4). */}
+          projected arrival (RUNWAY_PLAN.md §4). Centerpiece text and the
+          margin line below it share the same motion-safe 300ms colour
+          crossfade Runway's own state-tinted elements use. */}
       <div className="flex flex-col items-center gap-1 text-center">
         {projection.readyDate ? (
-          <p className={`text-huge font-bold tabular-nums ${textAccent}`}>
+          <p
+            className={`text-huge font-bold tracking-tight tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${textAccent}`}
+          >
             Ready by {formatDateMedium(projection.readyDate, now)}
           </p>
         ) : (
           <>
-            <p className={`text-huge font-bold ${textAccent}`}>Never</p>
+            <p className={`text-huge font-bold tracking-tight motion-safe:transition-colors motion-safe:duration-300 ${textAccent}`}>
+              Never
+            </p>
             <p className="text-base text-slate-400">
               At the current pace of {projection.pace} h/week, no projection is possible.
             </p>
@@ -247,13 +254,22 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
         <p className="text-lg tabular-nums text-slate-500">{formatExamAnchorLine(exam)}</p>
 
         {projection.state === 'done' ? (
-          <p className={`text-base font-medium ${textAccent}`}>All topics at their estimated hours.</p>
+          // Moments (UI-polish increment): the one place on this screen
+          // that reads as an acknowledgment rather than a status — every
+          // topic at its estimate — so this line alone gets emerald-300,
+          // independent of `textAccent` (which stays slate-100 for 'done'
+          // on the centerpiece above; the finished *state* isn't a warning,
+          // but it isn't the specific "well done" moment either — this
+          // margin line is).
+          <p className="text-base font-medium text-emerald-300 motion-safe:transition-colors motion-safe:duration-300">
+            All topics at their estimated hours.
+          </p>
         ) : (
           // slackDays is only null alongside a null readyDate (the "Never"
           // case above already explains itself) — nothing more to say here
           // in that state, so the line is omitted rather than forced.
           projection.slackDays !== null && (
-            <p className={`text-base font-medium tabular-nums ${textAccent}`}>
+            <p className={`text-base font-medium tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${textAccent}`}>
               {formatExamMarginLine(projection.slackDays)}
             </p>
           )
@@ -277,7 +293,7 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
           exactly like every other way into a sprint; neither skips it. */}
       {showNextMoveArea && nextMoveResult && (
         showGuidedCard ? (
-          <div className="flex flex-col gap-3 rounded-md border border-sky-800/60 bg-sky-950/30 px-4 py-3">
+          <div className="flex flex-col gap-3 rounded-xl border border-sky-800/60 bg-sky-950/30 p-4 motion-safe:animate-fade-in">
             <p className="text-slate-100">A 25-minute sprint breaks the seal. Start one now?</p>
             <div className="flex gap-3">
               <Button onClick={() => startNextMove(nextMoveResult)} className="flex-1">
@@ -289,7 +305,7 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
             </div>
           </div>
         ) : (
-          <div className="flex flex-col gap-3 rounded-md border border-slate-800 bg-slate-900 px-4 py-3">
+          <div className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
             <div>
               <p className="text-slate-100">
                 Next: {nextMoveResult.plannedMinutes} min on {nextMoveResult.topicName}.
@@ -300,12 +316,7 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
               <Button onClick={() => startNextMove(nextMoveResult)} className="flex-1">
                 Start
               </Button>
-              <button
-                onClick={() => onNavigate({ name: 'sprintSetup' })}
-                className="min-h-11 text-sm font-medium text-slate-400 hover:text-slate-200"
-              >
-                Choose differently
-              </button>
+              <TextAction onClick={() => onNavigate({ name: 'sprintSetup' })}>Choose differently</TextAction>
             </div>
           </div>
         )
@@ -317,7 +328,7 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
           nudge, not a gate: SprintSetup only blocks on a genuinely LIVE
           sprint, never on a zombie. */}
       {zombie && (
-        <div className="flex flex-col gap-3 rounded-md border border-amber-900 bg-amber-950/40 px-4 py-3">
+        <div className="flex flex-col gap-3 rounded-xl border border-amber-900 bg-amber-950/40 p-4">
           <p className="text-sm text-slate-100">
             {zombieTopicName}: a sprint from {formatDateLong(new Date(zombie.startedAt))}{' '}
             {formatTime(new Date(zombie.startedAt))} was never ended.
@@ -355,8 +366,8 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
           sprint" action and before the topic breakdown: milestones give
           the topic list below its "ready for what" context, but the one
           action on this screen that actually matters stays first. */}
-      <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium uppercase tracking-wide text-slate-500">Milestones</h2>
+      <section className="flex flex-col gap-3">
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Milestones</h2>
 
         {milestones.length === 0 && <p className="text-sm text-slate-500">No milestones yet.</p>}
 
@@ -368,7 +379,7 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
             return (
               <div
                 key={milestone.id}
-                className="flex items-center justify-between rounded-md border border-slate-800 bg-slate-900 px-4 py-3"
+                className="flex items-center justify-between rounded-xl border border-slate-800/60 bg-surface p-4"
               >
                 <div className="flex flex-col">
                   <p className="text-slate-100">{milestone.name}</p>
@@ -376,7 +387,7 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
                     {formatDateLong(at)} {formatTime(at)}
                   </p>
                 </div>
-                <p className={`text-sm font-medium tabular-nums ${milestoneAccent}`}>
+                <p className={`text-sm font-medium tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${milestoneAccent}`}>
                   {milestoneResult.readyDate ? `Ready ${formatDateMedium(milestoneResult.readyDate, now)}` : 'Never'}
                 </p>
               </div>
@@ -393,7 +404,7 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
             return (
               <div
                 key={milestone.id}
-                className="flex items-center justify-between rounded-md border border-slate-800 bg-slate-900/60 px-4 py-3 opacity-50"
+                className="flex items-center justify-between rounded-xl border border-slate-800/60 bg-surface/60 p-4 opacity-50"
               >
                 <div className="flex flex-col">
                   <p className="text-slate-100">{milestone.name}</p>
@@ -406,12 +417,9 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
           })}
         </div>
 
-        <button
-          onClick={() => onNavigate({ name: 'milestoneEdit', examId: exam.id })}
-          className="min-h-11 self-start text-sm font-medium text-sky-400 hover:text-sky-300"
-        >
+        <TextAction onClick={() => onNavigate({ name: 'milestoneEdit', examId: exam.id })} className="self-start">
           Add milestone
-        </button>
+        </TextAction>
       </section>
 
       {/* Topic list — plain numbers, no progress bars
@@ -425,7 +433,7 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
           return (
             <div
               key={topic.id}
-              className="flex items-center justify-between rounded-md border border-slate-800 bg-slate-900 px-4 py-3"
+              className="flex items-center justify-between rounded-xl border border-slate-800/60 bg-surface p-4"
             >
               <p className="text-slate-100">{topic.name}</p>
               <p className="text-sm tabular-nums text-slate-400">
@@ -440,27 +448,14 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
           a pointer back to real work already in progress, not a nudge to
           start something. */}
       {liveSprint && (
-        <button
-          onClick={() => onNavigate({ name: 'sprint', sprintId: liveSprint.id })}
-          className="min-h-11 self-start text-sm font-medium text-slate-400 hover:text-slate-200"
-        >
+        <TextAction onClick={() => onNavigate({ name: 'sprint', sprintId: liveSprint.id })} className="self-start">
           A sprint is running: {liveSprintTopicName ?? 'Untitled topic'}.
-        </button>
+        </TextAction>
       )}
 
       <div className="flex flex-col items-start gap-1">
-        <button
-          onClick={() => onNavigate({ name: 'examSetup', examId: exam.id })}
-          className="min-h-11 text-sm font-medium text-sky-400 hover:text-sky-300"
-        >
-          Edit exam
-        </button>
-        <button
-          onClick={() => onNavigate({ name: 'topicEdit', examId: exam.id })}
-          className="min-h-11 text-sm font-medium text-sky-400 hover:text-sky-300"
-        >
-          Edit topics
-        </button>
+        <TextAction onClick={() => onNavigate({ name: 'examSetup', examId: exam.id })}>Edit exam</TextAction>
+        <TextAction onClick={() => onNavigate({ name: 'topicEdit', examId: exam.id })}>Edit topics</TextAction>
       </div>
     </div>
   );

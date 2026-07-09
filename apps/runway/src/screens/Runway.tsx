@@ -20,6 +20,7 @@ import { refreshWidgets } from '../native/widgets';
 import { compressPlan, suggestNewTarget } from '../lib/replan';
 import type { CompressResult } from '../lib/replan';
 import { TextField } from '../ui/TextField';
+import { TextAction } from '../ui/TextAction';
 
 /** Same confirm copy as Home's "Remove" action on a planned departure (M1) —
  * abandoning from either screen is the same operation with the same
@@ -360,11 +361,19 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
         <p className="text-sm text-slate-500">
           Appointment {formatTime(new Date(departure.appointmentAt))}
         </p>
-        <p className="mt-4 text-2xl font-semibold tabular-nums text-slate-100">
+        <p className="mt-4 text-2xl font-semibold tracking-tight tabular-nums text-slate-100">
           Logged {formatTime(leftAtDate)}. Safe travels.
         </p>
         <p className="tabular-nums text-slate-400">Planned to leave by {formatTime(leaveBy)}.</p>
-        <p className="tabular-nums text-slate-400">
+        {/* Moments (UI-polish increment): the one acknowledgment-tone line
+            in this screen — emerald-300 exclusively for "out the door early
+            or on time," never for late, and never anywhere else. Wording
+            unchanged; only the colour for the early/on-time branches. */}
+        <p
+          className={`tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${
+            slipMinutes > 0 ? 'text-red-400' : 'text-emerald-300'
+          }`}
+        >
           {slipMinutes === 0
             ? 'Out the door on time.'
             : slipMinutes > 0
@@ -476,16 +485,20 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
         />
       </div>
 
-      {/* THE CENTERPIECE - legible from across the room. */}
+      {/* THE CENTERPIECE - legible from across the room. Centerpiece text,
+          the slack line below it, and every state-tinted border on this
+          screen share the same motion-safe 300ms colour crossfade (UI-polish
+          increment, motion item 2) so a calm -> tight -> late shift reads as
+          a transition, not a snap. */}
       <div className="flex flex-col items-center gap-1 text-center">
-        <p className={`text-huge font-bold tabular-nums ${textAccent}`}>
+        <p className={`text-huge font-bold tracking-tight tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${textAccent}`}>
           {formatTime(projection.projectedArrival)}
         </p>
         <p className="text-lg tabular-nums text-slate-500">
           {formatAppointmentLine(new Date(departure.appointmentAt), now)}
         </p>
         {liveTravelLine && <p className="text-sm tabular-nums text-slate-500">{liveTravelLine}</p>}
-        <p className={`text-base font-medium tabular-nums ${textAccent}`}>
+        <p className={`text-base font-medium tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${textAccent}`}>
           {formatSlackLine(projection.slackMinutes)}
         </p>
       </div>
@@ -509,7 +522,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
         // fits SOME window) has nothing honest to offer; see replan.ts's
         // suggestNewTarget doc comment. Re-anchoring to a new target is the
         // recovery path here, not a smaller version of the old one.
-        <div className="flex flex-col gap-3 rounded-lg border border-red-800/60 bg-red-950/20 p-4">
+        <div className="flex flex-col gap-3 rounded-xl border border-red-800/60 bg-red-950/20 p-4 motion-safe:animate-fade-in">
           <p className="text-sm text-red-200">
             {formatTime(new Date(departure.appointmentAt))} has passed. Set a new target to replan against.
           </p>
@@ -547,7 +560,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
           // already fits the time left it returns it unchanged — offering an
           // Apply here would be a button that does nothing ("replan makes no
           // change", reported from real use). Say the true thing instead.
-          <div className="flex flex-col gap-3 rounded-lg border border-slate-800 bg-slate-900 p-4">
+          <div className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4 motion-safe:animate-fade-in">
             <p className="text-sm text-slate-200">
               The plan already fits — {replanAvailableMinutes - replanNeededMinutes} min to spare. Nothing to
               compress.
@@ -557,7 +570,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
             </Button>
           </div>
         ) : replanResult.fits ? (
-          <div className="flex flex-col gap-3 rounded-lg border border-sky-800/60 bg-sky-950/30 p-4">
+          <div className="flex flex-col gap-3 rounded-xl border border-sky-800/60 bg-sky-950/30 p-4 motion-safe:animate-fade-in">
             <p className="text-sm text-slate-200">
               You have {replanAvailableMinutes} min to the door. The remaining plan needs {replanNeededMinutes}.
             </p>
@@ -584,7 +597,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
             </div>
           </div>
         ) : (
-          <div className="flex flex-col gap-3 rounded-lg border border-red-800/60 bg-red-950/20 p-4">
+          <div className="flex flex-col gap-3 rounded-xl border border-red-800/60 bg-red-950/20 p-4 motion-safe:animate-fade-in">
             <p className="text-sm text-red-200">
               No plan reaches {formatTime(new Date(departure.appointmentAt))} on time — the remaining steps need at
               least {replanResult.minimumMinutes} min. Aim for {formatTime(projection.projectedArrival)}
@@ -599,7 +612,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
         projection.state === 'late' && (
           <button
             onClick={() => setReplanOpen(true)}
-            className="min-h-11 rounded-md text-left text-sm font-medium text-amber-400 hover:text-amber-300"
+            className="min-h-12 rounded-lg text-left text-sm font-medium text-amber-400 transition-colors hover:text-amber-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
           >
             {leaveByPassed ? 'The appointment has passed. Set a new target?' : 'The plan no longer fits. Replan from now?'}
           </button>
@@ -607,8 +620,10 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
       )}
 
       {allChecked ? (
-        <div className={`flex flex-col items-center gap-2 rounded-lg border ${border} bg-slate-900 p-6 text-center`}>
-          <p className="text-2xl font-semibold text-slate-100">Leave now.</p>
+        <div
+          className={`flex flex-col items-center gap-3 rounded-xl border ${border} bg-surface p-6 text-center motion-safe:transition-colors motion-safe:duration-300`}
+        >
+          <p className="text-2xl font-semibold tracking-tight text-slate-100">Leave now.</p>
           <p className="tabular-nums text-slate-400">
             Walk out the door by {formatTime(projection.leaveBy)}
           </p>
@@ -626,21 +641,21 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
           )}
         </div>
       ) : (
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-6">
           {currentStep && (
-            <div className={`rounded-lg border ${border} bg-slate-900 p-4`}>
+            <div className={`rounded-xl border ${border} bg-surface p-4 motion-safe:transition-colors motion-safe:duration-300`}>
               <label className="flex items-start gap-3">
                 <input
                   type="checkbox"
                   checked={false}
                   onChange={() => toggleStep(currentStep)}
-                  className="mt-1 h-6 w-6 shrink-0 rounded border-slate-700 bg-slate-950 text-sky-500 focus:ring-sky-500"
+                  className="mt-1 size-6 shrink-0 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
                 />
                 <span className="flex flex-1 flex-col gap-1">
-                  <span className="text-lg font-medium text-slate-100">{currentStep.name || 'Step'}</span>
+                  <span className="text-xl font-medium text-slate-100">{currentStep.name || 'Step'}</span>
                   {elapsed ? (
                     <span
-                      className={`text-sm tabular-nums ${
+                      className={`text-sm tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${
                         elapsed.elapsedMinutes > currentStep.plannedMinutes ? overrunTone : 'text-slate-500'
                       }`}
                     >
@@ -661,13 +676,13 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
               {laterSteps.map((step) => (
                 <label
                   key={step.id}
-                  className="flex min-h-11 items-center gap-3 rounded-md border border-slate-800 bg-slate-900/60 px-4 py-2"
+                  className="flex min-h-12 items-center gap-3 rounded-lg border border-slate-800/60 bg-surface px-4 py-2"
                 >
                   <input
                     type="checkbox"
                     checked={false}
                     onChange={() => toggleStep(step)}
-                    className="h-5 w-5 shrink-0 rounded border-slate-700 bg-slate-950 text-sky-500 focus:ring-sky-500"
+                    className="size-6 shrink-0 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
                   />
                   <span className="flex-1 text-slate-300">{step.name || 'Step'}</span>
                   <span className="text-sm tabular-nums text-slate-500">{step.plannedMinutes} min</span>
@@ -679,12 +694,15 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
           {checkedSteps.length > 0 && (
             <div className="flex flex-col gap-1">
               {checkedSteps.map((step) => (
-                <label key={step.id} className="flex min-h-11 items-center gap-3 rounded-md px-4 py-1 opacity-50">
+                <label
+                  key={step.id}
+                  className="flex min-h-12 items-center gap-3 rounded-lg px-4 py-1 opacity-50 motion-safe:transition-opacity motion-safe:duration-200"
+                >
                   <input
                     type="checkbox"
                     checked={true}
                     onChange={() => toggleStep(step)}
-                    className="h-5 w-5 shrink-0 rounded border-slate-700 bg-slate-950 text-sky-500 focus:ring-sky-500"
+                    className="size-6 shrink-0 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
                   />
                   <span className="flex-1 text-slate-500 line-through">{step.name || 'Step'}</span>
                 </label>
@@ -717,18 +735,8 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
           "else" branch of the same conditional the panel occupies), so
           there is no state where tapping it would need to close anything. */}
       <div className="flex items-center justify-center gap-6">
-        <button
-          onClick={() => setReplanOpen((prev) => !prev)}
-          className="min-h-11 text-sm font-medium text-slate-600 hover:text-slate-300"
-        >
-          Replan from now.
-        </button>
-        <button
-          onClick={() => void handleAbandon()}
-          className="min-h-11 text-sm font-medium text-slate-600 hover:text-red-400"
-        >
-          Abandon this departure
-        </button>
+        <TextAction onClick={() => setReplanOpen((prev) => !prev)}>Replan from now.</TextAction>
+        <TextAction onClick={() => void handleAbandon()}>Abandon this departure</TextAction>
       </div>
     </div>
   );

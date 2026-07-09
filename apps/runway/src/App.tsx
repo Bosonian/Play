@@ -77,38 +77,54 @@ export default function App() {
     return () => setNavigationRef(null);
   }, []);
 
-  switch (screen.name) {
-    case 'home':
-      return <Home onNavigate={setScreen} />;
-    case 'templateEdit':
-      return <TemplateEdit id={screen.id} onNavigate={setScreen} />;
-    case 'departureSetup':
-      return (
-        <DepartureSetup
-          templateId={screen.templateId}
-          departureId={screen.departureId}
-          onNavigate={setScreen}
-        />
-      );
-    case 'runway':
-      return <Runway departureId={screen.departureId} onNavigate={setScreen} />;
-    case 'history':
-      return <History onNavigate={setScreen} />;
-    case 'settings':
-      return <Settings onNavigate={setScreen} />;
-    case 'exam':
-      return <ExamOverview onNavigate={setScreen} />;
-    case 'examSetup':
-      return <ExamSetup examId={screen.examId} onNavigate={setScreen} />;
-    case 'topicEdit':
-      return <TopicEdit examId={screen.examId} onNavigate={setScreen} />;
-    case 'sprintSetup':
-      return <SprintSetup topicId={screen.topicId} plannedMinutes={screen.plannedMinutes} onNavigate={setScreen} />;
-    case 'sprint':
-      return <Sprint sprintId={screen.sprintId} onNavigate={setScreen} />;
-    case 'milestoneEdit':
-      return <MilestoneEdit examId={screen.examId} onNavigate={setScreen} />;
-    case 'report':
-      return <ReportProblem fromScreen={screen.fromScreen} onNavigate={setScreen} />;
+  function renderScreen() {
+    switch (screen.name) {
+      case 'home':
+        return <Home onNavigate={setScreen} />;
+      case 'templateEdit':
+        return <TemplateEdit id={screen.id} onNavigate={setScreen} />;
+      case 'departureSetup':
+        return (
+          <DepartureSetup
+            templateId={screen.templateId}
+            departureId={screen.departureId}
+            onNavigate={setScreen}
+          />
+        );
+      case 'runway':
+        return <Runway departureId={screen.departureId} onNavigate={setScreen} />;
+      case 'history':
+        return <History onNavigate={setScreen} />;
+      case 'settings':
+        return <Settings onNavigate={setScreen} />;
+      case 'exam':
+        return <ExamOverview onNavigate={setScreen} />;
+      case 'examSetup':
+        return <ExamSetup examId={screen.examId} onNavigate={setScreen} />;
+      case 'topicEdit':
+        return <TopicEdit examId={screen.examId} onNavigate={setScreen} />;
+      case 'sprintSetup':
+        return <SprintSetup topicId={screen.topicId} plannedMinutes={screen.plannedMinutes} onNavigate={setScreen} />;
+      case 'sprint':
+        return <Sprint sprintId={screen.sprintId} onNavigate={setScreen} />;
+      case 'milestoneEdit':
+        return <MilestoneEdit examId={screen.examId} onNavigate={setScreen} />;
+      case 'report':
+        return <ReportProblem fromScreen={screen.fromScreen} onNavigate={setScreen} />;
+    }
   }
+
+  // UI-polish increment, motion item 1: a 150ms opacity fade on every screen
+  // change — `key={screen.name}` forces React to tear down and remount this
+  // wrapper (not its children's own internal state, which screens manage
+  // themselves) on every navigation, which is what restarts the CSS
+  // animation each time rather than it only playing once on first mount.
+  // `motion-safe:` (see tailwind.config.ts) means a reduced-motion user gets
+  // the new screen at full opacity immediately, with no animation property
+  // applied at all.
+  return (
+    <div key={screen.name} className="motion-safe:animate-fade-in">
+      {renderScreen()}
+    </div>
+  );
 }
