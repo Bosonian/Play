@@ -60,3 +60,11 @@ Cut from v1 deliberately, not forgotten:
 - **Live traffic** — replacing manually-entered travel minutes with the Google Directions API, once an API key and billing are worth setting up (RUNWAY_PLAN.md §5.6).
 - **Calendar import** — read-only Google Calendar import to create departures from existing appointments instead of typing them in (RUNWAY_PLAN.md §5.6).
 - **Deadline mode** — the second half of the original time-blindness problem (task-initiation procrastination, not departure timing), pointed at the same slipping-projection mechanic but anchored to a latest-safe-start time instead of an arrival time (RUNWAY_PLAN.md §8).
+
+## Re-triggering a build
+
+The APK workflow runs on any push touching `apps/runway/` (or manually via
+the Actions tab's "Run workflow" button, which needs repo write access in a
+browser). If a run is lost to a GitHub runner flake — job shows *cancelled*
+with no failed steps — re-run it from the Actions tab, or push any change
+under `apps/runway/` to start a fresh one.
