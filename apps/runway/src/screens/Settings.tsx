@@ -8,6 +8,7 @@ import { ScreenHeader } from '../ui/ScreenHeader';
 import { TextAction } from '../ui/TextAction';
 import { LIVE_TRAVEL_ENABLED_SETTING, ROUTES_API_KEY_SETTING } from '../lib/liveTravelSettings';
 import { DEFAULT_FEEDBACK_REPO, FEEDBACK_REPO_SETTING, FEEDBACK_TOKEN_SETTING } from '../lib/reportSettings';
+import { GEMINI_API_KEY_SETTING } from '../lib/captureSettings';
 import { CALENDAR_ENABLED_SETTING } from '../lib/calendarSettings';
 import { requestCalendarAccess } from '../native/calendar';
 
@@ -112,6 +113,31 @@ export function Settings({ onNavigate }: SettingsProps) {
 
   async function saveFeedbackRepo() {
     await db.settings.put({ key: FEEDBACK_REPO_SETTING, value: feedbackRepoDraft.trim() });
+  }
+
+  // Quick-capture increment (E2): a single Gemini API key, same
+  // save/clear/local-draft shape as the Routes API key above — half-typed
+  // key material shouldn't take effect character by character here either.
+  // No separate enable toggle: readCaptureConfig treats a present key as
+  // the enable switch, and Home's capture box only renders once one exists
+  // (see Home.tsx) — an on/off checkbox next to it would just be a second,
+  // redundant way to say the same thing the Clear button already says.
+  const geminiApiKeySetting = useLiveQuery(() => db.settings.get(GEMINI_API_KEY_SETTING), []);
+  const savedGeminiApiKey = geminiApiKeySetting?.value ?? '';
+  const hasGeminiApiKey = savedGeminiApiKey !== '';
+
+  const [geminiApiKeyDraft, setGeminiApiKeyDraft] = useState('');
+  useEffect(() => {
+    if (geminiApiKeySetting !== undefined) setGeminiApiKeyDraft(savedGeminiApiKey);
+  }, [geminiApiKeySetting, savedGeminiApiKey]);
+
+  async function saveGeminiApiKey() {
+    await db.settings.put({ key: GEMINI_API_KEY_SETTING, value: geminiApiKeyDraft.trim() });
+  }
+
+  async function clearGeminiApiKey() {
+    await db.settings.put({ key: GEMINI_API_KEY_SETTING, value: '' });
+    setGeminiApiKeyDraft('');
   }
 
   return (
@@ -221,6 +247,32 @@ export function Settings({ onNavigate }: SettingsProps) {
         <TextAction onClick={() => onNavigate({ name: 'report', fromScreen: 'settings' })} className="self-start">
           Report a problem
         </TextAction>
+      </section>
+
+      <section className="flex flex-col gap-3 border-t border-slate-800 pt-6">
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Quick capture</h2>
+
+        <TextField
+          label="Gemini API key"
+          type="password"
+          autoComplete="off"
+          value={geminiApiKeyDraft}
+          onChange={(e) => setGeminiApiKeyDraft(e.target.value)}
+          hint="A Google AI Studio key (aistudio.google.com/apikey). Stored only on this device. One dictated sentence becomes a draft departure — nothing is saved without your confirmation."
+        />
+        <div className="flex gap-2">
+          <Button onClick={() => void saveGeminiApiKey()} className="flex-1">
+            Save
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => void clearGeminiApiKey()}
+            className="flex-1"
+            disabled={!hasGeminiApiKey}
+          >
+            Clear
+          </Button>
+        </div>
       </section>
     </div>
   );

@@ -5,6 +5,32 @@ via the `runway-latest.apk` asset at
 https://github.com/Bosonian/Play/releases/tag/runway-latest — it carries
 whichever version built last.
 
+## 0.19.0
+- Quick capture (ecosystem increment E2): a dictation-first way to start a
+  departure. Home gains a single-line input — "Dictate a departure — name,
+  day, time, place." — shown only once a Gemini API key is set in Settings
+  → Quick capture. One dictated sentence ("Zahnarzt Donnerstag 14:30 in
+  Ludwigsburg") is sent to the Gemini API (`gemini-2.0-flash`,
+  `src/lib/geminiApi.ts`), which reads across mixed German/English/other
+  languages and returns a structured draft (name, destination, date, time)
+  via a JSON response schema — never a saved departure. The draft always
+  lands in DepartureSetup, prefilled, for explicit confirmation
+  (`prefillName`/`prefillDestination`/`prefillAppointmentIso`, reusing E1's
+  prefill mechanism) — nothing is written to Dexie until Save is tapped
+  there. If no time was heard, the sentence is never invented a time: only
+  the date prefills (new `prefillDate`/`prefillTimeMissing`) and
+  DepartureSetup shows "No time was heard — check it." with Time left
+  blank. A parse failure (bad key, network error, unexpected response
+  shape) shows inline — "Could not parse that — try again or enter it
+  manually." plus the specific reason — and the sentence stays in the box
+  to retry or edit. New `src/lib/captureSettings.ts` (the key's
+  read-through config, same shape as `liveTravelSettings.ts`/
+  `reportSettings.ts`) and `src/lib/geminiApi.ts` (request building,
+  defensive response parsing, and the network call — CapacitorHttp on
+  native / fetch on web, 20 s timeout, never throws, mirroring
+  `routesApi.ts`'s `fetchDriveMinutes`).
+  - versionCode 25.
+
 ## 0.18.0
 - Step focus: tapping a step's name on the live Runway screen opens a
   full-screen, true-black (#000, OLED pixels off) countdown for exactly

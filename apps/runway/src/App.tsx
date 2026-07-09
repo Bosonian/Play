@@ -34,6 +34,19 @@ export type Screen =
   // pushed into the destination field sight-unseen, see Home.tsx) and the
   // share-target deep link (destination only, from
   // src/lib/shareTarget.ts's parseSharedDestination).
+  // `prefillDate`/`prefillTimeMissing` (quick-capture increment, E2): the
+  // capture box's third caller into this same prefill mechanism. Gemini
+  // parsed a date but heard no time — the honest reading of "no time in
+  // the sentence" is an empty time field to fill in by hand, not a
+  // fabricated default (see geminiApi.ts's buildCaptureRequest comment on
+  // why inventing one is worse), so this is a DIFFERENT shape from
+  // prefillAppointmentIso rather than that ISO string with a fake
+  // 00:00/09:00 time baked in: `prefillDate` fills only the date input,
+  // `prefillTimeMissing` tells DepartureSetup to show the "No time was
+  // heard" note instead of silently leaving the time blank with no
+  // explanation. Home's capture-box handler picks ONE of
+  // prefillAppointmentIso or prefillDate+prefillTimeMissing depending on
+  // whether Gemini returned a time — never both.
   | {
       name: 'departureSetup';
       templateId?: string;
@@ -41,6 +54,8 @@ export type Screen =
       prefillName?: string;
       prefillDestination?: string;
       prefillAppointmentIso?: string;
+      prefillDate?: string;
+      prefillTimeMissing?: boolean;
     }
   | { name: 'runway'; departureId: string }
   | { name: 'history' }
@@ -109,6 +124,8 @@ export default function App() {
             prefillName={screen.prefillName}
             prefillDestination={screen.prefillDestination}
             prefillAppointmentIso={screen.prefillAppointmentIso}
+            prefillDate={screen.prefillDate}
+            prefillTimeMissing={screen.prefillTimeMissing}
             onNavigate={setScreen}
           />
         );

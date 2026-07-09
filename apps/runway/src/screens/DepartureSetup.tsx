@@ -23,6 +23,11 @@ interface DepartureSetupProps {
   prefillName?: string;
   prefillDestination?: string;
   prefillAppointmentIso?: string;
+  // Quick-capture increment (E2) — see App.tsx's Screen union doc comment
+  // on why this is a separate date-only prefill rather than folding into
+  // prefillAppointmentIso with a fabricated time.
+  prefillDate?: string;
+  prefillTimeMissing?: boolean;
   onNavigate: (screen: Screen) => void;
 }
 
@@ -32,6 +37,8 @@ export function DepartureSetup({
   prefillName,
   prefillDestination,
   prefillAppointmentIso,
+  prefillDate,
+  prefillTimeMissing,
   onNavigate,
 }: DepartureSetupProps) {
   const existingDeparture = useLiveQuery(
@@ -76,9 +83,15 @@ export function DepartureSetup({
   // calendar event's begin time is already both a real date and a real
   // time — there's nothing left for the user to "more honestly" choose
   // there the way there is for a from-scratch departure.
-  const [appointmentDate, setAppointmentDate] = useState(() =>
-    !departureId && prefillAppointmentIso ? formatDateInput(new Date(prefillAppointmentIso)) : formatDateInput(now),
-  );
+  const [appointmentDate, setAppointmentDate] = useState(() => {
+    if (departureId) return formatDateInput(now);
+    if (prefillAppointmentIso) return formatDateInput(new Date(prefillAppointmentIso));
+    // Quick-capture's "date heard, time not heard" case (E2) — a bare
+    // YYYY-MM-DD from Gemini's draft, already in the right shape for this
+    // input's value binding, no Date round-trip needed.
+    if (prefillDate) return prefillDate;
+    return formatDateInput(now);
+  });
   const [appointmentTime, setAppointmentTime] = useState(() =>
     !departureId && prefillAppointmentIso ? formatTimeInput(new Date(prefillAppointmentIso)) : '',
   );
@@ -353,6 +366,14 @@ export function DepartureSetup({
         placeholder="e.g. Klinikum Stuttgart"
         enterKeyHint="next"
       />
+
+      {/* Quick-capture increment (E2): shown only when Gemini's draft
+          named a date but heard no time — the note explains why the Time
+          field below is empty instead of leaving that unexplained the way
+          a silently-blank field would. */}
+      {prefillTimeMissing && (
+        <p className="text-sm text-amber-400">No time was heard — check it.</p>
+      )}
 
       <div className="flex gap-3">
         <TextField

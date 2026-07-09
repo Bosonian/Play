@@ -117,6 +117,25 @@ Two independent ways an appointment already sitting somewhere else on the phone 
 
 **Share from Google Maps**: Runway registers as an Android share target for plain text. Tap Share on a place in Google Maps, choose Runway, and DepartureSetup opens prefilled with that place's name as the destination — the maps.app.goo.gl link Maps includes alongside the name is stripped out automatically. This works through the same `runway://` deep-link machinery the home-screen widgets already use (see below), not a separate mechanism: Android hands the shared text to `MainActivity`, which rewrites it into a `runway://share-target?...` URL before Capacitor ever sees it.
 
+## Quick capture
+
+A third way into DepartureSetup, alongside the calendar read and share-target above: dictate one sentence and let it become a draft. Home shows a single-line input — "Dictate a departure — name, day, time, place." — once a Gemini API key is set (see setup below); tapping the quiet "Parse" action (or pressing Enter) sends the sentence to Google's Gemini API (`gemini-2.0-flash`) and opens DepartureSetup prefilled with whatever it read: name, destination, and appointment date/time.
+
+**It never saves anything on its own.** The parsed sentence is a draft, full stop — it always lands in DepartureSetup for you to check and explicitly save, exactly like every other way of starting a departure in this app. If no time was mentioned in the sentence, the time field is left genuinely blank (never guessed or defaulted) with a note — "No time was heard — check it." — rather than silently filling in something that was never said.
+
+**Mixed-language dictation is the point, not an edge case.** Deepak dictates in a mix of German, English, and occasionally other languages within the same sentence — "Zahnarzt Donnerstag 14:30 in Ludwigsburg" and "dentist next Thursday at half two in Ludwigsburg" are both expected inputs, and the prompt sent to Gemini says so explicitly rather than assuming one language.
+
+**One-time Google AI Studio setup** (about two minutes, and free at the usage this app produces):
+
+1. Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and sign in with a Google account.
+2. **Create API key** — no billing account or Cloud project setup required for the free tier.
+3. Copy the key.
+4. Paste it into Runway → Settings → Quick capture → Gemini API key → Save.
+
+**Free-tier note:** `gemini-2.0-flash` has a generous free-tier request quota, refreshed daily — Runway's usage (one explicit tap per departure you choose to dictate, nothing automatic or recurring) comes nowhere close to it for personal use.
+
+**Privacy note:** the dictated sentence is sent to Google's Gemini API when you tap Parse — and only then. Nothing is sent automatically, on a timer, or as you type. The key itself is stored only on this device (the `settings` table), the same as the Routes API key and the field-reports token above.
+
 ## Home-screen widgets
 
 Two 3×1 widgets, both fed from the same snapshot mechanism (see below).

@@ -18,6 +18,8 @@ import { getUpcomingCalendarEvents, requestCalendarAccess } from '../native/cale
 import type { CalendarEvent } from '../native/calendar';
 import { eventsWithoutDepartures } from '../lib/calendarEvents';
 import { CALENDAR_ENABLED_SETTING } from '../lib/calendarSettings';
+import { readCaptureConfig } from '../lib/captureSettings';
+import { captureDeparture } from '../lib/geminiApi';
 import { computeSuggestions } from '../lib/calibration';
 import type { Suggestion } from '../lib/calibration';
 import { useNow } from '../hooks/useNow';
@@ -399,6 +401,80 @@ export function Home({ onNavigate }: HomeProps) {
     void refreshWidgets();
   }
 
+  // Quick-capture increment (E2). `undefined` while the settings read is
+  // still in flight is treated as "no key" (same convention as every other
+  // config-gated section on this screen) — the capture box simply doesn't
+  // render for that one tick rather than flashing in once the query
+  // resolves. Read via useLiveQuery (not local state) so saving a key on
+  // Settings and returning to Home picks it up immediately, no separate
+  // sync needed — same reasoning as liveTravelConfig in DepartureSetup.tsx.
+  const captureConfig = useLiveQuery(() => readCaptureConfig(), []);
+  const captureAvailable = (captureConfig?.apiKey ?? '') !== '';
+
+  const [captureText, setCaptureText] = useState('');
+  const [capturePending, setCapturePending] = useState(false);
+  // The reason a parse failed, shown in small faint text beneath the fixed
+  // "Could not parse that" line — null means no failure to show. Cleared on
+  // the next edit so a stale reason doesn't sit under a sentence the person
+  // has already changed.
+  const [captureFailureReason, setCaptureFailureReason] = useState<string | null>(null);
+
+  function updateCaptureText(value: string) {
+    setCaptureText(value);
+    setCaptureFailureReason(null);
+  }
+
+  // Explicit tap (or Enter) only, same "never automatic" rule as
+  // DepartureSetup's handleFetchLiveTravel above — a network call to
+  // Google, carrying the dictated sentence, only ever fires because the
+  // person asked it to. The result is ALWAYS a draft dropped into
+  // DepartureSetup for confirmation, never a saved departure — this
+  // handler itself never touches db.departures.
+  async function handleCaptureParse() {
+    const text = captureText.trim();
+    if (text === '' || !captureConfig?.apiKey || capturePending) return;
+
+    setCapturePending(true);
+    setCaptureFailureReason(null);
+    try {
+      const result = await captureDeparture(text, new Date(), captureConfig.apiKey);
+      if (!result.ok) {
+        setCaptureFailureReason(result.reason);
+        return;
+      }
+
+      const { draft } = result;
+      setCaptureText('');
+      if (draft.time !== '') {
+        // A time was heard — combine date+time into the same local-wall-time
+        // -> ISO conversion DepartureSetup's own handleSave uses, so this
+        // reads as an ordinary appointment prefill (prefillAppointmentIso),
+        // no different from the calendar-read path (E1) that already uses
+        // the same prop.
+        onNavigate({
+          name: 'departureSetup',
+          prefillName: draft.name,
+          prefillDestination: draft.destination,
+          prefillAppointmentIso: new Date(`${draft.date}T${draft.time}:00`).toISOString(),
+        });
+      } else {
+        // No time was heard — prefillDate/prefillTimeMissing (App.tsx's
+        // Screen union) fills only the date, leaves Time genuinely blank,
+        // and shows DepartureSetup's "No time was heard" note rather than
+        // silently guessing a time that was never dictated.
+        onNavigate({
+          name: 'departureSetup',
+          prefillName: draft.name,
+          prefillDestination: draft.destination,
+          prefillDate: draft.date,
+          prefillTimeMissing: true,
+        });
+      }
+    } finally {
+      setCapturePending(false);
+    }
+  }
+
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-8 px-4 pb-12 pt-safe-top">
       <header className="pt-8">
@@ -466,6 +542,46 @@ export function Home({ onNavigate }: HomeProps) {
           >
             &times;
           </button>
+        </div>
+      )}
+
+      {/* Quick-capture increment (E2). Only rendered once a Gemini key
+          exists (CLAUDE.md/App brief: no dead UI without a key) — there's
+          nothing this box could do without one, so it doesn't get the
+          usual "off, with an explanation" treatment other gated sections
+          on this screen use; Settings is where that explanation lives. */}
+      {captureAvailable && (
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={captureText}
+              onChange={(e) => updateCaptureText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void handleCaptureParse();
+                // CLAUDE.md: "Esc to clear" for capture inputs.
+                if (e.key === 'Escape') updateCaptureText('');
+              }}
+              placeholder="Dictate a departure — name, day, time, place."
+              enterKeyHint="go"
+              disabled={capturePending}
+              aria-label="Dictate a departure"
+              className="min-h-12 flex-1 rounded-lg border border-slate-700 bg-raised px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none disabled:opacity-50"
+            />
+            <TextAction
+              onClick={() => void handleCaptureParse()}
+              disabled={capturePending || captureText.trim() === ''}
+              className="disabled:opacity-40"
+            >
+              {capturePending ? 'Parsing.' : 'Parse'}
+            </TextAction>
+          </div>
+          {captureFailureReason !== null && (
+            <div>
+              <p className="text-sm text-amber-400">Could not parse that — try again or enter it manually.</p>
+              <p className="text-sm text-slate-500">{captureFailureReason}</p>
+            </div>
+          )}
         </div>
       )}
 
