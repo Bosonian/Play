@@ -1,4 +1,5 @@
 import { format } from 'date-fns';
+import type { Exam } from '../db/types';
 
 // Single choke point for time/date display so "24-hour, ISO-for-storage"
 // (CLAUDE.md's European-default rule) can't quietly drift into en-US
@@ -58,4 +59,29 @@ export function formatAppointmentLine(appointmentAt: Date, now: Date): string {
   return sameDay
     ? `Appointment ${formatTime(appointmentAt)}`
     : `Appointment ${formatDateDisplay(appointmentAt)} ${formatTime(appointmentAt)}`;
+}
+
+/** "1 Nov 2026" — long-form date display for anchors that sit months away
+ * (an exam window, an exact exam date once known), where the year is part
+ * of being exact rather than decoration. Distinct from formatDateDisplay's
+ * near-term "Wed 9 Jul", which drops both the weekday's relevance and the
+ * year because at departure-mode's day-or-two range they're always obvious
+ * from context — an exam anchor has no such context to lean on. */
+export function formatDateLong(date: Date): string {
+  return format(date, 'd MMM yyyy');
+}
+
+/** "Exam window opens 1 Nov 2026" before the exact date is known; "Exam 1
+ * Nov 2026" once it is — RUNWAY_PRUFUNG_PLAN.md §3: `examDate` "overrides
+ * windowStart as the anchor" the moment it's set, and that's exactly the
+ * swap this line makes. `windowStart`/`examDate` are ISO date-only strings
+ * (YYYY-MM-DD); they're parsed with an explicit local midnight
+ * (`${date}T00:00:00`, no `Z`) rather than handed straight to `new Date()`
+ * — same reasoning as DepartureSetup's date+time construction: a bare
+ * `new Date('2026-11-01')` parses as UTC midnight, which lands on the
+ * previous calendar day once JS shifts it to a timezone behind UTC. */
+export function formatExamAnchorLine(exam: Pick<Exam, 'windowStart' | 'examDate'>): string {
+  const anchor = exam.examDate ?? exam.windowStart;
+  const label = formatDateLong(new Date(`${anchor}T00:00:00`));
+  return exam.examDate ? `Exam ${label}` : `Exam window opens ${label}`;
 }

@@ -57,6 +57,16 @@ const FIRST_RUN_DISMISSED_KEY = 'firstRunDismissed';
 export function Home({ onNavigate }: HomeProps) {
   const templates = useLiveQuery(() => db.templates.toArray(), []);
 
+  // Whether an exam already exists, for the Prüfung link's routing below.
+  // `undefined` while this first read is still in flight is treated the
+  // same as "no exam yet" (routes to examSetup) rather than gated behind
+  // an explicit loading check — worst case on that race is a tap landing
+  // on examSetup for an exam that does exist, and ExamSetup's own
+  // already-exists guard (see its file comment) catches that and edits the
+  // real exam instead of creating a duplicate, so nothing here needs to be
+  // more careful than that.
+  const exam = useLiveQuery(() => db.exams.toCollection().first(), []);
+
   // undefined while the settings row is still loading (first Dexie read
   // after app open) — the card stays hidden during that instant rather
   // than flashing on then off, since undefined !== 'true' would otherwise
@@ -527,12 +537,20 @@ export function Home({ onNavigate }: HomeProps) {
         </section>
       )}
 
-      <button
-        onClick={() => onNavigate({ name: 'history' })}
-        className="min-h-11 self-center text-sm font-medium text-slate-500 hover:text-slate-300"
-      >
-        History
-      </button>
+      <div className="flex items-center justify-center gap-6">
+        <button
+          onClick={() => onNavigate({ name: 'history' })}
+          className="min-h-11 text-sm font-medium text-slate-500 hover:text-slate-300"
+        >
+          History
+        </button>
+        <button
+          onClick={() => onNavigate(exam ? { name: 'exam' } : { name: 'examSetup' })}
+          className="min-h-11 text-sm font-medium text-slate-500 hover:text-slate-300"
+        >
+          Prüfung
+        </button>
+      </div>
     </div>
   );
 }

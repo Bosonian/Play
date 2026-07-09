@@ -4,20 +4,32 @@ import { TemplateEdit } from './screens/TemplateEdit';
 import { DepartureSetup } from './screens/DepartureSetup';
 import { Runway } from './screens/Runway';
 import { History } from './screens/History';
+import { ExamOverview } from './screens/ExamOverview';
+import { ExamSetup } from './screens/ExamSetup';
+import { TopicEdit } from './screens/TopicEdit';
 import { setNavigationRef } from './lib/navigationRef';
 
 // Navigation as plain React state, not a router library. There's no
 // deep-linkable URL requirement in increment 1 (no shareable departure
-// links, no browser back/forward across screens) and only four screens —
-// a router would be ceremony without payoff here. If that changes later
-// (e.g. "open straight to today's departure" from a notification tap),
-// revisit this.
+// links, no browser back/forward across screens) and only a handful of
+// screens — a router would be ceremony without payoff here. If that
+// changes later (e.g. "open straight to today's departure" from a
+// notification tap), revisit this.
 export type Screen =
   | { name: 'home' }
   | { name: 'templateEdit'; id?: string }
   | { name: 'departureSetup'; templateId?: string; departureId?: string }
   | { name: 'runway'; departureId: string }
-  | { name: 'history' };
+  | { name: 'history' }
+  // Prüfung mode (RUNWAY_PRUFUNG_PLAN.md §4). `examSetup`'s `examId` is
+  // optional: omitted means "create" from Home's Prüfung link when no exam
+  // exists yet, but ExamSetup itself re-checks for an already-existing
+  // exam and edits that instead — see its own comment — because v1 allows
+  // exactly one exam and Home's link shouldn't be the only thing enforcing
+  // that.
+  | { name: 'exam' }
+  | { name: 'examSetup'; examId?: string }
+  | { name: 'topicEdit'; examId: string };
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'home' });
@@ -50,5 +62,11 @@ export default function App() {
       return <Runway departureId={screen.departureId} onNavigate={setScreen} />;
     case 'history':
       return <History onNavigate={setScreen} />;
+    case 'exam':
+      return <ExamOverview onNavigate={setScreen} />;
+    case 'examSetup':
+      return <ExamSetup examId={screen.examId} onNavigate={setScreen} />;
+    case 'topicEdit':
+      return <TopicEdit examId={screen.examId} onNavigate={setScreen} />;
   }
 }

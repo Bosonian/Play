@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { Departure, Setting, Template } from './types';
+import type { Departure, Exam, Milestone, Setting, Sprint, Template, Topic } from './types';
 
 // Dexie's index string only lists the fields we actually query by
 // (`id` is the implicit primary key for both tables). `appointmentAt` and
@@ -10,6 +10,12 @@ class RunwayDB extends Dexie {
   templates!: EntityTable<Template, 'id'>;
   departures!: EntityTable<Departure, 'id'>;
   settings!: EntityTable<Setting, 'key'>;
+  // Prüfung mode (Dexie v3 below) — exam prep, additive to the departure
+  // tables above.
+  exams!: EntityTable<Exam, 'id'>;
+  topics!: EntityTable<Topic, 'id'>;
+  sprints!: EntityTable<Sprint, 'id'>;
+  milestones!: EntityTable<Milestone, 'id'>;
 
   constructor() {
     super('runway');
@@ -30,6 +36,27 @@ class RunwayDB extends Dexie {
       departures: 'id, appointmentAt, status',
       settings: 'key',
     });
+    // v3 (Prüfung increment 1): adds the exam-prep tables — exams, topics,
+    // sprints, milestones. Same "purely additive" shape as v1→v2 above:
+    // every new store is genuinely new (nothing in `templates`,
+    // `departures` or `settings` changes shape), so there's no data to
+    // migrate and no explicit .upgrade() callback is needed — existing
+    // installs just gain four empty tables. Indexes beyond the primary key
+    // are chosen for the queries later increments are already known to
+    // need: `topics` on `examId` (TopicEdit reads "all topics for this
+    // exam"); `sprints` on `examId, topicId, startedAt` (the pace math and
+    // per-topic hours in increment 2 both need to sum/filter by topic and
+    // by recency); `milestones` on `examId, at` (a chronological list in
+    // increment 4).
+    this.version(3).stores({
+      templates: 'id',
+      departures: 'id, appointmentAt, status',
+      settings: 'key',
+      exams: 'id',
+      topics: 'id, examId',
+      sprints: 'id, examId, topicId, startedAt',
+      milestones: 'id, examId, at',
+    });
   }
 }
 
@@ -40,6 +67,11 @@ export const db = new RunwayDB();
 // (shower / dress / pack bag / shoes & door) with an empty destination —
 // destination is inherently personal, so we leave it for the user to fill
 // in rather than guessing one.
+//
+// Prüfung's tables (exams, topics, sprints, milestones) deliberately get no
+// equivalent seed row: an exam is Deepak's specific exam, not a generic
+// example, so ExamSetup's empty state does the work a seed would do
+// elsewhere — see RUNWAY_PRUFUNG_PLAN.md's "not a fake-urgency machine" §1.
 const SEED_TEMPLATE_ID = 'seed-standard-template';
 
 // `on('populate', ...)` fires exactly once — the first time the database is

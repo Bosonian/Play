@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatAppointmentLine, formatSlackLine } from './format';
+import { formatAppointmentLine, formatDateLong, formatExamAnchorLine, formatSlackLine } from './format';
 
 describe('formatSlackLine', () => {
   it('plain minutes, ahead of schedule', () => {
@@ -32,5 +32,25 @@ describe('formatAppointmentLine', () => {
     const now = new Date('2026-07-09T06:00:00.000Z');
     const appointmentAt = new Date('2026-07-10T14:30:00.000Z');
     expect(formatAppointmentLine(appointmentAt, now)).toBe('Appointment Fri 10 Jul 14:30');
+  });
+});
+
+describe('formatDateLong', () => {
+  it('day, short month, full year', () => {
+    expect(formatDateLong(new Date('2026-11-01T00:00:00'))).toBe('1 Nov 2026');
+  });
+});
+
+describe('formatExamAnchorLine', () => {
+  it('anchors to the window start before an exact date is known', () => {
+    expect(formatExamAnchorLine({ windowStart: '2026-11-01', examDate: null })).toBe(
+      'Exam window opens 1 Nov 2026',
+    );
+  });
+
+  it('anchors to the exact date once it is set, dropping "window opens"', () => {
+    expect(formatExamAnchorLine({ windowStart: '2026-11-01', examDate: '2026-11-14' })).toBe(
+      'Exam 14 Nov 2026',
+    );
   });
 });
