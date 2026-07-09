@@ -5,6 +5,21 @@ via the `runway-latest.apk` asset at
 https://github.com/Bosonian/Play/releases/tag/runway-latest — it carries
 whichever version built last.
 
+## 0.18.0
+- Step focus: tapping a step's name on the live Runway screen opens a
+  full-screen, true-black (#000, OLED pixels off) countdown for exactly
+  that step — its genuine remaining time from the same timestamps
+  calibration uses, never a fresh timer. Digits shift white → amber
+  (last quarter) → red (final tenth); past zero they count up "+m:ss"
+  and a dark-red field rises from the bottom proportional to the overrun
+  — distance-and-steam legibility, the one sanctioned use of a moving
+  surface. Tap anywhere: step done, next step's countdown appears — the
+  whole prep chain becomes one distraction-free screen. Back chevron
+  exits without checking; a non-current step shows its planned time
+  static ("Starts when the steps before it are done.") because a
+  countdown for an unstarted step would be fiction. Leave-by stays
+  visible at the bottom throughout.
+
 ## 0.17.0
 - Calendar and sharing (ecosystem increment E1) — two independent entry
   points that both land in the same place, DepartureSetup prefilled:

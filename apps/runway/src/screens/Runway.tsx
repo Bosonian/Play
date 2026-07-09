@@ -8,8 +8,9 @@ import { ScreenHeader } from '../ui/ScreenHeader';
 import { Button } from '../ui/Button';
 import { computeProjection } from '../lib/projection';
 import type { Projection } from '../lib/projection';
-import { currentStepElapsed } from '../lib/currentStepElapsed';
+import { currentStepAnchor, currentStepElapsed } from '../lib/currentStepElapsed';
 import { useNow } from '../hooks/useNow';
+import { StepFocus } from './StepFocus';
 import { formatAppointmentLine, formatSlackLine, formatTime, formatTimeInput } from '../lib/format';
 import { allowSleep, keepAwake } from '../native/keepAwake';
 import { hapticImpact } from '../native/haptics';
@@ -129,6 +130,34 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
       setReanchorTouched(false);
     }
   }, [replanOpen]);
+
+  // Step-focus increment: which step (if any) the full-screen countdown
+  // overlay is showing. Deliberately plain component state, not a routed
+  // Screen (see App's Screen union, untouched by this increment) - the
+  // overlay is a LENS over this live departure, not a place with its own
+  // identity or deep link. Clearing it is just `setFocusStepId(null)`;
+  // there is no "navigate back" involved, which is also why StepFocus is
+  // rendered as a sibling overlay below rather than something onNavigate
+  // ever points at.
+  const [focusStepId, setFocusStepId] = useState<string | null>(null);
+
+  // Defensive clear: if the departure stops being 'running' (left/abandoned
+  // from elsewhere - e.g. Home - while this screen happens to be open) or
+  // the focused step itself vanishes (edited away), the overlay has nothing
+  // honest left to show. Runs on every departure/focusStepId change rather
+  // than only at specific transitions, since either can happen from outside
+  // this component (Dexie's live query, not user action here).
+  useEffect(() => {
+    if (focusStepId === null) return;
+    if (!departure) return;
+    if (departure.status !== 'running') {
+      setFocusStepId(null);
+      return;
+    }
+    if (!departure.steps.some((s) => s.id === focusStepId)) {
+      setFocusStepId(null);
+    }
+  }, [departure, focusStepId]);
 
   // Keep the screen on for exactly as long as a run is live. Keyed on
   // status rather than just mount/unmount because this component stays
@@ -419,6 +448,36 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   const laterSteps = uncheckedSteps.slice(1);
   const allChecked = uncheckedSteps.length === 0;
 
+  // Step-focus increment: the step the overlay (if open) is showing, and
+  // whether that's the CURRENT step - only the current step gets the live
+  // countdown + tap-to-advance; see StepFocus's own header comment for why
+  // a non-current step can't honestly have one. `currentStepAnchor` is only
+  // computed (and only meaningful) for the current step - passing it
+  // through unconditionally would invite StepFocus to (mis)use it for a
+  // step that isn't running yet.
+  const focusedStep = focusStepId ? (departure.steps.find((s) => s.id === focusStepId) ?? null) : null;
+  const focusedStepIsCurrent = !!focusedStep && !!currentStep && focusedStep.id === currentStep.id;
+  const focusAnchorIso = focusedStepIsCurrent ? currentStepAnchor(departure) : null;
+
+  // Tap-anywhere-to-advance (step-focus increment): reuses toggleStep
+  // exactly as the checkbox does (no duplicated `.modify()` logic, and the
+  // haptic-light already lives inside toggleStep) - this function's only
+  // job on top of that is picking which step focus should land on next.
+  // "By order" is list order: after `currentStep` is checked off, the new
+  // first unchecked step is `laterSteps[0]` (uncheckedSteps.slice(1)) -
+  // exactly the step that becomes the new `currentStep` on the next render.
+  // Computed from the PRE-toggle arrays (captured in this render's
+  // closure), which is safe here because this only ever fires while
+  // focused on the current step, and toggleStep's own transactional
+  // `.modify()` is what actually guards the write against a race - this
+  // function just decides where the overlay should point afterwards.
+  const advanceFocusAfterCheck = async () => {
+    if (!currentStep) return;
+    const nextStepId = laterSteps[0]?.id ?? null;
+    await toggleStep(currentStep);
+    setFocusStepId(nextStepId); // null clears focus - the all-checked leave block takes over
+  };
+
   // Overrun on the current step is its own local warning, independent of
   // whether the overall projection is calm right now (plenty of slack
   // elsewhere can mask one slow step). It shares the tight/late palette
@@ -477,6 +536,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   const editPathApplies = departure.status === 'planned' || departure.status === 'running';
 
   return (
+    <>
     <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-8 px-4 pb-12 pt-safe-top">
       <div className="pt-8">
         <ScreenHeader
@@ -644,14 +704,28 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
         <div className="flex flex-col gap-6">
           {currentStep && (
             <div className={`rounded-xl border ${border} bg-surface p-4 motion-safe:transition-colors motion-safe:duration-300`}>
-              <label className="flex items-start gap-3">
-                <input
-                  type="checkbox"
-                  checked={false}
-                  onChange={() => toggleStep(currentStep)}
-                  className="mt-1 size-6 shrink-0 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
-                />
-                <span className="flex flex-1 flex-col gap-1">
+              {/* Two separate tap targets, not one <label> wrapping both
+                  (step-focus increment): a <label> around a checkbox
+                  toggles on ANY click inside it, including the step name -
+                  which is exactly the target that needs to open Focus
+                  instead. Splitting them means the checkbox keeps its own
+                  ~44px hit area (unchanged toggle behaviour) and the name/
+                  time text becomes its own button that opens the overlay. */}
+              <div className="flex items-start gap-3">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center">
+                  <input
+                    type="checkbox"
+                    checked={false}
+                    onChange={() => toggleStep(currentStep)}
+                    aria-label={`Check off ${currentStep.name || 'step'}`}
+                    className="size-6 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                  />
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setFocusStepId(currentStep.id)}
+                  className="flex min-h-11 flex-1 flex-col gap-1 rounded-lg py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                >
                   <span className="text-xl font-medium text-slate-100">{currentStep.name || 'Step'}</span>
                   {elapsed ? (
                     <span
@@ -666,27 +740,40 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
                       planned {currentStep.plannedMinutes} min
                     </span>
                   )}
-                </span>
-              </label>
+                </button>
+              </div>
             </div>
           )}
 
           {laterSteps.length > 0 && (
             <div className="flex flex-col gap-2">
               {laterSteps.map((step) => (
-                <label
+                // Same checkbox/text split as the current-step card above -
+                // tapping the row opens Focus (showing this step's full
+                // planned time, static; see StepFocus), tapping the
+                // checkbox still just checks it off in place.
+                <div
                   key={step.id}
                   className="flex min-h-12 items-center gap-3 rounded-lg border border-slate-800/60 bg-surface px-4 py-2"
                 >
-                  <input
-                    type="checkbox"
-                    checked={false}
-                    onChange={() => toggleStep(step)}
-                    className="size-6 shrink-0 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
-                  />
-                  <span className="flex-1 text-slate-300">{step.name || 'Step'}</span>
-                  <span className="text-sm tabular-nums text-slate-500">{step.plannedMinutes} min</span>
-                </label>
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center">
+                    <input
+                      type="checkbox"
+                      checked={false}
+                      onChange={() => toggleStep(step)}
+                      aria-label={`Check off ${step.name || 'step'}`}
+                      className="size-6 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                    />
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setFocusStepId(step.id)}
+                    className="flex min-h-11 flex-1 items-center justify-between gap-3 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                  >
+                    <span className="flex-1 text-slate-300">{step.name || 'Step'}</span>
+                    <span className="text-sm tabular-nums text-slate-500">{step.plannedMinutes} min</span>
+                  </button>
+                </div>
               ))}
             </div>
           )}
@@ -739,5 +826,21 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
         <TextAction onClick={() => void handleAbandon()}>Abandon this departure</TextAction>
       </div>
     </div>
+    {/* Step-focus overlay - a sibling of the main screen, not nested inside
+        it (see focusStepId's own comment above: this is a lens over the
+        live departure, not a navigated-to place). `fixed inset-0` makes its
+        position in the DOM irrelevant to what it covers on screen. */}
+    {focusedStep && (
+      <StepFocus
+        step={focusedStep}
+        isCurrentStep={focusedStepIsCurrent}
+        anchorIso={focusAnchorIso}
+        now={now}
+        leaveBy={projection.leaveBy}
+        onBack={() => setFocusStepId(null)}
+        onTap={focusedStepIsCurrent ? () => void advanceFocusAfterCheck() : undefined}
+      />
+    )}
+    </>
   );
 }
