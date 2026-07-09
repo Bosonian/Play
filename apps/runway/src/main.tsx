@@ -8,6 +8,7 @@ import { registerDeepLinkNavigation } from './native/deepLinks';
 import { refreshWidgets } from './native/widgets';
 import { navigateToDeparture, navigateToScreen } from './lib/navigationRef';
 import { materializeScheduledDepartures } from './lib/materialize';
+import { syncPendingReports } from './lib/reportSync';
 
 // Registered here, before the first render, rather than inside App — this
 // is the earliest point in the app's lifecycle a listener can attach, which
@@ -43,6 +44,14 @@ void refreshWidgets();
 // keeping the two Dexie-reading startup calls adjacent makes this list
 // easier to scan.
 void materializeScheduledDepartures();
+
+// Field-reports increment: retries whatever's still `status: 'pending'` in
+// the fieldReports table against GitHub Issues, same fire-and-forget
+// treatment as the two calls above — never blocks the first render, never
+// throws (see reportSync.ts's own doc comment), and picking up the queue on
+// every app open is what makes offline capture eventually consistent
+// without any background sync worker.
+void syncPendingReports();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

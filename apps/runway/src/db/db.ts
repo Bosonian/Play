@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { Departure, Exam, Milestone, Setting, Sprint, Template, Topic } from './types';
+import type { Departure, Exam, FieldReport, Milestone, Setting, Sprint, Template, Topic } from './types';
 
 // Dexie's index string only lists the fields we actually query by
 // (`id` is the implicit primary key for both tables). `appointmentAt` and
@@ -16,6 +16,8 @@ class RunwayDB extends Dexie {
   topics!: EntityTable<Topic, 'id'>;
   sprints!: EntityTable<Sprint, 'id'>;
   milestones!: EntityTable<Milestone, 'id'>;
+  // Field reports (Dexie v4 below) — in-app bug/improvement reports.
+  fieldReports!: EntityTable<FieldReport, 'id'>;
 
   constructor() {
     super('runway');
@@ -56,6 +58,26 @@ class RunwayDB extends Dexie {
       topics: 'id, examId',
       sprints: 'id, examId, topicId, startedAt',
       milestones: 'id, examId, at',
+    });
+    // v4 (field-reports increment): adds `fieldReports`, a genuinely new
+    // table — unlike Template.schedule or Departure.scheduledForDate above,
+    // which only ever added non-indexed fields to EXISTING tables and so
+    // needed no version bump at all, a new table's name has to appear in a
+    // `stores()` call for Dexie to create the underlying object store.
+    // Indexed on `status` (ReportProblem.tsx's list needs "pending or
+    // failed" rows for the retry action, and reportSync.ts's engine needs
+    // "all pending, oldest first") and `createdAt` (the list's sort order,
+    // newest first, capped to 10). Purely additive otherwise — every
+    // existing table and row is untouched by this upgrade.
+    this.version(4).stores({
+      templates: 'id',
+      departures: 'id, appointmentAt, status',
+      settings: 'key',
+      exams: 'id',
+      topics: 'id, examId',
+      sprints: 'id, examId, topicId, startedAt',
+      milestones: 'id, examId, at',
+      fieldReports: 'id, status, createdAt',
     });
   }
 }

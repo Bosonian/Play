@@ -125,9 +125,27 @@ Two 3×1 widgets, both fed from the same snapshot mechanism (see below).
 
 **Static shortcuts** ("New departure", "Prüfung") are also available by long-pressing the app icon — no widget placement required for those.
 
+## Field reports
+
+A quiet "Report a problem" link on Home and on Settings opens a small form: a description (no character limit — dictate it, no need to be terse) and an optional screenshot. Saving is instant and always succeeds, whether or not you've set up syncing and whether or not the device is online — the report is written to this device's own storage first, full stop. From there it's a queue: **filed to GitHub Issues automatically once a token is configured and the device has connectivity**, retried on every app open until that happens.
+
+**One-time GitHub setup** (a couple of minutes):
+
+1. Go to [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens) → **Generate new token**.
+2. **Repository access** → **Only select repositories** → pick the target repo (defaults to `Bosonian/Play` if you leave Settings' repo field blank — see below for pointing it somewhere else).
+3. **Repository permissions** → set **Issues** to *Read and write* and **Contents** to *Read and write* (Contents is needed because screenshots upload as files in the repo before the issue that links to them is created).
+4. **Generate token**, then copy it.
+5. Paste it into Runway → Settings → Feedback → GitHub token → Save.
+
+**Privacy note:** a report filed to a **public** repository — including any screenshot — is publicly visible to anyone who can see that repo. Point the target-repo field at a private repository if reports (which may show clinical-adjacent UI state, patient-facing screens excluded but appointment names and destinations included) shouldn't be visible beyond you and whoever reviews them.
+
+**The offline queue, precisely:** a report's `status` is one of three things. `pending` means it hasn't synced yet — no token set, no connectivity, or a transient network failure — and it will keep being retried automatically, silently, with no error shown, because none of those are actually wrong. `synced` means it's a real GitHub issue now; the report list shows a link to it and the on-device screenshot copy is cleared (the bytes already live in the repo — no reason to double the storage). `failed` is different: it means GitHub rejected the request outright — bad token, bad/missing repo, a validation error — and retrying identical input would only fail identically, so it stops retrying on its own and shows GitHub's exact error instead. Fix whatever it's complaining about (usually the token or the repo field) and tap **Retry** on that report.
+
 ## v1.5 candidates
 
 Cut from v1 deliberately, not forgotten:
+
+- **`APP_VERSION` / `versionName` build-time injection** — right now `src/lib/appVersion.ts`'s `APP_VERSION` constant and `android/app/build.gradle`'s `versionName` are two separate hand-maintained strings (see the loud comments on both) that have to be bumped together on every release with nothing enforcing it. A build step that derives one from the other would remove that manual-sync risk.
 
 - **Web push fallback** — a server-independent way to still get alerts if a future rebuild ever drops the native shell; much more feasible on Android than it would have been on iOS.
 - **Settings deep-link plugin** — so the first-run card's battery-optimization step could open Settings → Apps → Runway → Battery directly instead of describing the path in words.

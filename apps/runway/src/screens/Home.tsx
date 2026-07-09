@@ -605,6 +605,12 @@ export function Home({ onNavigate }: HomeProps) {
         >
           Settings
         </button>
+        <button
+          onClick={() => onNavigate({ name: 'report', fromScreen: 'home' })}
+          className="min-h-11 text-sm font-medium text-slate-500 hover:text-slate-300"
+        >
+          Report a problem
+        </button>
       </div>
     </div>
   );

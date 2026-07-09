@@ -266,3 +266,52 @@ export interface Milestone {
   topicIds: string[];
   createdAt: string;
 }
+
+// --- Field reports (field-reports increment, Dexie v4) ---
+// In-app bug/improvement reports. Unlike every non-indexed addition above
+// (Template.schedule, Departure.scheduledForDate), this is a genuinely new
+// TABLE, so it needs an actual Dexie version bump (see db.ts's version(4))
+// rather than the "no migration needed" treatment those got.
+
+export type FieldReportStatus = 'pending' | 'synced' | 'failed';
+
+/**
+ * A single "report a problem" submission — ReportProblem.tsx's save path,
+ * synced (best-effort) to GitHub Issues by src/lib/reportSync.ts. Written
+ * to Dexie unconditionally on submit, regardless of whether a sync token
+ * exists or the device is online — the local write IS the feature; sync is
+ * an enhancement on top of it, not a precondition for it.
+ */
+export interface FieldReport {
+  id: string;
+  createdAt: string;
+  description: string;
+  /** The Screen union's `name` that was active when the report form was
+   * opened from — 'home' or 'settings' today, but stored as a plain string
+   * rather than a narrowed union so this table never needs a schema change
+   * if a third entry point is added later. */
+  screenName: string;
+  /** APP_VERSION (src/lib/appVersion.ts) at submit time — a fixed fact
+   * about the report, not a live lookup, so an old report still shows the
+   * version it was actually filed under after the app has since updated. */
+  appVersion: string;
+  /** Base64-encoded image bytes with the `data:...;base64,` prefix already
+   * stripped (ReportProblem.tsx's FileReader path strips it before writing
+   * here) — null when no screenshot was attached. */
+  screenshotBase64: string | null;
+  screenshotMime: string | null;
+  /**
+   * 'pending': not yet synced (no token configured, offline, or a
+   * transient/network failure — see reportSync.ts's classifySyncError).
+   * Retried on every app open. 'synced': filed as a GitHub issue,
+   * `syncedIssueUrl` set, `screenshotBase64`/`screenshotMime` cleared (the
+   * bytes now live in the target repo). 'failed': permanent — a 4xx from
+   * GitHub's API (bad token, bad repo, validation error) that retrying with
+   * the same input would only repeat; `syncError` holds why. Only a manual
+   * "Retry" (ReportProblem.tsx) re-attempts a 'failed' row, and only after
+   * whatever made it fail (usually the token/repo settings) has changed.
+   */
+  status: FieldReportStatus;
+  syncedIssueUrl: string | null;
+  syncError: string | null;
+}

@@ -5,6 +5,48 @@ via the `runway-latest.apk` asset at
 https://github.com/Bosonian/Play/releases/tag/runway-latest — it carries
 whichever version built last.
 
+## 0.15.0
+- Field reports: a quiet "Report a problem" link on Home and on Settings
+  opens a small form — description (required, multiline, dictation-
+  friendly: no character limit) plus an optional screenshot
+  (`<input type="file" accept="image/*">`, read to base64 client-side, 4 MB
+  cap with an exact rejection message, thumbnail preview + remove). Saving
+  writes a `FieldReport` row to a new Dexie table (`fieldReports`, v4 —
+  see db/db.ts's version() comments for why this is a genuine schema bump,
+  unlike the last several increments' non-indexed field additions)
+  **unconditionally** — the local save always succeeds, regardless of
+  connectivity or whether a sync token is configured. That local write IS
+  the feature; everything past it is a best-effort enhancement.
+  - `src/lib/reportSync.ts`'s `syncPendingReports()` walks the pending
+    queue (oldest first, sequential — reports are rare, no parallelism
+    earns its complexity here) on every app open (`main.tsx`) and files
+    each as a GitHub Issue via the REST API (screenshot uploaded first, to
+    `field-reports/` in the target repo, then linked into the issue body).
+    No token configured means every report just stays `'pending'` forever
+    — silently, correctly, not an error state.
+  - **401/403/404/422 (bad token, bad repo, validation error) mark a
+    report `'failed'` permanently** — the exact GitHub status + message is
+    stored and shown verbatim, because retrying identical bad input would
+    only fail identically. Network errors, timeouts, and 5xx leave the
+    report `'pending'` for the next automatic retry. A manual "Retry" on
+    any failed/pending row in the report list re-attempts immediately
+    rather than waiting for the next app open.
+  - New Settings section ("Feedback"): a fine-grained GitHub token
+    (password field, stored only on this device, same save/clear pattern
+    as the Routes API key) and a target repo (defaults to `Bosonian/Play`
+    when left blank — see this file's README section for the
+    fine-grained-PAT setup steps and the public-repo privacy tradeoff).
+  - `APP_VERSION` (`src/lib/appVersion.ts`, new) is now the one hardcoded
+    version string every field report stamps itself with — **must be
+    bumped alongside `versionName` in `android/app/build.gradle` by hand**;
+    nothing enforces the two staying in sync yet (v1.5 candidate: build-time
+    injection).
+  - `buildIssuePayload()` and `classifySyncError()` are pure and
+    independently tested (`reportSync.test.ts`, 18 new cases) — title
+    truncation at the 60-character boundary, the context block's exact
+    content, screenshot-markdown presence/absence, and the full
+    401/403/404/422-vs-everything-else classification table.
+
 ## 0.14.0
 - Recurring departures: a Template can now carry a repeating schedule —
   "reach work at 08:00 Mon-Fri" — via a new "Repeat" section on

@@ -6,6 +6,7 @@ import { Button } from '../ui/Button';
 import { TextField } from '../ui/TextField';
 import { ScreenHeader } from '../ui/ScreenHeader';
 import { LIVE_TRAVEL_ENABLED_SETTING, ROUTES_API_KEY_SETTING } from '../lib/liveTravelSettings';
+import { DEFAULT_FEEDBACK_REPO, FEEDBACK_REPO_SETTING, FEEDBACK_TOKEN_SETTING } from '../lib/reportSettings';
 
 interface SettingsProps {
   onNavigate: (screen: Screen) => void;
@@ -55,6 +56,38 @@ export function Settings({ onNavigate }: SettingsProps) {
     await db.settings.put({ key: LIVE_TRAVEL_ENABLED_SETTING, value: liveTravelEnabled ? 'false' : 'true' });
   }
 
+  // Field-reports increment: same two-rows-in-`settings` shape as the
+  // Routes API key above, and the same local-draft-until-Save pattern for
+  // the same reason — half-typed token material shouldn't take effect
+  // character by character.
+  const feedbackTokenSetting = useLiveQuery(() => db.settings.get(FEEDBACK_TOKEN_SETTING), []);
+  const feedbackRepoSetting = useLiveQuery(() => db.settings.get(FEEDBACK_REPO_SETTING), []);
+  const savedFeedbackToken = feedbackTokenSetting?.value ?? '';
+  const hasFeedbackToken = savedFeedbackToken !== '';
+
+  const [feedbackTokenDraft, setFeedbackTokenDraft] = useState('');
+  useEffect(() => {
+    if (feedbackTokenSetting !== undefined) setFeedbackTokenDraft(savedFeedbackToken);
+  }, [feedbackTokenSetting, savedFeedbackToken]);
+
+  const [feedbackRepoDraft, setFeedbackRepoDraft] = useState('');
+  useEffect(() => {
+    if (feedbackRepoSetting !== undefined) setFeedbackRepoDraft(feedbackRepoSetting?.value ?? '');
+  }, [feedbackRepoSetting]);
+
+  async function saveFeedbackToken() {
+    await db.settings.put({ key: FEEDBACK_TOKEN_SETTING, value: feedbackTokenDraft.trim() });
+  }
+
+  async function clearFeedbackToken() {
+    await db.settings.put({ key: FEEDBACK_TOKEN_SETTING, value: '' });
+    setFeedbackTokenDraft('');
+  }
+
+  async function saveFeedbackRepo() {
+    await db.settings.put({ key: FEEDBACK_REPO_SETTING, value: feedbackRepoDraft.trim() });
+  }
+
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-6 px-4 pb-12 pt-safe-top">
       <div className="pt-8">
@@ -98,6 +131,58 @@ export function Settings({ onNavigate }: SettingsProps) {
         Live travel adds a network dependency and a location permission. Everything still works
         without it — travel minutes fall back to your manual estimate.
       </p>
+
+      <section className="flex flex-col gap-3 border-t border-slate-800 pt-6">
+        <h2 className="text-sm font-medium uppercase tracking-wide text-slate-500">Feedback</h2>
+
+        <TextField
+          label="GitHub token"
+          type="password"
+          autoComplete="off"
+          value={feedbackTokenDraft}
+          onChange={(e) => setFeedbackTokenDraft(e.target.value)}
+          hint="A fine-grained GitHub token with Issues and Contents write access to the target repo. Stored only on this device."
+        />
+        <div className="flex gap-2">
+          <Button onClick={() => void saveFeedbackToken()} className="flex-1">
+            Save
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => void clearFeedbackToken()}
+            className="flex-1"
+            disabled={!hasFeedbackToken}
+          >
+            Clear
+          </Button>
+        </div>
+
+        <TextField
+          label="Target repo"
+          type="text"
+          autoComplete="off"
+          value={feedbackRepoDraft}
+          onChange={(e) => setFeedbackRepoDraft(e.target.value)}
+          placeholder="Bosonian/runway-feedback"
+          hint="Reports filed to a public repository are publicly visible — including screenshots. A private repository keeps them between you and the reviewer."
+        />
+        <Button onClick={() => void saveFeedbackRepo()} className="w-full">
+          Save
+        </Button>
+
+        <p className="text-sm text-slate-500">
+          Left blank, reports file to {DEFAULT_FEEDBACK_REPO}. Reports are saved on this device the
+          moment you file them, token or no token — they sync to GitHub Issues in the background
+          whenever a token is set and the device is online.
+        </p>
+
+        <button
+          onClick={() => onNavigate({ name: 'report', fromScreen: 'settings' })}
+          className="min-h-11 self-start text-sm font-medium text-sky-400 hover:text-sky-300"
+        >
+          Report a problem
+        </button>
+      </section>
     </div>
   );
 }
