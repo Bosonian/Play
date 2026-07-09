@@ -161,6 +161,61 @@ export function formatRequiredPaceLine(
   return `Ready by ${formatDateMedium(anchor, now)} needs ${required} h/week. This week: ${hoursThisWeek.toFixed(1)} of ${required}.`;
 }
 
+/** Three-letter day names, indexed by ISO weekday (1 Monday .. 7 Sunday —
+ * same numbering as `TemplateSchedule.days`, see db/types.ts). Index 0 is
+ * unused padding so `DAY_NAMES[isoWeekday]` reads directly without an
+ * off-by-one subtraction at every call site. */
+const DAY_NAMES = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/** "Mon–Fri" / "Sat–Sun" / "Mon, Wed, Fri" / "Daily" — collapses a
+ * template's recurring `days` (recurring-departures increment) into one
+ * short summary for Home's collapsed-occurrence card. Always reads
+ * Monday-first regardless of the order `days` arrives in, matching
+ * CLAUDE.md's Monday-first week convention.
+ *
+ * Contiguous runs (Mon,Tue,Wed -> "Mon–Wed") collapse to a range; isolated
+ * days stay comma-separated; all seven days collapse to the single word
+ * "Daily" rather than "Mon–Sun", which would read as a bounded week rather
+ * than "every day, no exceptions".
+ *
+ * Deliberately NOT circular: [6, 7, 1] (Sat, Sun, Mon) renders as
+ * "Mon, Sat–Sun", not a wrapped "Sat–Mon" range. A wrap-around range would
+ * be a clever reading of the data (the week does form a cycle) but not a
+ * clear one — the day the range starts on stops being obvious at a glance,
+ * which is the opposite of what a summary line is for. The week has a
+ * Monday start here, full stop.
+ *
+ * Assumes `days` is non-empty, matching `TemplateSchedule.days`'s own
+ * invariant (db/types.ts: "non-empty whenever a schedule exists" —
+ * TemplateEdit's validation never lets an empty-days schedule save) — an
+ * empty array would leave `runStart`/`runEnd` undefined below.
+ */
+export function formatScheduleDays(days: number[]): string {
+  const sorted = Array.from(new Set(days)).sort((a, b) => a - b);
+  if (sorted.length === 7) return 'Daily';
+
+  const parts: string[] = [];
+  let runStart = sorted[0];
+  let runEnd = sorted[0];
+
+  function flushRun() {
+    parts.push(runStart === runEnd ? DAY_NAMES[runStart] : `${DAY_NAMES[runStart]}–${DAY_NAMES[runEnd]}`);
+  }
+
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i] === runEnd + 1) {
+      runEnd = sorted[i];
+      continue;
+    }
+    flushRun();
+    runStart = sorted[i];
+    runEnd = sorted[i];
+  }
+  flushRun();
+
+  return parts.join(', ');
+}
+
 /** "24:59" while a sprint still has time left in its planned box; "+3:12"
  * once it's run past that (a negative `remainingSeconds` — the Sprint
  * screen deliberately does not clamp the countdown at 0:00, because

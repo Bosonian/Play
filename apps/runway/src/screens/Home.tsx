@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
-import type { Departure } from '../db/types';
+import type { Departure, Template } from '../db/types';
 import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
-import { formatAppointmentLine, formatDateDisplay, formatTime } from '../lib/format';
+import { formatAppointmentLine, formatDateDisplay, formatScheduleDays, formatTime } from '../lib/format';
 import {
   cancelDepartureAlarms,
   getExactAlarmStatus,
@@ -43,11 +43,14 @@ const MAX_VISIBLE_SUGGESTIONS = 2;
 
 /** Cap on Upcoming cards shown at once (recurring-departures increment;
  * CLAUDE.md's "defaults lean toward less, not more"). A recurring template
- * can materialize up to HORIZON_DAYS (7) departures at once, which without
- * a cap would turn Upcoming into a scroll of a whole week's identical
- * "Klinik 08:00" cards - the nearest few are what's actually actionable
- * right now; the rest are still fully there, just summarized below the
- * fold rather than every single one rendered. */
+ * used to materialize up to HORIZON_DAYS (7) near-identical "Klinik 08:00"
+ * cards into this list at once — field report #9 solved that upstream by
+ * collapsing every auto-created occurrence of one template down to its
+ * soonest card (see `collapsedUpcoming` below), so this cap is no longer
+ * doing that job. It stays on as a backstop for the case collapsing
+ * doesn't cover: many *distinct* templates/manual departures genuinely due
+ * around the same time, which is still a real list worth trimming at a
+ * glance rather than a duplicate-card artifact to eliminate. */
 const MAX_VISIBLE_UPCOMING = 5;
 
 /** "Not now" dismissals, scoped to templateId+stepName. A module-level Set
@@ -151,12 +154,74 @@ export function Home({ onNavigate }: HomeProps) {
     (departure) => new Date(departure.appointmentAt).getTime() < now.getTime() - PAST_DEPARTURE_THRESHOLD_MS,
   );
 
-  // Recurring-departures increment: cap the rendered list, don't cap the
-  // data. `upcomingDepartures` (unsliced) is still what feeds the "N
-  // planned" count and every other reader of the full list — only the JSX
-  // below reads `visibleUpcomingDepartures`.
-  const visibleUpcomingDepartures = upcomingDepartures?.slice(0, MAX_VISIBLE_UPCOMING);
-  const hiddenUpcomingCount = Math.max(0, (upcomingDepartures?.length ?? 0) - MAX_VISIBLE_UPCOMING);
+  // templateId -> Template, for the "Repeats Mon-Fri . 08:00" line below.
+  // `templates` is already fetched (top of this component) for the
+  // Templates section, so this is a lookup over data already in memory,
+  // not a second query.
+  const templatesById = useMemo(() => {
+    const map = new Map<string, Template>();
+    for (const template of templates ?? []) map.set(template.id, template);
+    return map;
+  }, [templates]);
+
+  // Field report #9: "we don't need to show all the upcoming repeat
+  // templates populated, we can show it as one repeating event." A
+  // recurring template's materialized occurrences (Departure.scheduledForDate
+  // != null, see db/types.ts) are collapsed here to just the soonest one per
+  // template — the rest stay exactly as real as before (still in Dexie,
+  // alarms still armed, still openable individually from Runway or History)
+  // but stop rendering as a run of duplicate-looking cards. A manually
+  // created departure (scheduledForDate == null) is never collapsed; it has
+  // no siblings to collapse with in the first place.
+  const collapsedUpcoming = useMemo(() => {
+    if (!upcomingDepartures) return undefined;
+
+    const manual = upcomingDepartures.filter((departure) => departure.scheduledForDate == null);
+    const auto = upcomingDepartures.filter((departure) => departure.scheduledForDate != null);
+
+    // `upcomingDepartures` is already soonest-first (the `upcoming` query
+    // above sorts by appointmentAt), so within this loop the first auto row
+    // seen for a given template IS its soonest — a plain "don't overwrite"
+    // Map insert is enough, no separate min-by-date pass needed.
+    const soonestByTemplate = new Map<string, Departure>();
+    for (const departure of auto) {
+      // Every auto row's templateId is set by construction (materialize.ts's
+      // buildDeparture always writes one alongside scheduledForDate) — the
+      // `?? departure.id` fallback below only exists so this compiles
+      // against templateId's `string | null` type without asserting it
+      // away; it doesn't change grouping behaviour for a real auto row.
+      const key = departure.templateId ?? departure.id;
+      if (!soonestByTemplate.has(key)) soonestByTemplate.set(key, departure);
+    }
+
+    return [...manual, ...soonestByTemplate.values()].sort(
+      (a, b) => new Date(a.appointmentAt).getTime() - new Date(b.appointmentAt).getTime(),
+    );
+  }, [upcomingDepartures]);
+
+  /** The quiet "Repeats Mon-Fri . 08:00" line for a collapsed auto card, or
+   * `null` for a manual departure (no schedule to summarize) and for the
+   * orphan edge — the template was deleted, or its schedule was cleared
+   * since this occurrence was materialized — where `null` here makes the
+   * card render exactly like a plain manual one rather than claim a
+   * schedule that no longer exists. */
+  function repeatsLine(departure: Departure): string | null {
+    if (departure.templateId == null) return null;
+    const template = templatesById.get(departure.templateId);
+    if (!template || template.schedule == null) return null;
+    return `Repeats ${formatScheduleDays(template.schedule.days)} · ${template.schedule.time}`;
+  }
+
+  // Cap the rendered list, don't cap the data — `collapsedUpcoming`
+  // (unsliced) is still what feeds the "N planned" count below; only the
+  // JSX further down reads `visibleUpcomingDepartures`. Counting against
+  // the COLLAPSED list (not raw `upcomingDepartures`) matters: the siblings
+  // `collapsedUpcoming` already folded away aren't "more to scroll for" —
+  // they're the same repeating event as the card already shown — so
+  // counting them here would reintroduce exactly the noise this whole
+  // change exists to remove, just as a number instead of as cards.
+  const visibleUpcomingDepartures = collapsedUpcoming?.slice(0, MAX_VISIBLE_UPCOMING);
+  const hiddenUpcomingCount = Math.max(0, (collapsedUpcoming?.length ?? 0) - MAX_VISIBLE_UPCOMING);
 
   // Shared by the "Remove" action on a planned Upcoming/Past card and has
   // no Runway-screen equivalent to defer to here - Home is the only place
@@ -472,67 +537,76 @@ export function Home({ onNavigate }: HomeProps) {
         )}
 
         <div className="flex flex-col gap-2">
-          {visibleUpcomingDepartures?.map((departure) => (
-            <div key={departure.id} className="flex flex-col gap-1">
-              <Card onClick={() => onNavigate({ name: 'runway', departureId: departure.id })}>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <p className="font-medium text-slate-100">{departure.name}</p>
-                      {departure.status === 'running' && (
-                        <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-sky-400">
-                          Running
-                        </span>
-                      )}
+          {visibleUpcomingDepartures?.map((departure) => {
+            const repeats = repeatsLine(departure);
+            return (
+              <div key={departure.id} className="flex flex-col gap-1">
+                <Card onClick={() => onNavigate({ name: 'runway', departureId: departure.id })}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium text-slate-100">{departure.name}</p>
+                        {departure.status === 'running' && (
+                          <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-sky-400">
+                            Running
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-slate-400">{departure.destination || 'No destination set'}</p>
                     </div>
-                    <p className="text-sm text-slate-400">{departure.destination || 'No destination set'}</p>
+                    <div className="text-right">
+                      <p className="text-lg font-semibold tabular-nums text-slate-100">
+                        {formatTime(new Date(departure.appointmentAt))}
+                      </p>
+                      <p className="text-sm text-slate-500">
+                        {formatDateDisplay(new Date(departure.appointmentAt))}
+                      </p>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-lg font-semibold tabular-nums text-slate-100">
-                      {formatTime(new Date(departure.appointmentAt))}
-                    </p>
-                    <p className="text-sm text-slate-500">
-                      {formatDateDisplay(new Date(departure.appointmentAt))}
-                    </p>
-                  </div>
-                </div>
-              </Card>
-              {/* Quiet secondary actions. These sit outside the Card
-                  <button> rather than nested inside it - a <button> inside a
-                  <button> is invalid HTML and Card is already a button.
-                  F3 (recover-instead-of-forfeit spec): Edit is now offered
-                  for 'running' cards too, not just 'planned' - editing a
-                  running departure is for when REALITY moved (the Termin
-                  got pushed back, a step turned out to need longer than
-                  planned) and DepartureSetup's own edit path locks already-
-                  checked steps so that isn't a rewrite of history, just a
-                  correction to what's still ahead (see DepartureSetup.tsx).
-                  Remove stays 'planned'-only, unchanged from M1/M2: a
-                  'running' departure's equivalent action is Runway's own
-                  "Abandon this departure", already reachable from the
-                  screen you'd be on to check a running departure's
-                  progress - duplicating it here would just be a second
-                  path to the same confirm dialog. */}
-              {(departure.status === 'planned' || departure.status === 'running') && (
-                <div className="flex justify-end gap-1 px-1">
-                  <button
-                    onClick={() => onNavigate({ name: 'departureSetup', departureId: departure.id })}
-                    className="min-h-11 rounded-md px-2 text-sm font-medium text-slate-500 hover:text-slate-300"
-                  >
-                    Edit
-                  </button>
-                  {departure.status === 'planned' && (
+                  {/* Field report #9: this card stands in for every occurrence
+                      of the template collapsed into it (see `collapsedUpcoming`
+                      above) - this line is the only thing on screen that says
+                      so, since the card otherwise looks identical to a
+                      one-off departure. */}
+                  {repeats && <p className="mt-1 text-sm text-slate-500">{repeats}</p>}
+                </Card>
+                {/* Quiet secondary actions. These sit outside the Card
+                    <button> rather than nested inside it - a <button> inside a
+                    <button> is invalid HTML and Card is already a button.
+                    F3 (recover-instead-of-forfeit spec): Edit is now offered
+                    for 'running' cards too, not just 'planned' - editing a
+                    running departure is for when REALITY moved (the Termin
+                    got pushed back, a step turned out to need longer than
+                    planned) and DepartureSetup's own edit path locks already-
+                    checked steps so that isn't a rewrite of history, just a
+                    correction to what's still ahead (see DepartureSetup.tsx).
+                    Remove stays 'planned'-only, unchanged from M1/M2: a
+                    'running' departure's equivalent action is Runway's own
+                    "Abandon this departure", already reachable from the
+                    screen you'd be on to check a running departure's
+                    progress - duplicating it here would just be a second
+                    path to the same confirm dialog. */}
+                {(departure.status === 'planned' || departure.status === 'running') && (
+                  <div className="flex justify-end gap-1 px-1">
                     <button
-                      onClick={() => void removeDeparture(departure)}
-                      className="min-h-11 rounded-md px-2 text-sm font-medium text-slate-500 hover:text-red-400"
+                      onClick={() => onNavigate({ name: 'departureSetup', departureId: departure.id })}
+                      className="min-h-11 rounded-md px-2 text-sm font-medium text-slate-500 hover:text-slate-300"
                     >
-                      Remove
+                      Edit
                     </button>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
+                    {departure.status === 'planned' && (
+                      <button
+                        onClick={() => void removeDeparture(departure)}
+                        className="min-h-11 rounded-md px-2 text-sm font-medium text-slate-500 hover:text-red-400"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {hiddenUpcomingCount > 0 && (

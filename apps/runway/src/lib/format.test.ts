@@ -7,6 +7,7 @@ import {
   formatExamAnchorLine,
   formatExamMarginLine,
   formatRequiredPaceLine,
+  formatScheduleDays,
   formatSlackLine,
 } from './format';
 
@@ -128,6 +129,43 @@ describe('formatRequiredPaceLine', () => {
     expect(formatRequiredPaceLine(anchor, 168, 2, now)).toBe(
       'Ready by 1 Nov needs 168.0 h/week. This week: 2.0 of 168.0.',
     );
+  });
+});
+
+describe('formatScheduleDays', () => {
+  it('a Mon-Fri run collapses to a single range', () => {
+    expect(formatScheduleDays([1, 2, 3, 4, 5])).toBe('Mon–Fri');
+  });
+
+  it('all seven days collapse to "Daily", not "Mon–Sun"', () => {
+    expect(formatScheduleDays([1, 2, 3, 4, 5, 6, 7])).toBe('Daily');
+  });
+
+  it('a single day renders as just its name, no dash', () => {
+    expect(formatScheduleDays([3])).toBe('Wed');
+  });
+
+  it('non-contiguous days list separately, comma-joined', () => {
+    expect(formatScheduleDays([1, 3, 5])).toBe('Mon, Wed, Fri');
+  });
+
+  it('unsorted input still renders Monday-first', () => {
+    expect(formatScheduleDays([5, 1, 3])).toBe('Mon, Wed, Fri');
+  });
+
+  it('a weekend range mixed with a lone weekday', () => {
+    expect(formatScheduleDays([6, 7, 2])).toBe('Tue, Sat–Sun');
+  });
+
+  it('wrap-around is NOT collapsed into a circular range: Sat, Sun, Mon stays two parts', () => {
+    // The week has a Monday start here, no circular ranges (see the
+    // function's own doc comment) — a wrapped "Sat–Mon" would be a
+    // clever reading of the data, not a clear one.
+    expect(formatScheduleDays([6, 7, 1])).toBe('Mon, Sat–Sun');
+  });
+
+  it('duplicate day numbers in the input do not produce a duplicate part', () => {
+    expect(formatScheduleDays([1, 1, 2])).toBe('Mon–Tue');
   });
 });
 

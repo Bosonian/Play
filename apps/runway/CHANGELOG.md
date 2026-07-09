@@ -5,6 +5,23 @@ via the `runway-latest.apk` asset at
 https://github.com/Bosonian/Play/releases/tag/runway-latest — it carries
 whichever version built last.
 
+## 0.15.1
+- Fix (field report #9): a recurring template's auto-materialized
+  occurrences (up to `HORIZON_DAYS` = 7 of them, see `src/lib/recurrence.ts`)
+  no longer render as that many near-identical cards in Home's Upcoming
+  list. Only the soonest occurrence of each template renders — as a card
+  otherwise unchanged, plus one added quiet line, "Repeats Mon–Fri · 08:00",
+  built from the template's own schedule (new `formatScheduleDays` in
+  `src/lib/format.ts`). The rest of that week's occurrences are untouched
+  under the hood: still real `Departure` rows, alarms still armed, still
+  individually reachable from History — this is a Home-screen rendering
+  change only. A manually created departure (no `scheduledForDate`) is
+  never collapsed, since it has no siblings to collapse with. The existing
+  "+N more planned" cap-overflow count now counts only cards genuinely
+  hidden by `MAX_VISIBLE_UPCOMING`, not the folded-away siblings of a
+  collapsed template — counting those would have reintroduced the same
+  noise this fix removes, just as a number instead of as cards.
+
 ## 0.15.0
 - Field reports: a quiet "Report a problem" link on Home and on Settings
   opens a small form — description (required, multiline, dictation-
