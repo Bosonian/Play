@@ -1,8 +1,9 @@
 import { Capacitor } from '@capacitor/core';
 import type { ActionPerformed, Channel, ScheduleOptions } from '@capacitor/local-notifications';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import type { Departure, Sprint } from '../db/types';
+import type { Departure, Milestone, Sprint } from '../db/types';
 import { computeAlarmTimes } from '../lib/alarmTimes';
+import { formatTime } from '../lib/format';
 
 // The ONLY file in this app that imports @capacitor/local-notifications
 // (increment-4 spec) — every screen goes through the functions exported
@@ -143,9 +144,28 @@ function allSlotIds(departureId: string): number[] {
  * above already lives with (worst case: one alert silently overwrites or
  * cancels the other at that id, not data corruption). See
  * notifications.test.ts for the bit-width assertion this relies on.
+ *
+ * milestoneNotificationId (below) makes exactly the same call for the same
+ * reason: a milestone also only ever gets one alarm (its morning-of
+ * reminder), and a milestone id is drawn from the same `crypto.randomUUID()`
+ * id space as departures and sprints, so `notificationId(milestoneId, 0)`
+ * is just as safe to reuse here as it was for sprints.
  */
 export function sprintNotificationId(sprintId: string): number {
   return notificationId(sprintId, 0);
+}
+
+/**
+ * Deterministic notification id for a milestone's single morning-of alarm —
+ * same reuse rationale as sprintNotificationId directly above (read that
+ * comment for the full "why not a disjoint range" argument). Kept as its
+ * own named function, rather than callers writing `notificationId(id, 0)`
+ * inline, purely so a milestone id and a sprint id are never visually
+ * interchangeable at a call site even though they resolve to the same
+ * formula.
+ */
+export function milestoneNotificationId(milestoneId: string): number {
+  return notificationId(milestoneId, 0);
 }
 
 /**
@@ -241,6 +261,75 @@ export async function scheduleSprintEndAlarm(sprint: Sprint, topicName: string):
 export async function cancelSprintEndAlarm(sprintId: string): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
   await LocalNotifications.cancel({ notifications: [{ id: sprintNotificationId(sprintId) }] });
+}
+
+/**
+ * Cancels a milestone's pending morning-of alarm, if one exists. Same
+ * "safe to call unconditionally" reasoning as cancelSprintEndAlarm/
+ * cancelDepartureAlarms above. Called from two places: MilestoneEdit's
+ * delete action (a deleted milestone has nothing left to remind about), and
+ * from inside scheduleMilestoneAlarm itself, below, ahead of every
+ * (re)schedule — the same "cancel whatever was there, then schedule fresh"
+ * shape scheduleDepartureAlarms uses, so an edited milestone's alarm always
+ * reflects its latest saved name/date rather than layering a new
+ * notification on top of a stale one at the same id.
+ */
+export async function cancelMilestoneAlarm(milestoneId: string): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  await LocalNotifications.cancel({ notifications: [{ id: milestoneNotificationId(milestoneId) }] });
+}
+
+/**
+ * Schedules a milestone's single morning-of alarm (RUNWAY_PRUFUNG_PLAN.md
+ * §5): 07:30 LOCAL time on the milestone's own calendar date, regardless of
+ * what time of day the milestone itself is at — "Today: {name}, {HH:mm}."
+ * is meant to land while Deepak is still getting his day started, not at
+ * the moment the milestone happens (that's what the milestone itself is
+ * for). Built with plain Date mutators (`setHours`), which operate in the
+ * device's local timezone — the same "local", not UTC, time the rest of
+ * this app's date math assumes.
+ *
+ * On the gentler STAGED channel, not the high-importance LEAVE channel a
+ * sprint's end alarm uses: a milestone reminder is a heads-up for later
+ * today, not an "act now" alert the way a sprint timer or a departure's
+ * leave-now stage is.
+ *
+ * No `extra` payload and no special navigation on tap (increment-4 spec):
+ * tapping just opens the app to wherever it was, same as any other cold
+ * launch. The exam overview is one tap from Home, so wiring a dedicated
+ * "jump straight to this milestone" path isn't worth the complexity for
+ * what this alarm is — a nudge to open the app, not a deep link.
+ *
+ * Skips scheduling (past-filter rule, same as computeAlarmTimes for
+ * departures) if 07:30 on the milestone's date has already passed — Android
+ * fires a past-scheduled exact alarm immediately, and a stale "Today: ..."
+ * reminder firing the moment you save an edit would be surprising, not
+ * useful.
+ */
+export async function scheduleMilestoneAlarm(milestone: Milestone): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  await ensureChannels();
+  await cancelMilestoneAlarm(milestone.id);
+
+  const milestoneAt = new Date(milestone.at);
+  const morningOf = new Date(milestoneAt);
+  morningOf.setHours(7, 30, 0, 0);
+  if (morningOf.getTime() <= Date.now()) return;
+
+  await LocalNotifications.schedule({
+    notifications: [
+      {
+        id: milestoneNotificationId(milestone.id),
+        title: 'Runway',
+        body: `Today: ${milestone.name}, ${formatTime(milestoneAt)}.`,
+        channelId: STAGED_CHANNEL_ID,
+        schedule: { at: morningOf, allowWhileIdle: true },
+        // No `extra` — see the doc comment above: tapping opens the app via
+        // the plugin's default behaviour, deliberately not wired to any
+        // special navigation the way a departure's `extra.departureId` is.
+      },
+    ],
+  });
 }
 
 /**

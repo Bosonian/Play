@@ -9,6 +9,7 @@ import { ExamSetup } from './screens/ExamSetup';
 import { TopicEdit } from './screens/TopicEdit';
 import { SprintSetup } from './screens/SprintSetup';
 import { Sprint } from './screens/Sprint';
+import { MilestoneEdit } from './screens/MilestoneEdit';
 import { setNavigationRef } from './lib/navigationRef';
 
 // Navigation as plain React state, not a router library. There's no
@@ -37,7 +38,12 @@ export type Screen =
   // turn navigates to the live sprint screen below once a Sprint row
   // exists to point at.
   | { name: 'sprintSetup' }
-  | { name: 'sprint'; sprintId: string };
+  | { name: 'sprint'; sprintId: string }
+  // Increment 4: ExamOverview's "Add milestone" link and each milestone
+  // row's "Edit" action both land here — a single list+form screen (see
+  // MilestoneEdit's own doc comment for why it isn't split into a separate
+  // per-milestone route the way examSetup/topicEdit are).
+  | { name: 'milestoneEdit'; examId: string };
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'home' });
@@ -80,5 +86,7 @@ export default function App() {
       return <SprintSetup onNavigate={setScreen} />;
     case 'sprint':
       return <Sprint sprintId={screen.sprintId} onNavigate={setScreen} />;
+    case 'milestoneEdit':
+      return <MilestoneEdit examId={screen.examId} onNavigate={setScreen} />;
   }
 }

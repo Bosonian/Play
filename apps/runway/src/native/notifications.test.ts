@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { notificationId, sprintNotificationId } from './notifications';
+import { milestoneNotificationId, notificationId, sprintNotificationId } from './notifications';
 
 // Android LocalNotifications ids are signed 32-bit ints
 // (Integer.MIN_VALUE..Integer.MAX_VALUE). This app only ever produces
@@ -49,5 +49,28 @@ describe('sprintNotificationId', () => {
   it('is deterministic, so cancelSprintEndAlarm can recompute the same id on a fresh launch', () => {
     const sprintId = crypto.randomUUID();
     expect(sprintNotificationId(sprintId)).toBe(sprintNotificationId(sprintId));
+  });
+});
+
+describe('milestoneNotificationId', () => {
+  // Same reuse rationale as sprintNotificationId's own test above, restated
+  // for milestones: notificationId(id, 0), no disjoint range.
+  it('reuses notificationId(id, 0) exactly - same formula, same range as sprints and departure slot 0', () => {
+    const milestoneId = 'milestone-1';
+    expect(milestoneNotificationId(milestoneId)).toBe(notificationId(milestoneId, 0));
+  });
+
+  it('stays within the signed-32-bit range every departure id already relies on', () => {
+    const ids = ['milestone-a', 'milestone-b', crypto.randomUUID(), crypto.randomUUID()];
+    for (const id of ids) {
+      const computed = milestoneNotificationId(id);
+      expect(computed).toBeGreaterThanOrEqual(0);
+      expect(computed).toBeLessThanOrEqual(INT32_MAX);
+    }
+  });
+
+  it('is deterministic, so cancelMilestoneAlarm can recompute the same id on a fresh launch', () => {
+    const milestoneId = crypto.randomUUID();
+    expect(milestoneNotificationId(milestoneId)).toBe(milestoneNotificationId(milestoneId));
   });
 });

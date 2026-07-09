@@ -1,5 +1,5 @@
 import { startOfWeek } from 'date-fns';
-import type { Exam, Sprint, Topic } from '../db/types';
+import type { Exam, Milestone, Sprint, Topic } from '../db/types';
 
 // Prüfung mode's one equation (RUNWAY_PRUFUNG_PLAN.md §2), the exam-prep
 // analog of projection.ts's departure-mode math: pure functions, `now`
@@ -163,23 +163,21 @@ function daysBetween(from: Date, to: Date): number {
 }
 
 /**
- * The whole mode's one equation (RUNWAY_PRUFUNG_PLAN.md §2):
- *
- *   projected ready date = now + (remaining study hours ÷ measured pace)
- *
- * anchor is examDate once it's known, windowStart until then — same
- * override rule as format.ts's formatExamAnchorLine, restated here because
- * this function needs the parsed Date, not just the display string.
+ * The shared core behind both examProjection and milestoneProjection below —
+ * everything the equation needs once it already has a resolved `anchor`
+ * Date and `anchorKind` to attach to the result. Split out so
+ * milestoneProjection doesn't have to fake up an `Exam`-shaped object just
+ * to reuse this math: a milestone's anchor is a full ISO datetime (`at`),
+ * not a date-only string like Exam's `windowStart`/`examDate`, so it can't
+ * go through parseLocalDate the way examProjection's anchor does.
  */
-export function examProjection(
+function projectFromAnchor(
   now: Date,
-  exam: Pick<Exam, 'windowStart' | 'examDate'>,
+  anchor: Date,
+  anchorKind: ExamProjectionResult['anchorKind'],
   topics: Topic[],
   sprints: Sprint[],
 ): ExamProjectionResult {
-  const anchorKind: ExamProjectionResult['anchorKind'] = exam.examDate ? 'exact' : 'window';
-  const anchor = parseLocalDate(exam.examDate ?? exam.windowStart);
-
   const remaining = remainingHours(topics, sprints);
   const measuredPace = measuredPaceHoursPerWeek(now, sprints);
   const paceIsMeasured = measuredPace !== null;
@@ -242,4 +240,63 @@ export function examProjection(
     remainingHours: remaining,
     requiredPaceHoursPerWeek,
   };
+}
+
+/**
+ * The whole mode's one equation (RUNWAY_PRUFUNG_PLAN.md §2):
+ *
+ *   projected ready date = now + (remaining study hours ÷ measured pace)
+ *
+ * anchor is examDate once it's known, windowStart until then — same
+ * override rule as format.ts's formatExamAnchorLine, restated here because
+ * this function needs the parsed Date, not just the display string.
+ */
+export function examProjection(
+  now: Date,
+  exam: Pick<Exam, 'windowStart' | 'examDate'>,
+  topics: Topic[],
+  sprints: Sprint[],
+): ExamProjectionResult {
+  const anchorKind: ExamProjectionResult['anchorKind'] = exam.examDate ? 'exact' : 'window';
+  const anchor = parseLocalDate(exam.examDate ?? exam.windowStart);
+  return projectFromAnchor(now, anchor, anchorKind, topics, sprints);
+}
+
+/**
+ * A milestone's own mini ready-date projection (RUNWAY_PRUFUNG_PLAN.md §4.1,
+ * increment 4) — the same equation as examProjection, but scoped to the
+ * subset of topics the milestone actually covers and anchored to the
+ * milestone's own date+time instead of the exam's.
+ *
+ * Topic scoping: `milestone.topicIds` filters the exam's full topic list
+ * down to the ones this milestone is about (a mock oral on "Vascular
+ * syndromes" only needs that chapter ready, not the whole exam). An EMPTY
+ * `topicIds` means "no explicit subset was chosen" — MilestoneEdit's UI
+ * copy states this directly ("No topics selected: covers the whole exam."),
+ * and this function is where that meaning is actually implemented: falling
+ * through to the full topic list rather than projecting against zero
+ * topics (which would otherwise trivially read as "done" — remainingHours
+ * of an empty topic list is 0 — a wrong answer dressed up as a right one).
+ *
+ * Pace is NOT scoped to the subset — it stays the same measured (or
+ * default) pace examProjection uses, because "how fast am I actually
+ * studying" is one number about the whole prep effort, not a per-milestone
+ * fact. Only the numerator (remaining hours) changes with the subset; the
+ * denominator (hours/week) doesn't. `sprints` is passed through unfiltered
+ * for the same reason: remainingHours/loggedHoursByTopic already only
+ * attribute a sprint's hours to sprint.topicId, so a sprint on a topic
+ * outside the subset simply never contributes to this projection's
+ * remaining-hours sum — no separate filtering of `sprints` is needed for
+ * that to be correct, only of `topics`.
+ */
+export function milestoneProjection(
+  now: Date,
+  milestone: Pick<Milestone, 'at' | 'topicIds'>,
+  topics: Topic[],
+  sprints: Sprint[],
+): ExamProjectionResult {
+  const subsetTopics =
+    milestone.topicIds.length === 0 ? topics : topics.filter((topic) => milestone.topicIds.includes(topic.id));
+  const anchor = new Date(milestone.at);
+  return projectFromAnchor(now, anchor, 'exact', subsetTopics, sprints);
 }

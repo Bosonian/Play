@@ -51,6 +51,20 @@ node scripts/generate-icons.mjs
 
 and re-run `npm run sync` so the Android project picks up the new PNGs. The script depends on `sharp` (devDependency) for SVG rasterization.
 
+## Prüfung mode
+
+A second mode alongside departure timing: exam prep for a long-lead deadline (the Facharztprüfung), full design in [`../../docs/RUNWAY_PRUFUNG_PLAN.md`](../../docs/RUNWAY_PRUFUNG_PLAN.md). One equation, recomputed live from measured data:
+
+```
+projected ready date = today + (remaining study hours ÷ measured pace in hours/week)
+```
+
+Remaining hours are the sum of each topic's (estimated − logged) hours, floored at 0 per topic. Measured pace is the rolling median of actual hours logged per week over the last 4 complete weeks — a modest, labeled 4 h/week assumption until there's real data to measure, never an aspirational number.
+
+Work happens in **sprints**: fixed 25/50/90-minute boxes with a short start ritual, not an open-ended timer, because scheduled ignition fits the mode's motivation better than "just start working" does. **Milestones** are real external dates — a booked mock oral, a study session committed to with someone else — not self-invented checkpoints; the app renders them, it does not invent them. Each milestone gets its own mini ready-date projection scoped to the topics it covers, and a single morning-of reminder at 07:30 local on the day.
+
+Reached from Home via the quiet "Prüfung" link beside History; departure mode remains the default landing.
+
 ## v1.5 candidates
 
 Cut from v1 deliberately, not forgotten:
@@ -59,7 +73,7 @@ Cut from v1 deliberately, not forgotten:
 - **Settings deep-link plugin** — so the first-run card's battery-optimization step could open Settings → Apps → Runway → Battery directly instead of describing the path in words.
 - **Live traffic** — replacing manually-entered travel minutes with the Google Directions API, once an API key and billing are worth setting up (RUNWAY_PLAN.md §5.6).
 - **Calendar import** — read-only Google Calendar import to create departures from existing appointments instead of typing them in (RUNWAY_PLAN.md §5.6).
-- **Deadline mode** — the second half of the original time-blindness problem (task-initiation procrastination, not departure timing), pointed at the same slipping-projection mechanic but anchored to a latest-safe-start time instead of an arrival time (RUNWAY_PLAN.md §8).
+- **Weekly planning nudge** — an optional reminder to plan the coming week's sprints. Left unbuilt in v1: RUNWAY_PRUFUNG_PLAN.md §5 marks it default-OFF and borderline (it edges toward the fake-urgency pattern this mode deliberately avoids); worth reconsidering only if Deepak asks for it knowingly.
 
 ## Re-triggering a build
 

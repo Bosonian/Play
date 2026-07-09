@@ -9,13 +9,16 @@ import {
   examProjection,
   hoursThisWeek,
   loggedHoursByTopic,
+  milestoneProjection,
 } from '../lib/examProjection';
 import type { ExamProjectionResult } from '../lib/examProjection';
 import {
+  formatDateLong,
   formatDateMedium,
   formatExamAnchorLine,
   formatExamMarginLine,
   formatRequiredPaceLine,
+  formatTime,
 } from '../lib/format';
 
 interface ExamOverviewProps {
@@ -53,6 +56,13 @@ const PACE_ASSUMPTION_LINE = `Pace is an assumption (${DEFAULT_PACE_HOURS_PER_WE
 // how old it is.
 const LIVE_SPRINT_THRESHOLD_MS = 12 * 60 * 60_000;
 
+// How many past milestones stay visible, dimmed, at the bottom of the
+// Milestones section (increment-4 spec). Deliberately small and deliberately
+// NOT "show everything" — a completed mock oral from four months ago isn't
+// useful context on the app's home screen, and the milestones themselves
+// (not a rebuilt History-style log of them) are what preserve that record.
+const MAX_PAST_MILESTONES = 3;
+
 /**
  * Prüfung's home screen (RUNWAY_PRUFUNG_PLAN.md §4.1) — the real thing this
  * time. Increment 1 shipped a placeholder (name, anchor line, topic count);
@@ -76,6 +86,10 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
     async () => (exam ? db.sprints.where('examId').equals(exam.id).toArray() : []),
     [exam],
   );
+  const milestones = useLiveQuery(
+    async () => (exam ? db.milestones.where('examId').equals(exam.id).sortBy('at') : []),
+    [exam],
+  );
 
   // A readyDate doesn't need second precision the way the live Runway
   // screen's projected arrival does — a minute-level tick keeps "Ready by
@@ -86,14 +100,25 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
   // Reachable only from Home's Prüfung link, which already routes to
   // examSetup instead of here when no exam exists — so `exam` being
   // undefined at this point means the first Dexie read simply hasn't
-  // resolved yet, not a real empty state to design copy for. `topics` and
-  // `sprints` start as `undefined` too, for the same reason.
-  if (!exam || !topics || !sprints) return null;
+  // resolved yet, not a real empty state to design copy for. `topics`,
+  // `sprints` and `milestones` start as `undefined` too, for the same
+  // reason.
+  if (!exam || !topics || !sprints || !milestones) return null;
 
   const projection = examProjection(now, exam, topics, sprints);
   const loggedByTopic = loggedHoursByTopic(sprints);
   const textAccent = STATE_TEXT[projection.state];
   const thisWeekHours = hoursThisWeek(now, sprints);
+
+  // `milestones` is already chronological ascending (Dexie's sortBy('at')
+  // above) so both slices below stay in that same order without a second
+  // sort: upcoming milestones read soonest-first, and taking the LAST
+  // MAX_PAST_MILESTONES of the past subset (still ascending) is exactly
+  // "the most recent ones", not the oldest.
+  const upcomingMilestones = milestones.filter((m) => new Date(m.at).getTime() >= now.getTime());
+  const pastMilestones = milestones
+    .filter((m) => new Date(m.at).getTime() < now.getTime())
+    .slice(-MAX_PAST_MILESTONES);
 
   // LIVE_SPRINT_THRESHOLD_MS above is what keeps a crashed, never-ended
   // sprint from pinning this banner up forever.
@@ -150,6 +175,70 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
       <Button onClick={() => onNavigate({ name: 'sprintSetup' })} className="w-full">
         Start a sprint
       </Button>
+
+      {/* Milestones — the real external dates (RUNWAY_PRUFUNG_PLAN.md §3,
+          §4.1, increment 4). Placed right after the primary "Start a
+          sprint" action and before the topic breakdown: milestones give
+          the topic list below its "ready for what" context, but the one
+          action on this screen that actually matters stays first. */}
+      <section className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium uppercase tracking-wide text-slate-500">Milestones</h2>
+
+        {milestones.length === 0 && <p className="text-sm text-slate-500">No milestones yet.</p>}
+
+        <div className="flex flex-col gap-2">
+          {upcomingMilestones.map((milestone) => {
+            const milestoneResult = milestoneProjection(now, milestone, topics, sprints);
+            const milestoneAccent = STATE_TEXT[milestoneResult.state];
+            const at = new Date(milestone.at);
+            return (
+              <div
+                key={milestone.id}
+                className="flex items-center justify-between rounded-md border border-slate-800 bg-slate-900 px-4 py-3"
+              >
+                <div className="flex flex-col">
+                  <p className="text-slate-100">{milestone.name}</p>
+                  <p className="text-sm tabular-nums text-slate-400">
+                    {formatDateLong(at)} {formatTime(at)}
+                  </p>
+                </div>
+                <p className={`text-sm font-medium tabular-nums ${milestoneAccent}`}>
+                  {milestoneResult.readyDate ? `Ready ${formatDateMedium(milestoneResult.readyDate)}` : 'Never'}
+                </p>
+              </div>
+            );
+          })}
+
+          {/* Past milestones: dimmed, no projection line (a mock oral that
+              already happened has nothing left to be "ready by"), capped at
+              MAX_PAST_MILESTONES and older ones hidden entirely — history
+              lives in the milestones themselves; this is not another
+              History screen. */}
+          {pastMilestones.map((milestone) => {
+            const at = new Date(milestone.at);
+            return (
+              <div
+                key={milestone.id}
+                className="flex items-center justify-between rounded-md border border-slate-800 bg-slate-900/60 px-4 py-3 opacity-50"
+              >
+                <div className="flex flex-col">
+                  <p className="text-slate-100">{milestone.name}</p>
+                  <p className="text-sm tabular-nums text-slate-400">
+                    {formatDateLong(at)} {formatTime(at)}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <button
+          onClick={() => onNavigate({ name: 'milestoneEdit', examId: exam.id })}
+          className="min-h-11 self-start text-sm font-medium text-sky-400 hover:text-sky-300"
+        >
+          Add milestone
+        </button>
+      </section>
 
       {/* Topic list — plain numbers, no progress bars
           (RUNWAY_PRUFUNG_PLAN.md §4.1: a bar sitting at 8% is

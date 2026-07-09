@@ -5,10 +5,11 @@ import {
   hoursThisWeek,
   loggedHoursByTopic,
   measuredPaceHoursPerWeek,
+  milestoneProjection,
   remainingHours,
   sprintMinutes,
 } from './examProjection';
-import type { Exam, Sprint, Topic } from '../db/types';
+import type { Exam, Milestone, Sprint, Topic } from '../db/types';
 
 // Thursday, so the current (excluded) week runs 2026-07-06 (Mon) through
 // 2026-07-13 (Mon, exclusive) — a fixed "now" for every test so assertions
@@ -41,6 +42,18 @@ function makeExam(overrides: Partial<Exam> = {}): Exam {
     examDate: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function makeMilestone(overrides: Partial<Milestone> = {}): Milestone {
+  return {
+    id: 'milestone-1',
+    examId: 'exam-1',
+    name: 'Mock oral with OA Weber',
+    at: '2026-08-01T14:00:00.000Z',
+    topicIds: [],
+    createdAt: '2026-01-01T00:00:00.000Z',
     ...overrides,
   };
 }
@@ -304,5 +317,68 @@ describe('examProjection', () => {
 
     expect(result.anchorKind).toBe('window');
     expect(result.anchor.toISOString()).toBe(new Date('2026-11-01T00:00:00').toISOString());
+  });
+});
+
+describe('milestoneProjection', () => {
+  it('filters remaining hours to only the topics in topicIds', () => {
+    const topics = [
+      makeTopic({ id: 'a', estimatedHours: 5 }),
+      makeTopic({ id: 'b', estimatedHours: 5 }),
+    ];
+    const milestone = makeMilestone({ topicIds: ['a'], at: '2026-12-01T00:00:00.000Z' });
+    const result = milestoneProjection(NOW, milestone, topics, []);
+
+    // Only topic 'a's 5h counts - topic 'b' is outside the subset entirely,
+    // not just under-weighted.
+    expect(result.remainingHours).toBe(5);
+  });
+
+  it('an empty topicIds subset means the whole exam, not zero topics', () => {
+    const topics = [
+      makeTopic({ id: 'a', estimatedHours: 5 }),
+      makeTopic({ id: 'b', estimatedHours: 5 }),
+    ];
+    const milestone = makeMilestone({ topicIds: [], at: '2026-12-01T00:00:00.000Z' });
+    const result = milestoneProjection(NOW, milestone, topics, []);
+
+    // If an empty subset were read literally (project against zero
+    // topics), remainingHours would wrongly be 0 - "done" before a single
+    // hour is logged.
+    expect(result.remainingHours).toBe(10);
+  });
+
+  it('anchors the projection on the milestone\'s own datetime, not the exam\'s', () => {
+    const topics = [makeTopic({ id: 'a', estimatedHours: 4 })]; // 1 week out at the default 4h/week pace
+    // readyDate lands 2026-07-16T08:00:00.000Z (NOW + 1 week); the anchor
+    // below sits ~16 days past that, well clear of the 14-day tight/calm
+    // boundary, so this only tests anchoring, not the boundary itself
+    // (currentStepElapsed-style boundary tests already live on
+    // examProjection above).
+    const milestone = makeMilestone({ topicIds: ['a'], at: '2026-08-01T09:00:00.000Z' });
+    const result = milestoneProjection(NOW, milestone, topics, []);
+
+    expect(result.anchorKind).toBe('exact');
+    expect(result.anchor.toISOString()).toBe('2026-08-01T09:00:00.000Z');
+    // readyDate (1 week from NOW) lands well before the milestone's own
+    // 1 Aug anchor -> calm, same slack math as examProjection.
+    expect(result.state).toBe('calm');
+  });
+
+  it('sprints outside the topic subset never count toward its remaining hours', () => {
+    const topics = [
+      makeTopic({ id: 'a', estimatedHours: 5 }),
+      makeTopic({ id: 'b', estimatedHours: 5 }),
+    ];
+    // 3h logged on topic 'b', which this milestone doesn't cover.
+    const sprints = [
+      makeSprint({ topicId: 'b', startedAt: '2026-07-01T00:00:00.000Z', endedAt: '2026-07-01T03:00:00.000Z' }),
+    ];
+    const milestone = makeMilestone({ topicIds: ['a'], at: '2026-12-01T00:00:00.000Z' });
+    const result = milestoneProjection(NOW, milestone, topics, sprints);
+
+    // Topic 'a' is untouched by that sprint, so its full 5h is still owed -
+    // logged hours on an out-of-subset topic don't leak in.
+    expect(result.remainingHours).toBe(5);
   });
 });
