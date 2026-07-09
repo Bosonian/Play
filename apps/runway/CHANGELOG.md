@@ -5,6 +5,17 @@ via the `runway-latest.apk` asset at
 https://github.com/Bosonian/Play/releases/tag/runway-latest — it carries
 whichever version built last.
 
+## 0.9.0
+- Live travel times for departure mode: an optional Google Routes API
+  integration, off by default. New Settings screen (Routes API key +
+  "use live travel times" toggle). DepartureSetup gets an explicit
+  "Fetch live travel time" button. The Runway screen refreshes travel
+  time live every 3 min while a departure is running, writing back to
+  `travelMinutes` (and rescheduling alarms) only when the live figure
+  drifts 3+ min from the plan — smaller drift is shown but not written,
+  to avoid alarm churn over noise. Everything still works without a key:
+  travel minutes fall back to the manual estimate.
+
 ## 0.8.0
 - Prüfung guided layer: next-move card (one suggested sprint with its
   reasoning shown, one tap to start, ritual preserved), first-open

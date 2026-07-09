@@ -4,6 +4,7 @@ import { TemplateEdit } from './screens/TemplateEdit';
 import { DepartureSetup } from './screens/DepartureSetup';
 import { Runway } from './screens/Runway';
 import { History } from './screens/History';
+import { Settings } from './screens/Settings';
 import { ExamOverview } from './screens/ExamOverview';
 import { ExamSetup } from './screens/ExamSetup';
 import { TopicEdit } from './screens/TopicEdit';
@@ -24,6 +25,10 @@ export type Screen =
   | { name: 'departureSetup'; templateId?: string; departureId?: string }
   | { name: 'runway'; departureId: string }
   | { name: 'history' }
+  // Live-travel increment (RUNWAY_PLAN.md §5.1+§5.6): the Routes API key and
+  // the "use live travel" toggle, reached from Home's quiet "Settings" link
+  // beside History/Prüfung.
+  | { name: 'settings' }
   // Prüfung mode (RUNWAY_PRUFUNG_PLAN.md §4). `examSetup`'s `examId` is
   // optional: omitted means "create" from Home's Prüfung link when no exam
   // exists yet, but ExamSetup itself re-checks for an already-existing
@@ -82,6 +87,8 @@ export default function App() {
       return <Runway departureId={screen.departureId} onNavigate={setScreen} />;
     case 'history':
       return <History onNavigate={setScreen} />;
+    case 'settings':
+      return <Settings onNavigate={setScreen} />;
     case 'exam':
       return <ExamOverview onNavigate={setScreen} />;
     case 'examSetup':

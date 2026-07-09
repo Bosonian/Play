@@ -554,6 +554,12 @@ export function Home({ onNavigate }: HomeProps) {
         >
           Prüfung
         </button>
+        <button
+          onClick={() => onNavigate({ name: 'settings' })}
+          className="min-h-11 text-sm font-medium text-slate-500 hover:text-slate-300"
+        >
+          Settings
+        </button>
       </div>
     </div>
   );

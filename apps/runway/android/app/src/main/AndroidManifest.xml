@@ -53,4 +53,24 @@
          and merged in automatically by Gradle's manifest merger; they don't
          need to be repeated here. -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+    <!-- Live-travel increment (RUNWAY_PLAN.md §5.1+§5.6): @capacitor/
+         geolocation, unlike @capacitor/local-notifications above, ships an
+         EMPTY plugin AndroidManifest.xml (see
+         node_modules/@capacitor/geolocation/android/.../AndroidManifest.xml) —
+         it declares no permissions of its own for Gradle's manifest merger
+         to pick up, so both permissions its README calls for have to be
+         added here by hand. ACCESS_COARSE_LOCATION alone would satisfy the
+         plugin, but the Routes API's live drive-time estimate is more
+         accurate with a precise fix, so both are requested; Android 12+
+         still lets the user grant only the coarse one at the runtime
+         prompt, which the app treats as a successful (if less precise)
+         position rather than a failure. No <uses-feature android:name=
+         "android.hardware.location.gps" /> — that line only matters for
+         apps that *require* GPS to function at all, and this app already
+         falls back to the manual travel-minutes estimate when location is
+         unavailable, so declaring it would just narrow which devices could
+         install the app for no benefit. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 </manifest>

@@ -10,6 +10,9 @@ import { ScreenHeader } from '../ui/ScreenHeader';
 import { computeProjection, computeStartBy } from '../lib/projection';
 import { formatDateInput, formatTime, formatTimeInput } from '../lib/format';
 import { ensurePermissions, scheduleDepartureAlarms } from '../native/notifications';
+import { readLiveTravelConfig } from '../lib/liveTravelSettings';
+import { fetchDriveMinutes } from '../lib/routesApi';
+import { getCurrentPosition } from '../native/geolocation';
 
 interface DepartureSetupProps {
   templateId?: string;
@@ -40,6 +43,15 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
   const [bufferMinutes, setBufferMinutes] = useState(10);
   const [steps, setSteps] = useState<DepartureStep[]>([]);
   const [touched, setTouched] = useState(false);
+
+  // Live-travel increment (RUNWAY_PLAN.md §5.1+§5.6). `undefined` while the
+  // settings read is still in flight is treated the same as "disabled" —
+  // the fetch button simply doesn't render for that one tick, rather than
+  // flashing in once the query resolves.
+  const liveTravelConfig = useLiveQuery(() => readLiveTravelConfig(), []);
+  const [fetchingLiveTravel, setFetchingLiveTravel] = useState(false);
+  const [liveTravelFetchedJustNow, setLiveTravelFetchedJustNow] = useState(false);
+  const [liveTravelError, setLiveTravelError] = useState(false);
 
   // Populate from whichever source resolved — an existing departure (edit
   // path) takes priority over a template (fresh-departure-from-template
@@ -85,6 +97,38 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
 
   function updateStep(stepId: string, patch: Partial<DepartureStep>) {
     setSteps((prev) => prev.map((s) => (s.id === stepId ? { ...s, ...patch } : s)));
+  }
+
+  // Explicit tap only — never automatic. An API call and a location prompt
+  // are real side effects (a network request, possibly a first-ever
+  // permission dialog), and neither should ever fire just because someone
+  // typed a destination or opened this screen; the button is the only
+  // trigger.
+  async function handleFetchLiveTravel() {
+    if (!liveTravelConfig?.enabled || destination.trim() === '') return;
+    setFetchingLiveTravel(true);
+    setLiveTravelError(false);
+    setLiveTravelFetchedJustNow(false);
+    try {
+      const origin = await getCurrentPosition();
+      if (origin === null) {
+        setLiveTravelError(true);
+        return;
+      }
+      const result = await fetchDriveMinutes({
+        origin,
+        destinationAddress: destination.trim(),
+        apiKey: liveTravelConfig.apiKey,
+      });
+      if (!result.ok) {
+        setLiveTravelError(true);
+        return;
+      }
+      setTravelMinutes(result.minutes);
+      setLiveTravelFetchedJustNow(true);
+    } finally {
+      setFetchingLiveTravel(false);
+    }
   }
 
   const appointmentAtDate =
@@ -246,7 +290,13 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
           label="Travel minutes"
           hint="From a quick look at Maps. This won't auto-update with live traffic."
           value={travelMinutes}
-          onChange={setTravelMinutes}
+          onChange={(value) => {
+            setTravelMinutes(value);
+            // A manual edit after a live fetch means the "live · just now"
+            // tag no longer describes what's in the field — clear it rather
+            // than leave a stale claim next to a hand-typed number.
+            setLiveTravelFetchedJustNow(false);
+          }}
         />
         {/* Only offered once there's a destination to route to — an empty
             Maps search is worse than no link at all. RUNWAY_PLAN.md §5.1
@@ -265,7 +315,25 @@ export function DepartureSetup({ templateId, departureId, onNavigate }: Departur
             Check route in Maps
           </button>
         )}
+        {/* Live-travel increment: only offered when the feature is on
+            (Settings) and there's a destination to fetch a route to — same
+            gating the Maps link above uses, plus the settings check. */}
+        {liveTravelConfig?.enabled && destination.trim() !== '' && (
+          <button
+            type="button"
+            onClick={() => void handleFetchLiveTravel()}
+            disabled={fetchingLiveTravel}
+            className="min-h-11 rounded-md px-2 text-sm font-medium text-sky-400 hover:text-sky-300 disabled:opacity-40"
+          >
+            {fetchingLiveTravel ? 'Fetching…' : 'Fetch live travel time'}
+          </button>
+        )}
       </div>
+
+      {liveTravelFetchedJustNow && <p className="text-sm text-sky-400">live · just now</p>}
+      {liveTravelError && (
+        <p className="text-sm text-amber-400">Live travel time unavailable — using your estimate.</p>
+      )}
 
       <NumberField
         label="Friction buffer"

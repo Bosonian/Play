@@ -14,6 +14,8 @@ import { formatAppointmentLine, formatSlackLine, formatTime } from '../lib/forma
 import { allowSleep, keepAwake } from '../native/keepAwake';
 import { hapticImpact } from '../native/haptics';
 import { cancelDepartureAlarms } from '../native/notifications';
+import { readLiveTravelConfig } from '../lib/liveTravelSettings';
+import { useLiveTravel } from '../hooks/useLiveTravel';
 
 /** Same confirm copy as Home's "Remove" action on a planned departure (M1) —
  * abandoning from either screen is the same operation with the same
@@ -53,6 +55,20 @@ const STATE_BORDER: Record<Projection['state'], string> = {
 export function Runway({ departureId, onNavigate }: RunwayProps) {
   const departure = useLiveQuery(() => db.departures.get(departureId), [departureId]);
   const now = useNow(1000);
+  const liveTravelConfig = useLiveQuery(() => readLiveTravelConfig(), []);
+
+  // Live-travel increment (RUNWAY_PLAN.md §5.1+§5.6): only while a run is
+  // actually under way, the feature is on, and there's a destination to
+  // route to — matches the increment spec's three gating conditions
+  // exactly. Called unconditionally (before the `if (!departure) return`
+  // guard below) because React hooks can't be called conditionally; the
+  // hook itself no-ops internally whenever `enabled` is false.
+  const liveTravelActive =
+    departure?.status === 'running' && !!liveTravelConfig?.enabled && departure.destination.trim() !== '';
+  const liveTravel = useLiveTravel(
+    departure ? { id: departure.id, destination: departure.destination } : undefined,
+    { enabled: liveTravelActive, apiKey: liveTravelConfig?.apiKey ?? '' },
+  );
 
   // "I'm out the door" flips status to 'left' immediately, so calibration
   // data (leftAt) is correct even if the tab closes right after the tap -
@@ -87,6 +103,21 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
       </div>
     );
   }
+
+  // Live-travel display line (increment spec §5): omitted entirely when the
+  // feature isn't active for this departure right now (`null`); otherwise
+  // one of two exact copy strings depending on whether the most recent
+  // fetch succeeded. `liveMinutes ?? departure.travelMinutes` in the
+  // failure branch means a departure that's never had a successful fetch
+  // yet still shows a real number (the manual estimate already in use for
+  // the projection above) rather than a blank.
+  const liveTravelLine = !liveTravelActive
+    ? null
+    : liveTravel.liveMinutes !== null && !liveTravel.failed
+      ? `Travel ${liveTravel.liveMinutes} min · live, updated ${formatTime(liveTravel.updatedAt!)}`
+      : liveTravel.failed
+        ? `Travel ${liveTravel.liveMinutes ?? departure.travelMinutes} min · live update unavailable`
+        : null; // first fetch of this mount hasn't resolved yet - nothing to show
 
   // Arrow functions assigned to `const`, not `function` declarations: a
   // hoisted function declaration loses TS's narrowing of `departure` (from
@@ -242,6 +273,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
         <p className="text-lg tabular-nums text-slate-500">
           {formatAppointmentLine(new Date(departure.appointmentAt), now)}
         </p>
+        {liveTravelLine && <p className="text-sm tabular-nums text-slate-500">{liveTravelLine}</p>}
         <p className={`text-base font-medium tabular-nums ${textAccent}`}>
           {formatSlackLine(projection.slackMinutes)}
         </p>
