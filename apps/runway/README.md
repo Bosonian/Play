@@ -88,6 +88,16 @@ The exam overview also carries a next-move card: a single suggested topic and sp
 
 There is no way to delete an exam in v1 — after the exam, starting fresh means clearing app data or waiting for v1.5's archive.
 
+## Home-screen widget
+
+A 3×1 Prüfung widget shows three lines: **"Ready by {date}"** (coloured calm/tight/late, the same thresholds as the exam overview), the exam anchor ("Exam window opens ..." or "Exam ..."), and this week's hours ("This week 1.5 of 6.5 h"). Tapping it opens straight to the Prüfung overview.
+
+**The honest staleness design:** the widget does not poll or recompute anything on its own between app opens. Everything it shows is a snapshot the app pushes explicitly — after a sprint ends, after the exam/topics/a milestone are saved — never on a timer. Between those moments, the widget keeps its display current in only one narrow way: the "Ready by" date slides forward 1:1 with the real calendar (the app hands it a day-offset from "today", not a fixed date), so the *date itself* stays right even while the app is closed. Everything else — the underlying pace, the remaining hours, whether this week's line still describes the current week — is frozen at whatever it was the last time the app ran. The this-week line disappears once the real calendar has moved past the week it was computed for, rather than silently claiming to describe a week that's already over.
+
+**Add the widget:** long-press the home screen → Widgets → Runway.
+
+**Static shortcuts** ("New departure", "Prüfung") are also available by long-pressing the app icon — no widget placement required for those.
+
 ## v1.5 candidates
 
 Cut from v1 deliberately, not forgotten:

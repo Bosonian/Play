@@ -27,6 +27,7 @@ import {
   formatTime,
 } from '../lib/format';
 import { cancelSprintEndAlarm } from '../native/notifications';
+import { refreshWidgets } from '../native/widgets';
 
 interface ExamOverviewProps {
   onNavigate: (screen: Screen) => void;
@@ -206,6 +207,11 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
     // cancelSprintEndAlarm's own doc comment) — cancelled either way so a
     // long-dead sprint can't still ring.
     await cancelSprintEndAlarm(target.id);
+    // Widgets increment: a resolved zombie changes logged hours exactly
+    // like an ordinary sprint end (Discard also removes hours that were
+    // never real in the first place — either way the widget's numbers are
+    // now stale until this runs).
+    await refreshWidgets();
   }
 
   /** The endedAt the card's "Log planned N min" button writes — startedAt

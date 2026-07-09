@@ -8,6 +8,7 @@ import { TextField } from '../ui/TextField';
 import { ScreenHeader } from '../ui/ScreenHeader';
 import { formatDateInput, formatDateLong, formatTime, formatTimeInput } from '../lib/format';
 import { cancelMilestoneAlarm, ensurePermissions, scheduleMilestoneAlarm } from '../native/notifications';
+import { refreshWidgets } from '../native/widgets';
 
 interface MilestoneEditProps {
   examId: string;
@@ -131,6 +132,12 @@ export function MilestoneEdit({ examId, onNavigate }: MilestoneEditProps) {
     } catch (err) {
       console.warn('Runway: failed to schedule milestone alarm', err);
     }
+
+    // Widgets increment: milestones aren't in the W1 snapshot itself, but
+    // this call site is included per spec so a later widget revision that
+    // does show them doesn't need to rediscover it (see refreshWidgets' own
+    // doc comment).
+    await refreshWidgets();
 
     resetForm();
     setSubmitting(false);

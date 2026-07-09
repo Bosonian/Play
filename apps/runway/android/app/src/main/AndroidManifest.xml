@@ -22,7 +22,47 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Widgets increment (src/native/deepLinks.ts): runway://exam
+                 and runway://new-departure, tapped from the Prüfung widget
+                 and the static app shortcuts below. launchMode stays
+                 singleTask (unchanged, verified above) — a deep link while
+                 the app is already running is delivered to the existing
+                 Activity via onNewIntent rather than spawning a second
+                 instance, which is exactly what @capacitor/app's
+                 handleOnNewIntent (see node_modules/@capacitor/app/android/
+                 .../AppPlugin.java) expects to receive appUrlOpen events
+                 from. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="runway" />
+            </intent-filter>
+
+            <!-- Widgets increment: static app shortcuts, shown on a
+                 long-press of the launcher icon. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+
         </activity>
+
+        <!-- Widgets increment: the Prüfung home-screen widget provider.
+             exported="true" is required here — AppWidgetManager delivers
+             ACTION_APPWIDGET_UPDATE as a system broadcast, which an
+             unexported receiver could not receive; this is the standard,
+             documented shape for every AppWidgetProvider, not a relaxation
+             specific to this app. -->
+        <receiver
+            android:name=".PruefungWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_pruefung_info" />
+        </receiver>
 
         <provider
             android:name="androidx.core.content.FileProvider"

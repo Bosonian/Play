@@ -6,6 +6,7 @@ import { Button } from '../ui/Button';
 import { TextField } from '../ui/TextField';
 import { ScreenHeader } from '../ui/ScreenHeader';
 import { PRUEFUNG_GUIDED_DONE_KEY, isGuidedPassActive } from '../lib/guidedPass';
+import { refreshWidgets } from '../native/widgets';
 
 interface ExamSetupProps {
   examId?: string;
@@ -110,6 +111,11 @@ export function ExamSetup({ examId, onNavigate }: ExamSetupProps) {
       });
       savedExamId = id;
     }
+
+    // Widgets increment: the exam's anchor (windowStart/examDate) just
+    // changed, which is exactly what the widget's "Ready by" colour band
+    // and anchorLabel are computed from.
+    await refreshWidgets();
 
     // Guided-layer increment (§2): while the walkthrough is still active,
     // Save chains straight into TopicEdit instead of the overview — "the

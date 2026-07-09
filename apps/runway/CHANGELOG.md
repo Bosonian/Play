@@ -5,6 +5,22 @@ via the `runway-latest.apk` asset at
 https://github.com/Bosonian/Play/releases/tag/runway-latest — it carries
 whichever version built last.
 
+## 0.10.0
+- Home-screen widget for Prüfung mode: ready-by date, exam anchor, and
+  this-week's hours, refreshed explicitly after every sprint/exam/topic/
+  milestone save (never on a generic Dexie hook). The app's first native
+  Kotlin/Java: a local `WidgetBridge` Capacitor plugin (JS → SharedPreferences
+  → widget redraw) and the `PruefungWidgetProvider` widget itself, both
+  written in Java (this project has no Kotlin toolchain configured yet — see
+  the increment's own notes on why Java was the safer first-try-compile
+  choice). All pace/remaining-hours/projection math stays in TypeScript; the
+  native side only slides a date forward by a day-count and diffs two dates,
+  never re-derives the equation.
+- Deep links (`runway://exam`, `runway://new-departure`) via `@capacitor/app`,
+  and two static home-screen shortcuts ("New departure", "Prüfung") reachable
+  by long-pressing the app icon. Both the widget's tap target and the
+  shortcuts route through the same deep-link handling.
+
 ## 0.9.0
 - Live travel times for departure mode: an optional Google Routes API
   integration, off by default. New Settings screen (Routes API key +

@@ -18,6 +18,14 @@ import type { Screen } from '../App';
 // before the app finished booting".
 let navigate: ((screen: Screen) => void) | null = null;
 let pendingDepartureId: string | null = null;
+// Widgets increment (deep links, src/native/deepLinks.ts): a second, more
+// general pending slot alongside pendingDepartureId above. Kept separate
+// rather than folding departure taps into this one — pendingDepartureId
+// predates this and reshaping it into `Screen` form everywhere it's read
+// would be a wider diff than this increment needs for one new caller. Same
+// "exactly one pending slot, not a queue" reasoning as the comment above:
+// there's at most one deep link that could have cold-started the app.
+let pendingScreen: Screen | null = null;
 
 export function setNavigationRef(fn: ((screen: Screen) => void) | null): void {
   navigate = fn;
@@ -25,6 +33,11 @@ export function setNavigationRef(fn: ((screen: Screen) => void) | null): void {
     const departureId = pendingDepartureId;
     pendingDepartureId = null;
     fn({ name: 'runway', departureId });
+  }
+  if (fn && pendingScreen) {
+    const screen = pendingScreen;
+    pendingScreen = null;
+    fn(screen);
   }
 }
 
@@ -36,5 +49,17 @@ export function navigateToDeparture(departureId: string): void {
     navigate({ name: 'runway', departureId });
   } else {
     pendingDepartureId = departureId;
+  }
+}
+
+/** Same cold-start-race handling as navigateToDeparture above, generalised
+ * to any Screen — used by the widget/shortcut/deep-link tap handler
+ * (src/native/deepLinks.ts), which already knows which Screen a
+ * `runway://...` URL means and just needs somewhere to deliver it. */
+export function navigateToScreen(screen: Screen): void {
+  if (navigate) {
+    navigate(screen);
+  } else {
+    pendingScreen = screen;
   }
 }

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widgets increment (Runway 0.10.0): the Prüfung home-screen widget's
+     layout. Three plain TextViews, no progress bars or icons — same "plain
+     numbers, no bars" reasoning as the app's own topic list
+     (RUNWAY_PRUFUNG_PLAN.md §4.1). Rendered by
+     PruefungWidgetProvider.java; colours for widget_line1 are set
+     programmatically there (calm/tight/late), everything else here is
+     static. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="start|center_vertical"
+    android:background="@drawable/widget_bg"
+    android:padding="14dp">
+
+    <TextView
+        android:id="@+id/widget_line1"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:textColor="#F1F5F9"
+        android:maxLines="1"
+        android:text="" />
+
+    <TextView
+        android:id="@+id/widget_line2"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:textSize="13sp"
+        android:textColor="#94A3B8"
+        android:maxLines="1"
+        android:text="" />
+
+    <TextView
+        android:id="@+id/widget_line3"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:textSize="13sp"
+        android:textColor="#94A3B8"
+        android:maxLines="1"
+        android:text="" />
+
+</LinearLayout>

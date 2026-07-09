@@ -12,6 +12,7 @@ import { formatCountdown } from '../lib/format';
 import { allowSleep, keepAwake } from '../native/keepAwake';
 import { hapticImpact } from '../native/haptics';
 import { cancelSprintEndAlarm } from '../native/notifications';
+import { refreshWidgets } from '../native/widgets';
 
 interface SprintProps {
   sprintId: string;
@@ -152,6 +153,9 @@ export function Sprint({ sprintId, onNavigate }: SprintProps) {
     // Terminal - the planned-end alarm would otherwise still fire later
     // for a sprint that's already been logged as finished.
     await cancelSprintEndAlarm(sprint.id);
+    // Widgets increment: logged hours just changed - the widget's ready
+    // date, week line, and colour band all depend on them.
+    await refreshWidgets();
     setFinishedEndedAt(endedAtIso); // F13 - see its declaration above
     setJustEnded(true);
   };

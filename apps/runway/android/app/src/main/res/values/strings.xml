@@ -4,4 +4,10 @@
     <string name="title_activity_main">Runway</string>
     <string name="package_name">de.bosonian.runway</string>
     <string name="custom_url_scheme">de.bosonian.runway</string>
+
+    <!-- Widgets increment: static app shortcut labels (res/xml/shortcuts.xml). -->
+    <string name="shortcut_new_departure_short">New departure</string>
+    <string name="shortcut_new_departure_long">Start a new departure</string>
+    <string name="shortcut_pruefung_short">Prüfung</string>
+    <string name="shortcut_pruefung_long">Open Prüfung</string>
 </resources>
