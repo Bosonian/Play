@@ -7,7 +7,7 @@ const NOW = new Date('2026-07-09T08:00:00.000Z');
 
 function makeDeparture(overrides: Partial<Departure> = {}): Pick<
   Departure,
-  'appointmentAt' | 'travelMinutes' | 'bufferMinutes' | 'steps'
+  'appointmentAt' | 'travelMinutes' | 'bufferMinutes' | 'steps' | 'arrivalSteps'
 > {
   return {
     appointmentAt: '2026-07-09T09:00:00.000Z', // 60 min after NOW
@@ -18,6 +18,7 @@ function makeDeparture(overrides: Partial<Departure> = {}): Pick<
       { id: 's2', name: 'Dress', plannedMinutes: 10, checkedAt: null },
       { id: 's3', name: 'Pack bag', plannedMinutes: 5, checkedAt: null },
     ],
+    arrivalSteps: [],
     ...overrides,
   };
 }
@@ -124,6 +125,67 @@ describe('computeProjection', () => {
   });
 });
 
+// Arrival-steps increment (ward-station insight): appointmentAt is the TRUE
+// target, arrival steps are the optional gap between the building and it.
+describe('computeProjection — arrival steps', () => {
+  it('adds remaining (unchecked) arrival-step minutes to projectedArrival', () => {
+    const departure = makeDeparture({
+      arrivalSteps: [{ id: 'a1', name: 'Change into scrubs', plannedMinutes: 8, checkedAt: null }],
+    });
+    const { projectedArrival, slackMinutes } = computeProjection(NOW, departure);
+
+    // 30 prep + 10 buffer + 20 travel + 8 arrival = 68 min -> 08:00 + 68 = 09:08.
+    expect(projectedArrival.toISOString()).toBe('2026-07-09T09:08:00.000Z');
+    expect(slackMinutes).toBe(-8);
+  });
+
+  it('subtracts remaining (unchecked) arrival-step minutes from leaveBy too', () => {
+    const departure = makeDeparture({
+      arrivalSteps: [{ id: 'a1', name: 'Change into scrubs', plannedMinutes: 8, checkedAt: null }],
+    });
+    const { leaveBy } = computeProjection(NOW, departure);
+
+    // 09:00 appointment - 20 travel - 8 arrival = 08:32.
+    expect(leaveBy.toISOString()).toBe('2026-07-09T08:32:00.000Z');
+  });
+
+  it('excludes a CHECKED arrival step from the remaining sum in both projectedArrival and leaveBy', () => {
+    const departure = makeDeparture({
+      arrivalSteps: [
+        { id: 'a1', name: 'Change into scrubs', plannedMinutes: 8, checkedAt: '2026-07-09T09:05:00.000Z' },
+        { id: 'a2', name: 'Take the lift', plannedMinutes: 5, checkedAt: null },
+      ],
+    });
+    const { projectedArrival, leaveBy } = computeProjection(NOW, departure);
+
+    // Only the unchecked 5-min "Take the lift" counts as remaining: 30 prep
+    // + 10 buffer + 20 travel + 5 arrival = 65 min -> 09:05.
+    expect(projectedArrival.toISOString()).toBe('2026-07-09T09:05:00.000Z');
+    // 09:00 - 20 travel - 5 remaining arrival = 08:35.
+    expect(leaveBy.toISOString()).toBe('2026-07-09T08:35:00.000Z');
+  });
+
+  it('a departure with zero arrival steps reduces exactly to the original four-term equation', () => {
+    const withEmpty = computeProjection(NOW, makeDeparture({ arrivalSteps: [] }));
+    const withoutField = computeProjection(NOW, makeDeparture());
+
+    expect(withEmpty.projectedArrival.toISOString()).toBe('2026-07-09T09:00:00.000Z');
+    expect(withEmpty.leaveBy.toISOString()).toBe(withoutField.leaveBy.toISOString());
+  });
+
+  it('treats a legacy departure (arrivalSteps missing entirely, not just empty) the same as []', () => {
+    const departure = makeDeparture();
+    const legacy: Partial<typeof departure> = { ...departure };
+    delete legacy.arrivalSteps;
+
+    const legacyResult = computeProjection(NOW, legacy as typeof departure);
+    const explicitEmptyResult = computeProjection(NOW, { ...departure, arrivalSteps: [] });
+
+    expect(legacyResult.projectedArrival.toISOString()).toBe(explicitEmptyResult.projectedArrival.toISOString());
+    expect(legacyResult.leaveBy.toISOString()).toBe(explicitEmptyResult.leaveBy.toISOString());
+  });
+});
+
 describe('computeStartBy', () => {
   it('equals appointment minus travel minus buffer minus total prep', () => {
     const departure = makeDeparture();
@@ -144,5 +206,15 @@ describe('computeStartBy', () => {
     const unchecked = makeDeparture();
 
     expect(computeStartBy(allChecked).toISOString()).toBe(computeStartBy(unchecked).toISOString());
+  });
+
+  it('also subtracts the FULL arrival-step total, arrival-steps increment (setup-time preview, nothing checked yet)', () => {
+    const departure = makeDeparture({
+      arrivalSteps: [{ id: 'a1', name: 'Change into scrubs', plannedMinutes: 8, checkedAt: null }],
+    });
+    const startBy = computeStartBy(departure);
+
+    // 09:00 - 20 travel - 8 arrival - 10 buffer - 30 prep = 07:52.
+    expect(startBy.toISOString()).toBe('2026-07-09T07:52:00.000Z');
   });
 });

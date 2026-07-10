@@ -8,7 +8,7 @@ const NOW = new Date('2026-07-09T06:00:00.000Z');
 
 function makeDeparture(overrides: Partial<Departure> = {}): Pick<
   Departure,
-  'appointmentAt' | 'travelMinutes' | 'bufferMinutes' | 'steps'
+  'appointmentAt' | 'travelMinutes' | 'bufferMinutes' | 'steps' | 'arrivalSteps'
 > {
   return {
     appointmentAt: '2026-07-09T09:00:00.000Z',
@@ -19,6 +19,7 @@ function makeDeparture(overrides: Partial<Departure> = {}): Pick<
       { id: 's2', name: 'Dress', plannedMinutes: 10, checkedAt: null },
       { id: 's3', name: 'Pack bag', plannedMinutes: 5, checkedAt: null },
     ],
+    arrivalSteps: [],
     ...overrides,
   };
 }
@@ -117,5 +118,46 @@ describe('computeAlarmTimes', () => {
     const alarms = computeAlarmTimes(now, departure);
 
     expect(alarms).toEqual([]);
+  });
+});
+
+// Arrival-steps increment: arrival steps use their FULL total (not
+// "remaining") because these four alarms are all scheduled once, before a
+// single step of either kind has been checked off.
+describe('computeAlarmTimes — arrival steps', () => {
+  it('shifts every one of the four slots earlier by the total arrival-step minutes', () => {
+    const departure = makeDeparture({
+      arrivalSteps: [{ id: 'a1', name: 'Change into scrubs', plannedMinutes: 8, checkedAt: null }],
+    });
+    const alarms = computeAlarmTimes(NOW, departure);
+    const bySlot = new Map(alarms.map((a) => [a.slot, a.at.toISOString()]));
+
+    // Baseline (no arrival steps, per the normal-case test above):
+    // startBy 08:00, wrapUp 08:30, leaveSoon 08:35, leaveNow 08:40. Every
+    // one shifts exactly 8 minutes earlier here.
+    expect(bySlot.get(0)).toBe('2026-07-09T07:52:00.000Z'); // startBy
+    expect(bySlot.get(1)).toBe('2026-07-09T08:22:00.000Z'); // wrapUp
+    expect(bySlot.get(2)).toBe('2026-07-09T08:27:00.000Z'); // leaveSoon
+    expect(bySlot.get(3)).toBe('2026-07-09T08:32:00.000Z'); // leaveNow
+  });
+
+  it('an explicit empty arrival-steps list leaves the schedule exactly unchanged', () => {
+    const withEmpty = computeAlarmTimes(NOW, makeDeparture({ arrivalSteps: [] }));
+    const withoutField = computeAlarmTimes(NOW, makeDeparture());
+
+    expect(withEmpty.map((a) => a.at.toISOString())).toEqual(withoutField.map((a) => a.at.toISOString()));
+  });
+
+  it('treats a legacy departure (arrivalSteps missing entirely) the same as []', () => {
+    const departure = makeDeparture();
+    const legacy: Partial<typeof departure> = { ...departure };
+    delete legacy.arrivalSteps;
+
+    const legacyAlarms = computeAlarmTimes(NOW, legacy as typeof departure);
+    const explicitEmptyAlarms = computeAlarmTimes(NOW, { ...departure, arrivalSteps: [] });
+
+    expect(legacyAlarms.map((a) => a.at.toISOString())).toEqual(
+      explicitEmptyAlarms.map((a) => a.at.toISOString()),
+    );
   });
 });

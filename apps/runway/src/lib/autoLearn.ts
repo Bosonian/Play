@@ -22,6 +22,17 @@ const AUTO_LEARN_DELTA_MINUTES = 2;
  * yet actually reflects the new numbers instead of quietly diverging from
  * its own template.
  *
+ * Arrival-steps increment: `template.arrivalSteps` gets the exact same
+ * treatment as `template.steps` here — an arrival step is a step for
+ * auto-learn's purposes, and its actuals already flow into the same
+ * `naturalActualsByStepName` map (deriveStepActuals' arrivedAt-anchored
+ * chain, calibration.ts). Unlike Home's suggest-and-confirm cards
+ * (learning.ts's `computeSuggestions`, deliberately left prep-only for
+ * now), this write-without-a-tap path is opt-in per template regardless of
+ * which section a step lives in — the toggle's copy ("Learn step times
+ * automatically") doesn't distinguish prep from arrival, so neither does
+ * this.
+ *
  * Effectful and Dexie-touching by design (unlike learning.ts, which stays
  * pure) — this is the one place a learned value writes itself without a
  * tap, which is exactly why it's opt-in (Template.autoLearn), and exactly
@@ -51,7 +62,13 @@ export async function applyAutoLearn(templateId: string): Promise<void> {
     const naturalByName = naturalActualsByStepName(templateRuns);
 
     let changed = false;
-    const nextSteps = template.steps.map((step) => {
+    // Shared by both `steps` and `arrivalSteps` below — same per-step
+    // "learn it if the evidence supports it and the drift is real" rule,
+    // parameterized rather than duplicated. Reads (and, when it fires,
+    // writes to) the `changed` flag above via closure — both callers
+    // contribute to the same single "did anything on this template
+    // change" answer that gates the write below.
+    const learnStep = (step: (typeof template.steps)[number]) => {
       const actuals = naturalByName.get(step.name);
       if (!actuals) return step;
       const learned = learnedEstimate(actuals);
@@ -59,11 +76,18 @@ export async function applyAutoLearn(templateId: string): Promise<void> {
       if (Math.abs(learned.minutes - step.minutes) < AUTO_LEARN_DELTA_MINUTES) return step;
       changed = true;
       return { ...step, minutes: learned.minutes };
-    });
+    };
+
+    const nextSteps = template.steps.map(learnStep);
+    const nextArrivalSteps = (template.arrivalSteps ?? []).map(learnStep);
 
     if (!changed) return;
 
-    await db.templates.update(templateId, { steps: nextSteps, updatedAt: new Date().toISOString() });
+    await db.templates.update(templateId, {
+      steps: nextSteps,
+      arrivalSteps: nextArrivalSteps,
+      updatedAt: new Date().toISOString(),
+    });
 
     // Same "replace untouched future rows, then re-materialize" chain
     // TemplateEdit's own save path runs after a manual step-minutes edit —

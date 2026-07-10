@@ -312,6 +312,14 @@ const MIN_DELTA_MINUTES = 3;
  * on the returned Suggestion is always the template's *current* value for
  * that step name, so a suggestion reflects "here's what's true now," not a
  * stale snapshot from whenever the matching departures were created.
+ *
+ * Deliberately scoped to `template.steps` (prep) only, NOT
+ * `template.arrivalSteps` — arrival-steps increment. Auto-learn
+ * (autoLearn.ts) does treat arrival steps as steps for its opt-in,
+ * writes-itself update; this suggest-and-confirm card is left prep-only
+ * for now, a narrower scope than it could have, worth reconsidering once
+ * there's real arrival-step history to look at (v1.5 candidate, not a
+ * design decision this comment claims is final).
  */
 export function computeSuggestions(templates: Template[], departures: Departure[]): Suggestion[] {
   const suggestions: Suggestion[] = [];
@@ -409,13 +417,28 @@ export function stepNameLibrary(departures: Departure[], templates: Template[]):
     for (const step of departure.steps) {
       if (step.name.trim() !== '') names.add(step.name);
     }
+    // Arrival-steps increment: arrival steps are steps too — a name typed
+    // into DepartureSetup's or TemplateEdit's ARRIVAL STEPS section (e.g.
+    // "Change into scrubs") deserves the same task-memory autocomplete
+    // treatment as a prep step name, via the same shared StepNameAutocomplete
+    // component both sections reuse.
+    for (const step of departure.arrivalSteps ?? []) {
+      if (step.name.trim() !== '') names.add(step.name);
+    }
   }
   for (const template of templates) {
     for (const step of template.steps) {
       if (step.name.trim() !== '') names.add(step.name);
     }
+    for (const step of template.arrivalSteps ?? []) {
+      if (step.name.trim() !== '') names.add(step.name);
+    }
   }
 
+  // naturalActualsByStepName already covers arrival-step actuals too — see
+  // deriveStepActuals' (calibration.ts) two-chain split — so a name that's
+  // only ever appeared as an arrival step still gets a learned estimate
+  // here where the sample size supports one, no separate lookup needed.
   const naturalByName = naturalActualsByStepName(departures);
 
   const entries: StepNameLibraryEntry[] = [...names].map((name) => {

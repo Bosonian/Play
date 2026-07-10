@@ -100,6 +100,11 @@ export function DepartureSetup({
   const [travelMinutes, setTravelMinutes] = useState(20);
   const [bufferMinutes, setBufferMinutes] = useState(10);
   const [steps, setSteps] = useState<DepartureStep[]>([]);
+  // Arrival-steps increment: same shape as `steps` above, own state — see
+  // db/types.ts's Departure.arrivalSteps doc comment. Optional, empty by
+  // default; only ever populated by hand, from an existing departure being
+  // edited, or copied from a template, exactly like `steps`.
+  const [arrivalSteps, setArrivalSteps] = useState<DepartureStep[]>([]);
   const [touched, setTouched] = useState(false);
 
   // Task-memory autocomplete (learning increment §5) — every step name
@@ -137,6 +142,9 @@ export function DepartureSetup({
       setTravelMinutes(existingDeparture.travelMinutes);
       setBufferMinutes(existingDeparture.bufferMinutes);
       setSteps(existingDeparture.steps);
+      // undefined-as-null: a departure saved before arrival steps existed
+      // carries no `arrivalSteps` property at all, not an `[]` one.
+      setArrivalSteps(existingDeparture.arrivalSteps ?? []);
     }
   }, [existingDeparture]);
 
@@ -148,6 +156,15 @@ export function DepartureSetup({
       setBufferMinutes(sourceTemplate.bufferMinutes);
       setSteps(
         sourceTemplate.steps.map((step) => ({
+          id: crypto.randomUUID(),
+          name: step.name,
+          plannedMinutes: step.minutes,
+          checkedAt: null,
+        })),
+      );
+      // Same fresh-ids-copied-from-template shape as `steps` above.
+      setArrivalSteps(
+        (sourceTemplate.arrivalSteps ?? []).map((step) => ({
           id: crypto.randomUUID(),
           name: step.name,
           plannedMinutes: step.minutes,
@@ -167,6 +184,22 @@ export function DepartureSetup({
 
   function updateStep(stepId: string, patch: Partial<DepartureStep>) {
     setSteps((prev) => prev.map((s) => (s.id === stepId ? { ...s, ...patch } : s)));
+  }
+
+  // Arrival-steps increment: same three operations as the prep-steps trio
+  // above (DepartureSetup, unlike TemplateEdit, never offered reordering
+  // for `steps` either — arrival steps stay consistent with that, no
+  // move function here).
+  function addArrivalStep() {
+    setArrivalSteps((prev) => [...prev, { id: crypto.randomUUID(), name: '', plannedMinutes: 5, checkedAt: null }]);
+  }
+
+  function removeArrivalStep(stepId: string) {
+    setArrivalSteps((prev) => prev.filter((s) => s.id !== stepId));
+  }
+
+  function updateArrivalStep(stepId: string, patch: Partial<DepartureStep>) {
+    setArrivalSteps((prev) => prev.map((s) => (s.id === stepId ? { ...s, ...patch } : s)));
   }
 
   // Explicit tap only — never automatic. An API call and a location prompt
@@ -214,18 +247,26 @@ export function DepartureSetup({
     if (bufferMinutes < 0) errors.push('Buffer minutes cannot be negative.');
     if (steps.some((step) => step.plannedMinutes < 0)) errors.push('Step minutes cannot be negative.');
     if (steps.length === 0) errors.push('Add at least one step.');
+    // Arrival steps are optional (no minimum-count requirement, unlike prep
+    // steps above) but any that do exist still need a sane, non-negative
+    // duration — same guard, same copy, just scoped to the other list.
+    if (arrivalSteps.some((step) => step.plannedMinutes < 0)) errors.push('Step minutes cannot be negative.');
   }
   const canSave =
     appointmentInFuture &&
     travelMinutes >= 0 &&
     bufferMinutes >= 0 &&
     steps.every((step) => step.plannedMinutes >= 0) &&
-    steps.length > 0;
+    steps.length > 0 &&
+    arrivalSteps.every((step) => step.plannedMinutes >= 0);
 
   // Live preview — same equation as the Runway screen, evaluated with
   // every step unchecked (nothing has started yet). computeStartBy answers
   // "when do I need to start prep"; computeProjection's leaveBy answers
-  // "when do I need to be out the door", independent of prep.
+  // "when do I need to be out the door", independent of prep — both now
+  // also account for arrival steps (projection.ts), so a departure with
+  // any shows an earlier startBy/leaveBy here exactly as it will on the
+  // live Runway screen.
   const preview =
     appointmentIsValid && steps.length > 0
       ? {
@@ -234,12 +275,14 @@ export function DepartureSetup({
             travelMinutes,
             bufferMinutes,
             steps,
+            arrivalSteps,
           }),
           leaveBy: computeProjection(now, {
             appointmentAt: appointmentAtDate!.toISOString(),
             travelMinutes,
             bufferMinutes,
             steps,
+            arrivalSteps,
           }).leaveBy,
         }
       : null;
@@ -266,6 +309,7 @@ export function DepartureSetup({
       travelMinutes,
       bufferMinutes,
       steps,
+      arrivalSteps,
     };
 
     let savedDeparture: Departure;
@@ -292,6 +336,11 @@ export function DepartureSetup({
         // A brand-new departure has never been through compressPlan - see
         // db/types.ts's own comment on wasReplanned.
         wasReplanned: false,
+        // Arrival-steps increment: the arrival phase hasn't begun for a
+        // departure that doesn't even exist yet — see db/types.ts's
+        // Departure.arrivedAt doc comment on why this is an explicit tap,
+        // not an inferred timestamp.
+        arrivedAt: null,
       };
       await db.departures.add(savedDeparture);
     }
@@ -546,6 +595,83 @@ export function DepartureSetup({
 
         <Button variant="secondary" onClick={addStep}>
           Add step
+        </Button>
+      </section>
+
+      {/* Arrival-steps increment: same row UI as "Steps for this run" above
+          (including the locked/checked-off treatment, F3's own reasoning —
+          an arrival step can only ever be checked once the arrival phase
+          begins on the Runway screen, but this form has no way to know
+          that hasn't somehow already happened for whatever departure it's
+          editing, so the same defensive lock applies here too). Optional
+          and empty by default. */}
+      <section className="flex flex-col gap-3">
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Arrival steps</h2>
+        <p className="text-sm text-slate-500">
+          After the drive, before the real target — changing, lifts, corridors. The appointment
+          time is when the last of these is done.
+        </p>
+
+        <div className="flex flex-col gap-2">
+          {arrivalSteps.map((step) => {
+            const locked = step.checkedAt !== null;
+            if (locked) {
+              return (
+                <div
+                  key={step.id}
+                  className="flex items-center gap-2 rounded-lg border border-slate-800/60 bg-surface p-2 opacity-60"
+                >
+                  <span className="min-h-12 flex flex-1 items-center px-3 text-slate-400 line-through">
+                    {step.name || 'Step'}
+                  </span>
+                  <span className="min-h-12 flex w-16 items-center justify-end px-2 text-sm tabular-nums text-slate-500">
+                    {step.plannedMinutes} min
+                  </span>
+                  <span className="flex min-h-12 min-w-12 items-center justify-center text-xs font-medium uppercase tracking-wide text-slate-600">
+                    done
+                  </span>
+                </div>
+              );
+            }
+            return (
+              <div key={step.id} className="flex items-center gap-2 rounded-lg border border-slate-800/60 bg-surface p-2">
+                <StepNameAutocomplete
+                  value={step.name}
+                  library={stepLibrary}
+                  onNameChange={(name) => updateArrivalStep(step.id, { name })}
+                  onSelect={(entry) =>
+                    updateArrivalStep(step.id, {
+                      name: entry.name,
+                      ...(entry.learnedMinutes !== null ? { plannedMinutes: entry.learnedMinutes } : {}),
+                    })
+                  }
+                />
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  value={step.plannedMinutes}
+                  aria-label={`${step.name || 'Step'} minutes`}
+                  onChange={(e) => {
+                    const parsed = Number.parseInt(e.target.value, 10);
+                    updateArrivalStep(step.id, { plannedMinutes: Number.isNaN(parsed) ? 0 : parsed });
+                  }}
+                  className="min-h-12 w-16 rounded-lg border border-slate-700 bg-raised px-2 py-2 text-slate-100 tabular-nums focus:border-sky-500 focus:outline-none"
+                />
+                <button
+                  onClick={() => removeArrivalStep(step.id)}
+                  aria-label={`Remove ${step.name || 'step'}`}
+                  className="flex min-h-12 min-w-12 items-center justify-center text-slate-500 transition-colors hover:text-red-400"
+                >
+                  &times;
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        <Button variant="secondary" onClick={addArrivalStep}>
+          Add arrival step
         </Button>
       </section>
 

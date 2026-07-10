@@ -168,38 +168,57 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   // ever points at.
   const [focusStepId, setFocusStepId] = useState<string | null>(null);
 
-  // Defensive clear: if the departure stops being 'running' (left/abandoned
-  // from elsewhere - e.g. Home - while this screen happens to be open) or
-  // the focused step itself vanishes (edited away), the overlay has nothing
-  // honest left to show. Runs on every departure/focusStepId change rather
-  // than only at specific transitions, since either can happen from outside
-  // this component (Dexie's live query, not user action here).
+  // Arrival-steps increment: whether this departure has an arrival-phase
+  // checklist at all — computed here (not further down, past the
+  // `if (!departure) return` guard) because the two effects immediately
+  // below both need it, and hooks can't be called conditionally. `?? []`
+  // is the same undefined-as-null read every other late-added Departure
+  // field gets throughout this app.
+  const hasArrivalSteps = !!departure && (departure.arrivalSteps ?? []).length > 0;
+  const arrivalPhaseActive = departure?.status === 'left' && hasArrivalSteps;
+
+  // Defensive clear: if the departure stops being in a state that can
+  // honestly show a focused step (left/abandoned with nothing to focus,
+  // edited away, or - arrival-steps increment - moved on to 'done' from the
+  // arrival phase) while this screen happens to be open, the overlay has
+  // nothing honest left to show. A step is focusable in exactly two states
+  // now: 'running' (prep steps, unchanged from before this increment) or
+  // 'left' with arrival steps present (arrival steps, this increment) - and
+  // only while the focused id still exists in whichever list matches that
+  // state. Runs on every departure/focusStepId change rather than only at
+  // specific transitions, since either can happen from outside this
+  // component (Dexie's live query, not user action here).
   useEffect(() => {
     if (focusStepId === null) return;
     if (!departure) return;
-    if (departure.status !== 'running') {
-      setFocusStepId(null);
+    if (departure.status === 'running') {
+      if (!departure.steps.some((s) => s.id === focusStepId)) setFocusStepId(null);
       return;
     }
-    if (!departure.steps.some((s) => s.id === focusStepId)) {
-      setFocusStepId(null);
+    if (arrivalPhaseActive) {
+      if (!(departure.arrivalSteps ?? []).some((s) => s.id === focusStepId)) setFocusStepId(null);
+      return;
     }
-  }, [departure, focusStepId]);
+    setFocusStepId(null);
+  }, [departure, focusStepId, arrivalPhaseActive]);
 
-  // Keep the screen on for exactly as long as a run is live. Keyed on
-  // status rather than just mount/unmount because this component stays
-  // mounted across the 'running' -> 'left' transition (the justLeft
-  // confirmation is rendered by this same component) — the cleanup here is
-  // what releases the lock the instant status stops being 'running',
-  // whether that's because the departure finished or because the screen
-  // itself unmounts (React runs cleanups in both cases).
+  // Keep the screen on for exactly as long as a run is live - 'running'
+  // (prep), unchanged from before this increment, OR (arrival-steps
+  // increment) 'left' with an arrival-phase checklist actually on screen.
+  // Keyed on status/arrivalPhaseActive rather than just mount/unmount
+  // because this component stays mounted across the 'running' -> 'left'
+  // transition (the justLeft confirmation is rendered by this same
+  // component) — the cleanup here is what releases the lock the instant
+  // neither condition holds any more, whether that's because the departure
+  // finished or because the screen itself unmounts (React runs cleanups in
+  // both cases).
   useEffect(() => {
-    if (departure?.status !== 'running') return;
+    if (departure?.status !== 'running' && !arrivalPhaseActive) return;
     void keepAwake();
     return () => {
       void allowSleep();
     };
-  }, [departure?.status]);
+  }, [departure?.status, arrivalPhaseActive]);
 
   if (!departure) {
     // Still loading from Dexie (or a stale id) - nothing to show yet.
@@ -315,6 +334,62 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     onNavigate({ name: 'home' });
   };
 
+  // Arrival-steps increment: the explicit "I'm at the building" tap that
+  // begins the arrival phase — stamps `arrivedAt`, the anchor
+  // deriveStepActuals (calibration.ts) chains the first arrival step's
+  // actual time from. An inferred timestamp (e.g. leftAt + travelMinutes)
+  // would silently misattribute however long the journey ACTUALLY took —
+  // traffic, parking, walking from the car — onto the first arrival step's
+  // timer; a real, explicit tap is the only honest signal this app has for
+  // "the journey part is over, the building part begins now."
+  const handleArrived = async () => {
+    void hapticImpact('light');
+    await db.departures.update(departure.id, { arrivedAt: new Date().toISOString() });
+  };
+
+  // Arrival-steps increment: same transactional-modify shape as toggleStep
+  // above, pointed at `arrivalSteps` instead of `steps`. Checking the LAST
+  // unchecked arrival step is what resolves the whole departure — status
+  // 'done' plus an auto-derived arrivalResult measured against the true
+  // target (`appointmentAt`), the most precise arrival capture this app has:
+  // every other capture path (Home's Early/On time/Late buttons) is a
+  // person's best guess after the fact, this one is the exact checked-off
+  // timestamp of the last real thing standing between the door and the
+  // appointment. Late-only distinction (no separate "early" outcome) is
+  // deliberate, matching the spec this increment shipped against precisely:
+  // arrivalResult is 'onTime' for anything at or before the appointment,
+  // 'late' (with arrivalLateMinutes) otherwise.
+  const toggleArrivalStep = async (step: DepartureStep) => {
+    void hapticImpact('light');
+    const nowIso = new Date().toISOString();
+    await db.departures.where('id').equals(departure.id).modify((d) => {
+      const arrivalStepsList = d.arrivalSteps ?? [];
+      const s = arrivalStepsList.find((x) => x.id === step.id);
+      if (!s) return;
+      const checking = s.checkedAt === null;
+      s.checkedAt = checking ? nowIso : null;
+      if (checking && arrivalStepsList.every((x) => x.checkedAt !== null)) {
+        d.status = 'done';
+        const lateMinutes = Math.round(
+          (new Date(nowIso).getTime() - new Date(d.appointmentAt).getTime()) / 60_000,
+        );
+        if (lateMinutes > 0) {
+          d.arrivalResult = 'late';
+          d.arrivalLateMinutes = lateMinutes;
+        } else {
+          d.arrivalResult = 'onTime';
+          d.arrivalLateMinutes = null;
+        }
+      }
+    });
+    void refreshWidgets();
+    // Same trigger rule as handleLeave above ("a departure of an autoLearn
+    // template reached left/done") — checking the last arrival step is the
+    // OTHER place a departure reaches 'done' now, alongside Home's manual
+    // arrival-capture actions.
+    if (departure.templateId) void applyAutoLearn(departure.templateId);
+  };
+
   // F1: writes a compressed plan the confirmation block already showed on
   // screen — the diff the user tapped "Apply" on IS `result`, computed at
   // render time from the same `departure`/`now` this component already has,
@@ -405,6 +480,209 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     void refreshWidgets();
     setReplanOpen(false);
   };
+
+  // Arrival-steps increment (ward-station insight): status 'left' with a
+  // non-empty arrival-steps list gets a live phase of its own instead of
+  // the plain justLeft/terminal note below — replaces BOTH of those for
+  // exactly this case, checked ahead of `justLeft` so a departure that was
+  // just left (this session) with arrival steps goes straight here rather
+  // than flashing the old "Logged ... Safe travels." summary first. A
+  // departure WITHOUT arrival steps is completely unaffected: this
+  // condition is false for it and every branch below behaves exactly as
+  // it did before this increment.
+  if (arrivalPhaseActive) {
+    const arrivalStepsList = departure.arrivalSteps ?? [];
+    const arrived = departure.arrivedAt != null;
+    // Same equation as the prep view (projection.ts) — projectedArrival
+    // now measures against remaining (unchecked) arrival steps instead of
+    // prep, since prep is necessarily all checked by the time status is
+    // 'left' (allChecked gates the "I'm out the door" button below).
+    const projection = computeProjection(now, departure);
+    const textAccent = STATE_TEXT[projection.state];
+    const border = STATE_BORDER[projection.state];
+
+    const uncheckedArrival = arrivalStepsList.filter((s) => s.checkedAt === null);
+    const checkedArrival = arrivalStepsList.filter((s) => s.checkedAt !== null);
+    const currentArrivalStep = uncheckedArrival[0] ?? null;
+    const laterArrivalSteps = uncheckedArrival.slice(1);
+    const overrunTone = projection.state === 'late' ? 'text-red-400' : 'text-amber-400';
+
+    // Step-focus overlay, arrival flavor: currentStepAnchor/currentStepElapsed
+    // (currentStepElapsed.ts) are generic over any {steps, startedAt}-shaped
+    // object — remapping `startedAt` to `arrivedAt` here reuses that exact
+    // "most recent checked timestamp, else the fallback anchor" algorithm
+    // unchanged, rather than a second copy of it. See db/types.ts's
+    // Departure.arrivedAt comment for why THAT specific anchor (not the prep
+    // chain's last event) is the honest one for this phase.
+    const arrivalAnchorSource = { steps: arrivalStepsList, startedAt: departure.arrivedAt };
+    const arrivalElapsed = currentStepElapsed(now, arrivalAnchorSource);
+    const focusedArrivalStep = focusStepId ? (arrivalStepsList.find((s) => s.id === focusStepId) ?? null) : null;
+    const focusedArrivalIsCurrent =
+      !!focusedArrivalStep && !!currentArrivalStep && focusedArrivalStep.id === currentArrivalStep.id;
+    const focusArrivalAnchorIso = focusedArrivalIsCurrent ? currentStepAnchor(arrivalAnchorSource) : null;
+
+    // Tap-anywhere-to-advance, arrival flavor — same shape as the prep
+    // view's advanceFocusAfterCheck below: toggleArrivalStep already carries
+    // the haptic and the transactional write; this just decides where focus
+    // lands next (list order, same reasoning as the prep version).
+    const advanceArrivalFocusAfterCheck = async () => {
+      if (!currentArrivalStep) return;
+      const nextStepId = laterArrivalSteps[0]?.id ?? null;
+      await toggleArrivalStep(currentArrivalStep);
+      setFocusStepId(nextStepId);
+    };
+
+    return (
+      <>
+      <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-8 px-4 pb-12 pt-safe-top">
+        <div className="pt-8">
+          <ScreenHeader
+            title={`${departure.name} · ${departure.destination || 'No destination set'}`}
+            onBack={() => onNavigate({ name: 'home' })}
+          />
+        </div>
+
+        <div className="flex flex-col items-center gap-1 text-center">
+          <p className={`text-huge font-bold tracking-tight tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${textAccent}`}>
+            {formatTime(projection.projectedArrival)}
+          </p>
+          <p className="text-lg tabular-nums text-slate-500">
+            {formatAppointmentLine(new Date(departure.appointmentAt), now)}
+          </p>
+          <p className={`text-base font-medium tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${textAccent}`}>
+            {formatSlackLine(projection.slackMinutes)}
+          </p>
+        </div>
+
+        {!arrived ? (
+          // Gate: the journey isn't over until this explicit tap — see
+          // handleArrived's own comment on why a guess would be dishonest.
+          // No checklist rendered yet; there's nothing to check off until
+          // the phase it belongs to has actually begun.
+          <div className={`flex flex-col items-center gap-3 rounded-xl border ${border} bg-surface p-6 text-center motion-safe:transition-colors motion-safe:duration-300`}>
+            <p className="text-2xl font-semibold tracking-tight text-slate-100">Not at the building yet.</p>
+            <p className="tabular-nums text-slate-400">
+              {arrivalStepsList.length} step{arrivalStepsList.length === 1 ? '' : 's'} left once you tap in.
+            </p>
+            <Button onClick={() => void handleArrived()} className="mt-4 w-full">
+              I&apos;m at the building
+            </Button>
+            {departure.destination && (
+              <Button
+                variant="secondary"
+                onClick={() => window.open(mapsUrl(departure.destination), '_blank')}
+                className="w-full"
+              >
+                Open Maps
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-6">
+            {currentArrivalStep && (
+              <div className={`rounded-xl border ${border} bg-surface p-4 motion-safe:transition-colors motion-safe:duration-300`}>
+                <div className="flex items-start gap-3">
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center">
+                    <input
+                      type="checkbox"
+                      checked={false}
+                      onChange={() => toggleArrivalStep(currentArrivalStep)}
+                      aria-label={`Check off ${currentArrivalStep.name || 'step'}`}
+                      className="size-6 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                    />
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setFocusStepId(currentArrivalStep.id)}
+                    className="flex min-h-11 flex-1 flex-col gap-1 rounded-lg py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                  >
+                    <span className="text-xl font-medium text-slate-100">{currentArrivalStep.name || 'Step'}</span>
+                    {arrivalElapsed ? (
+                      <span
+                        className={`text-sm tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${
+                          arrivalElapsed.elapsedMinutes > currentArrivalStep.plannedMinutes ? overrunTone : 'text-slate-500'
+                        }`}
+                      >
+                        {arrivalElapsed.elapsedMinutes} min on this step · planned {currentArrivalStep.plannedMinutes} min
+                      </span>
+                    ) : (
+                      <span className="text-sm tabular-nums text-slate-500">
+                        planned {currentArrivalStep.plannedMinutes} min
+                      </span>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {laterArrivalSteps.length > 0 && (
+              <div className="flex flex-col gap-2">
+                {laterArrivalSteps.map((step) => (
+                  <div
+                    key={step.id}
+                    className="flex min-h-12 items-center gap-3 rounded-lg border border-slate-800/60 bg-surface px-4 py-2"
+                  >
+                    <span className="flex h-11 w-11 shrink-0 items-center justify-center">
+                      <input
+                        type="checkbox"
+                        checked={false}
+                        onChange={() => toggleArrivalStep(step)}
+                        aria-label={`Check off ${step.name || 'step'}`}
+                        className="size-6 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                      />
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setFocusStepId(step.id)}
+                      className="flex min-h-11 flex-1 items-center justify-between gap-3 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                    >
+                      <span className="flex-1 text-slate-300">{step.name || 'Step'}</span>
+                      <span className="text-sm tabular-nums text-slate-500">{step.plannedMinutes} min</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {checkedArrival.length > 0 && (
+              <div className="flex flex-col gap-1">
+                {checkedArrival.map((step) => (
+                  <label
+                    key={step.id}
+                    className="flex min-h-12 items-center gap-3 rounded-lg px-4 py-1 opacity-50 motion-safe:transition-opacity motion-safe:duration-200"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={true}
+                      onChange={() => toggleArrivalStep(step)}
+                      className="size-6 shrink-0 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                    />
+                    <span className="flex-1 text-slate-500 line-through">{step.name || 'Step'}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {Capacitor.isNativePlatform() && (
+          <p className="text-center text-sm text-slate-600">Screen stays on while this is open.</p>
+        )}
+      </div>
+      {focusedArrivalStep && (
+        <StepFocus
+          step={focusedArrivalStep}
+          isCurrentStep={focusedArrivalIsCurrent}
+          anchorIso={focusArrivalAnchorIso}
+          now={now}
+          bottomLine={{ label: 'Appointment', time: new Date(departure.appointmentAt) }}
+          onBack={() => setFocusStepId(null)}
+          onTap={focusedArrivalIsCurrent ? () => void advanceArrivalFocusAfterCheck() : undefined}
+        />
+      )}
+      </>
+    );
+  }
 
   if (justLeft) {
     // leaveBy (appointment minus travel) doesn't depend on `now` - see
@@ -885,7 +1163,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
         isCurrentStep={focusedStepIsCurrent}
         anchorIso={focusAnchorIso}
         now={now}
-        leaveBy={projection.leaveBy}
+        bottomLine={{ label: 'Leave by', time: projection.leaveBy }}
         onBack={() => setFocusStepId(null)}
         onTap={focusedStepIsCurrent ? () => void advanceFocusAfterCheck() : undefined}
       />

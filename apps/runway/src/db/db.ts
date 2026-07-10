@@ -120,5 +120,6 @@ db.on('populate', async () => {
     updatedAt: now,
     schedule: null,
     autoLearn: false,
+    arrivalSteps: [],
   });
 });

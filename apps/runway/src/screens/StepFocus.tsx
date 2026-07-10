@@ -16,8 +16,20 @@ interface StepFocusProps {
    * its own; meaningless (and unused) when `isCurrentStep` is false. */
   anchorIso: string | null;
   now: Date;
-  /** projection.leaveBy, live - the bottom line's "Leave by HH:mm". */
-  leaveBy: Date;
+  /**
+   * The bottom line's time and its label — two different callers, two
+   * different honest readings of "when this all needs to land":
+   *   - prep phase (Runway.tsx's main view): `{ label: 'Leave by',
+   *     time: projection.leaveBy }` — live, from computeProjection.
+   *   - arrival phase (Runway.tsx's arrival-steps branch, ward-station
+   *     increment): `{ label: 'Appointment', time: appointmentAt }` —
+   *     "Leave by" would be actively wrong copy once you've already left;
+   *     the true target left to name at that point is the appointment
+   *     itself, not a door that's already behind you.
+   * A single prop pair, not two optional ones, so a caller can't
+   * accidentally supply a time with no label or vice versa.
+   */
+  bottomLine: { label: string; time: Date };
   onBack: () => void;
   /** Whole-screen tap-to-check-and-advance. Only ever provided by the
    * caller when `isCurrentStep` is true - a step that hasn't started yet
@@ -47,7 +59,7 @@ const DIGIT_COLOR: Record<FocusTone['phase'], string> = {
  * panel only truly turns pixels off at pure black. #020617 is dark enough
  * to look black in the rest of the app but still measurably lit here.
  */
-export function StepFocus({ step, isCurrentStep, anchorIso, now, leaveBy, onBack, onTap }: StepFocusProps) {
+export function StepFocus({ step, isCurrentStep, anchorIso, now, bottomLine, onBack, onTap }: StepFocusProps) {
   const plannedSeconds = step.plannedMinutes * 60;
 
   // A step that hasn't started yet has no real "time since it began" - any
@@ -133,7 +145,9 @@ export function StepFocus({ step, isCurrentStep, anchorIso, now, leaveBy, onBack
       </div>
 
       <div className="relative z-10 pb-8">
-        <p className="text-center text-sm tabular-nums text-slate-500">Leave by {formatTime(leaveBy)}</p>
+        <p className="text-center text-sm tabular-nums text-slate-500">
+          {bottomLine.label} {formatTime(bottomLine.time)}
+        </p>
       </div>
     </div>
   );

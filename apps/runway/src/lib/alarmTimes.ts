@@ -26,17 +26,25 @@ function addMinutes(date: Date, minutes: number): Date {
 }
 
 /**
- * The four staged alarm times for a departure (RUNWAY_PLAN.md §5.5):
+ * The four staged alarm times for a departure (RUNWAY_PLAN.md §5.5),
+ * extended by the arrival-steps increment:
  *
- *   startBy   ("Start getting ready.")        = appointment − travel − buffer − total planned prep
- *   wrapUp    ("Wrap up. Buffer time begins.") = appointment − travel − buffer   (== leaveBy − buffer)
+ *   startBy   ("Start getting ready.")        = appointment − travel − arrival steps − buffer − total planned prep
+ *   wrapUp    ("Wrap up. Buffer time begins.") = appointment − travel − arrival steps − buffer   (== leaveBy − buffer)
  *   leaveSoon ("Leave in 5 minutes.")          = leaveBy − 5 min
- *   leaveNow  ("Leave now.")                   = appointment − travel            (== leaveBy)
+ *   leaveNow  ("Leave now.")                   = appointment − travel − arrival steps            (== leaveBy)
  *
  * `total planned prep` is the sum of every step's plannedMinutes, not just
  * unchecked ones — these are scheduled once, at save time, before any step
  * exists to check off, so (unlike the live Runway screen's projection) there
- * is no "remaining prep" notion here.
+ * is no "remaining prep" notion here. Arrival steps (ward-station insight:
+ * `appointment` is the TRUE target, arrival steps are whatever real gap
+ * sits between the building and it) get the same "total, not remaining"
+ * treatment for the exact same reason — these four alarms are all computed
+ * once, before a single arrival step has been checked either. A departure
+ * with no arrival steps (`arrivalSteps` empty or missing — `?? []`, same
+ * undefined-as-null rule as every other late-added Departure field)
+ * reduces this exactly to the original four-stage schedule.
  *
  * Deliberately pure — no Dexie access, no internal `Date.now()` — so `now`
  * is an explicit argument and this is trivial to unit test. The caller
@@ -64,12 +72,13 @@ function addMinutes(date: Date, minutes: number): Date {
  */
 export function computeAlarmTimes(
   now: Date,
-  departure: Pick<Departure, 'appointmentAt' | 'travelMinutes' | 'bufferMinutes' | 'steps'>,
+  departure: Pick<Departure, 'appointmentAt' | 'travelMinutes' | 'bufferMinutes' | 'steps' | 'arrivalSteps'>,
 ): AlarmTime[] {
   const appointmentAt = new Date(departure.appointmentAt);
   const totalPrepMinutes = departure.steps.reduce((sum, step) => sum + step.plannedMinutes, 0);
+  const totalArrivalMinutes = (departure.arrivalSteps ?? []).reduce((sum, step) => sum + step.plannedMinutes, 0);
 
-  const leaveNow = addMinutes(appointmentAt, -departure.travelMinutes);
+  const leaveNow = addMinutes(appointmentAt, -(departure.travelMinutes + totalArrivalMinutes));
   const wrapUp = addMinutes(leaveNow, -departure.bufferMinutes);
   const startBy = addMinutes(wrapUp, -totalPrepMinutes);
   const leaveSoon = addMinutes(leaveNow, -5);

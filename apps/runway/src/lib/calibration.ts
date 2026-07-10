@@ -29,24 +29,54 @@ export interface StepActual {
  * first event boundary is always `startedAt`, the moment the departure
  * began. A departure that was never started (no `startedAt`) has no time
  * axis to reconstruct anything against, so it contributes nothing.
+ *
+ * Arrival-steps increment: arrival-step actuals are reconstructed by the
+ * exact same chain-attribution logic, but anchored from `arrivedAt` — NOT
+ * from the prep chain's last check-off, and NOT chained onto the prep
+ * steps at all. The gap between "last prep step checked" and "arrived at
+ * the building" IS the journey (travel time, possibly hours for some
+ * appointments) — attributing that gap to the first arrival step would
+ * teach the learner that, say, "Change into scrubs" takes 40 minutes,
+ * when 38 of those were spent driving. Two independent chains, two
+ * independent anchors, same reasoning `deriveChain` below is shared for.
+ * A departure whose arrival phase never began (`arrivedAt` still
+ * null/undefined — true of every departure without arrival steps, and of
+ * one that has them but hasn't reached the "I'm at the building" tap yet)
+ * contributes no arrival actuals at all: same "no time axis, no data" rule
+ * `startedAt` above already applies to the whole function, just applied a
+ * second time to the second chain.
  */
 export function deriveStepActuals(
-  departure: Pick<Departure, 'steps' | 'startedAt'>,
+  departure: Pick<Departure, 'steps' | 'startedAt' | 'arrivalSteps' | 'arrivedAt'>,
 ): StepActual[] {
   if (!departure.startedAt) return [];
 
-  // ISO 8601 timestamps sort correctly as plain strings. Array#sort is
-  // stable (guaranteed since ES2019), so steps checked at the exact same
-  // instant keep their original relative order — irrelevant to the
-  // result either way, since a 0-minute gap is 0-minute regardless of
-  // which of the tied steps is treated as "later".
-  const checked = departure.steps
+  const prepActuals = deriveChain(departure.startedAt, departure.steps);
+  const arrivalActuals = departure.arrivedAt
+    ? deriveChain(departure.arrivedAt, departure.arrivalSteps ?? [])
+    : [];
+
+  return [...prepActuals, ...arrivalActuals];
+}
+
+/**
+ * Shared chain-attribution walk behind deriveStepActuals' two independent
+ * chains (prep, anchored at `startedAt`; arrival, anchored at `arrivedAt`)
+ * — see that function's own doc comment for why they're kept apart rather
+ * than one continuous chain. ISO 8601 timestamps sort correctly as plain
+ * strings; Array#sort is stable (guaranteed since ES2019), so steps
+ * checked at the exact same instant keep their original relative order —
+ * irrelevant to the result either way, since a 0-minute gap is 0-minute
+ * regardless of which of the tied steps is treated as "later".
+ */
+function deriveChain(anchorIso: string, steps: readonly { id: string; name: string; plannedMinutes: number; checkedAt: string | null }[]): StepActual[] {
+  const checked = steps
     .filter((step): step is typeof step & { checkedAt: string } => step.checkedAt !== null)
     .slice()
     .sort((a, b) => a.checkedAt.localeCompare(b.checkedAt));
 
   const actuals: StepActual[] = [];
-  let previousIso = departure.startedAt;
+  let previousIso = anchorIso;
   for (const step of checked) {
     const actualMinutes = Math.round(
       (new Date(step.checkedAt).getTime() - new Date(previousIso).getTime()) / 60_000,
@@ -74,11 +104,11 @@ export function medianMinutes(values: number[]): number | null {
 }
 
 /**
- * leaveBy (appointment minus travel) doesn't depend on `now` — see
- * projection.ts — so any Date works as the evaluation anchor; `appointmentAt`
- * is passed for both so the result is a fixed fact about the appointment,
- * not something that would read differently depending on when it's
- * computed.
+ * leaveBy (appointment minus travel minus arrival steps — see
+ * projection.ts) doesn't depend on `now`, so any Date works as the
+ * evaluation anchor; `appointmentAt` is passed for both so the result is a
+ * fixed fact about the appointment, not something that would read
+ * differently depending on when it's computed.
  *
  * `originalAppointmentAt ?? appointmentAt`, not `appointmentAt` alone: this
  * is exactly the slip/lateness anchor db/types.ts's `originalAppointmentAt`
@@ -88,7 +118,10 @@ export function medianMinutes(values: number[]): number | null {
  * still the departure's CURRENT value (it may have been live-updated since
  * the original commitment) — an accepted imprecision, since re-anchoring
  * changes the appointment, not travel time, and there is no separate
- * "travel time as of the original commitment" to fall back on.
+ * "travel time as of the original commitment" to fall back on. Same
+ * treatment for `arrivalSteps`: whatever the departure's current arrival
+ * plan is, not a frozen snapshot from the original commitment — arrival
+ * steps aren't touched by re-anchoring any more than travelMinutes is.
  *
  * Lifted out of History.tsx (learning increment) so `learnedBufferSuggestion`
  * (learning.ts) can measure the exact same "out the door" slip History
@@ -96,7 +129,10 @@ export function medianMinutes(values: number[]): number | null {
  * definition of "slip" living in two files.
  */
 export function plannedLeaveBy(
-  departure: Pick<Departure, 'appointmentAt' | 'originalAppointmentAt' | 'travelMinutes' | 'bufferMinutes' | 'steps'>,
+  departure: Pick<
+    Departure,
+    'appointmentAt' | 'originalAppointmentAt' | 'travelMinutes' | 'bufferMinutes' | 'steps' | 'arrivalSteps'
+  >,
 ): Date {
   const anchor = departure.originalAppointmentAt ?? departure.appointmentAt;
   return computeProjection(new Date(anchor), { ...departure, appointmentAt: anchor }).leaveBy;

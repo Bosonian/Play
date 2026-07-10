@@ -335,8 +335,24 @@ export function Home({ onNavigate }: HomeProps) {
   // Departures that have left but have no recorded arrival result yet -
   // increment-5 §2's one-optional-tap capture. Soonest appointment first,
   // same as Upcoming, so the oldest wait is at the top.
+  //
+  // Arrival-steps increment: a departure WITH arrival steps is excluded
+  // here — judgment call, worth flagging rather than a silent behavior
+  // change. Runway.tsx's own arrival phase resolves that departure far
+  // more precisely (checking the last arrival step auto-derives
+  // arrivalResult from the exact checked-off timestamp against the true
+  // target); offering the same departure a manual Early/On time/Late guess
+  // here too would let a stray tap short-circuit that more honest capture
+  // with a coarser one. Departures without arrival steps (the overwhelming
+  // majority, and 100% of them before this increment) are completely
+  // unaffected — `arrivalSteps.length === 0` for every one of them.
   const waitingOnArrival = useLiveQuery(
-    () => db.departures.where('status').equals('left').sortBy('appointmentAt'),
+    () =>
+      db.departures
+        .where('status')
+        .equals('left')
+        .filter((departure) => (departure.arrivalSteps ?? []).length === 0)
+        .sortBy('appointmentAt'),
     [],
   );
 

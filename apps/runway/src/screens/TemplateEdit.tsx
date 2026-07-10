@@ -25,6 +25,7 @@ const BLANK: Omit<Template, 'id' | 'createdAt' | 'updatedAt'> = {
   steps: [],
   schedule: null,
   autoLearn: false,
+  arrivalSteps: [],
 };
 
 /** Monday-first (CLAUDE.md), ISO weekday numbers 1..7 paired with the
@@ -54,6 +55,18 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
   const [travelMinutes, setTravelMinutes] = useState(BLANK.travelMinutes);
   const [bufferMinutes, setBufferMinutes] = useState(BLANK.bufferMinutes);
   const [steps, setSteps] = useState<StepTemplate[]>(BLANK.steps);
+
+  // Arrival-steps increment (ward-station insight): a second, optional set
+  // of steps that live AFTER travel and BEFORE the true appointment target
+  // — see db/types.ts's Template.arrivalSteps doc comment. Same shape as
+  // `steps` above (own state, own add/remove/update/move helpers below),
+  // deliberately kept as a SEPARATE array rather than one combined list
+  // with a "kind" flag — the two sections are edited, copied to a
+  // Departure, and read by the projection math as genuinely distinct
+  // phases (RUNWAY_PLAN.md's prep/travel/arrival split), so keeping them
+  // as separate arrays all the way down avoids a "which kind is this row"
+  // check creeping into every place that touches steps.
+  const [arrivalSteps, setArrivalSteps] = useState<StepTemplate[]>(BLANK.arrivalSteps);
 
   // Recurring-departures increment. `repeatDays` holds ISO weekday numbers
   // (1 Monday .. 7 Sunday); kept as three separate pieces of local state
@@ -110,6 +123,10 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
       setTravelMinutes(existing.travelMinutes);
       setBufferMinutes(existing.bufferMinutes);
       setSteps(existing.steps);
+      // undefined-as-null: a template saved before arrival steps existed
+      // carries no `arrivalSteps` property at all, not an `[]` one — same
+      // rule as `autoLearn`/`schedule` just below.
+      setArrivalSteps(existing.arrivalSteps ?? []);
       // undefined-as-null: a row saved before this field existed carries no
       // `autoLearn` property at all, not a `false` one — `=== true` (not a
       // truthy check) is what makes that read correctly regardless.
@@ -157,6 +174,34 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
     });
   }
 
+  // Arrival-steps increment: same four operations as the prep-steps quartet
+  // above, mechanically identical, just pointed at `arrivalSteps` — kept as
+  // separate functions rather than a shared "which array" parameter because
+  // that parameterization would only save a few lines here at the cost of
+  // every call site needing to say which list it means anyway.
+  function addArrivalStep() {
+    setArrivalSteps((prev) => [...prev, { id: crypto.randomUUID(), name: '', minutes: 5 }]);
+  }
+
+  function removeArrivalStep(stepId: string) {
+    setArrivalSteps((prev) => prev.filter((s) => s.id !== stepId));
+  }
+
+  function updateArrivalStep(stepId: string, patch: Partial<StepTemplate>) {
+    setArrivalSteps((prev) => prev.map((s) => (s.id === stepId ? { ...s, ...patch } : s)));
+  }
+
+  function moveArrivalStep(stepId: string, direction: -1 | 1) {
+    setArrivalSteps((prev) => {
+      const index = prev.findIndex((s) => s.id === stepId);
+      const target = index + direction;
+      if (index === -1 || target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  }
+
   const repeatValid = !repeatEnabled || (repeatTime !== '' && repeatDays.length > 0);
   const canSave = name.trim().length > 0 && travelMinutes >= 0 && bufferMinutes >= 0 && repeatValid;
 
@@ -173,6 +218,7 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
         travelMinutes,
         bufferMinutes,
         steps,
+        arrivalSteps,
         updatedAt: now,
         schedule,
         autoLearn,
@@ -185,6 +231,7 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
         travelMinutes,
         bufferMinutes,
         steps,
+        arrivalSteps,
         createdAt: now,
         updatedAt: now,
         schedule,
@@ -414,6 +461,90 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
 
         <Button variant="secondary" onClick={addStep}>
           Add step
+        </Button>
+      </section>
+
+      {/* Arrival-steps increment: same row UI as Steps above (reorder,
+          autocomplete, learned-label provenance), a second independent
+          array. Optional and empty by default — most departures never
+          touch this section, and the copy below says exactly what it's
+          for so it never reads as "another Steps section, why two". */}
+      <section className="flex flex-col gap-3">
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Arrival steps</h2>
+        <p className="text-sm text-slate-500">
+          After the drive, before the real target — changing, lifts, corridors. The appointment
+          time is when the last of these is done.
+        </p>
+
+        <div className="flex flex-col gap-2">
+          {arrivalSteps.map((step, index) => {
+            const learned = learnedByStepName.get(step.name);
+            const showsLearnedLabel = learned !== undefined && learned.minutes === step.minutes;
+            return (
+              <div key={step.id} className="flex flex-col gap-1 rounded-lg border border-slate-800/60 bg-surface p-2">
+                <div className="flex items-center gap-2">
+                  <div className="flex flex-col">
+                    <button
+                      onClick={() => moveArrivalStep(step.id, -1)}
+                      disabled={index === 0}
+                      aria-label={`Move ${step.name || 'step'} up`}
+                      className="flex h-5 w-8 items-center justify-center text-slate-500 transition-colors hover:text-slate-200 disabled:opacity-30"
+                    >
+                      ▲
+                    </button>
+                    <button
+                      onClick={() => moveArrivalStep(step.id, 1)}
+                      disabled={index === arrivalSteps.length - 1}
+                      aria-label={`Move ${step.name || 'step'} down`}
+                      className="flex h-5 w-8 items-center justify-center text-slate-500 transition-colors hover:text-slate-200 disabled:opacity-30"
+                    >
+                      ▼
+                    </button>
+                  </div>
+
+                  <StepNameAutocomplete
+                    value={step.name}
+                    library={library}
+                    onNameChange={(name) => updateArrivalStep(step.id, { name })}
+                    onSelect={(entry) =>
+                      updateArrivalStep(step.id, {
+                        name: entry.name,
+                        ...(entry.learnedMinutes !== null ? { minutes: entry.learnedMinutes } : {}),
+                      })
+                    }
+                  />
+
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    value={step.minutes}
+                    aria-label={`${step.name || 'Step'} minutes`}
+                    onChange={(e) => {
+                      const parsed = Number.parseInt(e.target.value, 10);
+                      updateArrivalStep(step.id, { minutes: Number.isNaN(parsed) ? 0 : parsed });
+                    }}
+                    className="min-h-12 w-16 rounded-lg border border-slate-700 bg-raised px-2 py-2 text-slate-100 tabular-nums focus:border-sky-500 focus:outline-none"
+                  />
+
+                  <button
+                    onClick={() => removeArrivalStep(step.id)}
+                    aria-label={`Remove ${step.name || 'step'}`}
+                    className="flex min-h-12 min-w-12 items-center justify-center text-slate-500 transition-colors hover:text-red-400"
+                  >
+                    &times;
+                  </button>
+                </div>
+                {showsLearnedLabel && (
+                  <p className="pl-10 text-xs text-slate-600">learned · {learned.runCount} runs</p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <Button variant="secondary" onClick={addArrivalStep}>
+          Add arrival step
         </Button>
       </section>
 

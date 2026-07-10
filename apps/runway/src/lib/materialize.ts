@@ -151,6 +151,15 @@ function buildDeparture(template: Template, occurrence: Occurrence): Departure {
       plannedMinutes: step.minutes,
       checkedAt: null,
     })),
+    // Arrival-steps increment: same fresh-ids-copied-from-template shape as
+    // `steps` above, `?? []` for a template saved before this field existed.
+    arrivalSteps: (template.arrivalSteps ?? []).map((step) => ({
+      id: crypto.randomUUID(),
+      name: step.name,
+      plannedMinutes: step.minutes,
+      checkedAt: null,
+    })),
+    arrivedAt: null,
     status: 'planned',
     startedAt: null,
     leftAt: null,

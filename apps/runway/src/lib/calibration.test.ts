@@ -25,6 +25,8 @@ function makeDeparture(overrides: Partial<Departure> = {}): Departure {
     originalAppointmentAt: '2026-07-09T09:00:00.000Z',
     scheduledForDate: null,
     wasReplanned: false,
+    arrivalSteps: [],
+    arrivedAt: null,
     ...overrides,
   };
 }
@@ -110,6 +112,91 @@ describe('deriveStepActuals', () => {
 
     // 12 min 40 sec -> rounds to 13.
     expect(deriveStepActuals(departure)[0].actualMinutes).toBe(13);
+  });
+});
+
+describe('deriveStepActuals — arrival steps (anchor split)', () => {
+  it('anchors the first arrival step from arrivedAt, NOT from the prep chain\'s last check-off', () => {
+    const departure = makeDeparture({
+      startedAt: '2026-07-09T08:00:00.000Z',
+      steps: [{ id: 's1', name: 'Shower', plannedMinutes: 15, checkedAt: '2026-07-09T08:15:00.000Z' }],
+      // 35-minute journey gap between the last prep check-off (08:15) and
+      // arriving at the building (08:50) — this must NOT land on the
+      // arrival step below as if it took 40 minutes.
+      arrivedAt: '2026-07-09T08:50:00.000Z',
+      arrivalSteps: [{ id: 'a1', name: 'Change into scrubs', plannedMinutes: 8, checkedAt: '2026-07-09T08:55:00.000Z' }],
+    });
+
+    const actuals = deriveStepActuals(departure);
+    const arrival = actuals.find((a) => a.stepId === 'a1')!;
+    // 08:55 - arrivedAt(08:50) = 5 min, not 08:55 - lastPrepCheckoff(08:15) = 40.
+    expect(arrival.actualMinutes).toBe(5);
+  });
+
+  it('chains multiple arrival steps by checkedAt order, same as the prep chain', () => {
+    const departure = makeDeparture({
+      startedAt: '2026-07-09T08:00:00.000Z',
+      steps: [],
+      arrivedAt: '2026-07-09T09:00:00.000Z',
+      arrivalSteps: [
+        // Listed "Take the lift" first, but checked second.
+        { id: 'a1', name: 'Take the lift', plannedMinutes: 3, checkedAt: '2026-07-09T09:10:00.000Z' },
+        { id: 'a2', name: 'Change into scrubs', plannedMinutes: 5, checkedAt: '2026-07-09T09:03:00.000Z' },
+      ],
+    });
+
+    expect(deriveStepActuals(departure)).toEqual([
+      { stepId: 'a2', name: 'Change into scrubs', plannedMinutes: 5, actualMinutes: 3 }, // 09:03 - 09:00
+      { stepId: 'a1', name: 'Take the lift', plannedMinutes: 3, actualMinutes: 7 }, // 09:10 - 09:03
+    ]);
+  });
+
+  it('contributes no arrival actuals when arrivedAt is missing, even if arrival steps are (defensively) checked', () => {
+    const departure = makeDeparture({
+      startedAt: '2026-07-09T08:00:00.000Z',
+      steps: [{ id: 's1', name: 'Shower', plannedMinutes: 15, checkedAt: '2026-07-09T08:15:00.000Z' }],
+      arrivedAt: null,
+      arrivalSteps: [{ id: 'a1', name: 'Change into scrubs', plannedMinutes: 8, checkedAt: '2026-07-09T08:55:00.000Z' }],
+    });
+
+    // Only the prep actual survives — no honest anchor exists for the
+    // arrival step without arrivedAt, same "no time axis, no data" rule
+    // startedAt itself already enforces for the whole function.
+    expect(deriveStepActuals(departure)).toEqual([
+      { stepId: 's1', name: 'Shower', plannedMinutes: 15, actualMinutes: 15 },
+    ]);
+  });
+
+  it('combines both chains without cross-contamination: prep actuals first, arrival actuals after, each measured from its own anchor', () => {
+    const departure = makeDeparture({
+      startedAt: '2026-07-09T08:00:00.000Z',
+      steps: [
+        { id: 's1', name: 'Shower', plannedMinutes: 15, checkedAt: '2026-07-09T08:15:00.000Z' },
+        { id: 's2', name: 'Dress', plannedMinutes: 10, checkedAt: '2026-07-09T08:25:00.000Z' },
+      ],
+      arrivedAt: '2026-07-09T09:00:00.000Z',
+      arrivalSteps: [{ id: 'a1', name: 'Change into scrubs', plannedMinutes: 8, checkedAt: '2026-07-09T09:08:00.000Z' }],
+    });
+
+    expect(deriveStepActuals(departure)).toEqual([
+      { stepId: 's1', name: 'Shower', plannedMinutes: 15, actualMinutes: 15 },
+      { stepId: 's2', name: 'Dress', plannedMinutes: 10, actualMinutes: 10 },
+      { stepId: 'a1', name: 'Change into scrubs', plannedMinutes: 8, actualMinutes: 8 },
+    ]);
+  });
+
+  it('a legacy departure with no arrivalSteps/arrivedAt properties at all still returns exactly its prep actuals', () => {
+    const departure = makeDeparture({
+      startedAt: '2026-07-09T08:00:00.000Z',
+      steps: [{ id: 's1', name: 'Shower', plannedMinutes: 15, checkedAt: '2026-07-09T08:15:00.000Z' }],
+    });
+    const legacy: Partial<typeof departure> = { ...departure };
+    delete legacy.arrivalSteps;
+    delete legacy.arrivedAt;
+
+    expect(deriveStepActuals(legacy as typeof departure)).toEqual([
+      { stepId: 's1', name: 'Shower', plannedMinutes: 15, actualMinutes: 15 },
+    ]);
   });
 });
 

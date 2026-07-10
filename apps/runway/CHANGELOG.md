@@ -5,6 +5,68 @@ via the `runway-latest.apk` asset at
 https://github.com/Bosonian/Play/releases/tag/runway-latest — it carries
 whichever version built last.
 
+## 0.21.0
+- **Arrival steps**: the field insight behind this release is that "on
+  time" was never really the hospital door — it's the ward station, AFTER
+  changing into scrubs and taking the lift. `appointmentAt` has always been
+  the true target this app is built around; what was missing was a way to
+  say that travel doesn't end at the building, for the appointments where
+  it genuinely doesn't. A Template (and a Departure copied from one, or
+  built from scratch) can now carry an optional second list — arrival
+  steps — that live after travel and before the true target.
+  - `src/db/types.ts`: `Template.arrivalSteps` and `Departure.arrivalSteps`
+    (both `StepTemplate[]`/`DepartureStep[]`, empty by default, same
+    undefined-as-null treatment as every other late-added field on these
+    rows — no Dexie version bump needed). `Departure.arrivedAt` is new too:
+    stamped by an explicit "I'm at the building" tap, never inferred — see
+    that field's own doc comment for why a guess would misattribute the
+    whole journey onto the first arrival step's timer.
+  - **The equation gains a term** (`src/lib/projection.ts`): projected
+    arrival now adds remaining (unchecked) arrival-step minutes on top of
+    remaining prep, buffer, and travel; leaveBy subtracts them too (also
+    "remaining", not "total" — before departure none are checked, so the
+    two are identical, but this keeps leaveBy honest if it's ever
+    evaluated again mid-arrival-phase). `computeStartBy` and
+    `computeAlarmTimes` (`src/lib/alarmTimes.ts`) use the FULL arrival
+    total instead, since both are computed once, before any step of
+    either kind exists to check off — a departure with arrival steps now
+    shows an earlier "start getting ready" and all four staged alarms
+    fire earlier, automatically. A departure with none is completely
+    unaffected — the new term is always `0` for it, by construction.
+  - **Runway screen**: once a departure with arrival steps reaches
+    status `'left'`, it gets a live arrival phase instead of the old
+    plain "Logged ... Safe travels." note — the same live centerpiece
+    (projection vs. the true appointment), gated behind an explicit "I'm
+    at the building" tap, then the arrival-steps checklist (same
+    check-off mechanics as prep, including step-focus tap-through).
+    Checking the LAST arrival step resolves the departure automatically —
+    status `'done'`, `arrivalResult` derived from the exact checked-off
+    timestamp against the appointment — the most precise arrival capture
+    this app has ever produced, no guess required. A departure without
+    arrival steps behaves exactly as before.
+  - **Calibration** (`src/lib/calibration.ts`): `deriveStepActuals` now
+    reconstructs TWO independent chains — prep, anchored at `startedAt`
+    (unchanged), and arrival, anchored at `arrivedAt` — never one
+    continuous chain. The gap between "last prep step checked" and
+    "arrived at the building" is the journey itself; attributing it to
+    the first arrival step would teach the learner that changing into
+    scrubs takes forty minutes when thirty-eight of those were spent
+    driving. A departure whose arrival phase never began contributes no
+    arrival actuals at all. Auto-learn (`src/lib/autoLearn.ts`) and the
+    task-memory autocomplete (`stepNameLibrary`) treat arrival steps as
+    steps; Home's suggest-and-confirm cards stay prep-only for now (see
+    that function's own doc comment — a narrower scope than it could
+    have, flagged as a v1.5 candidate, not a final decision).
+  - **Home**: a departure with arrival steps is excluded from "Waiting on
+    arrival" while it's still `'left'` — it resolves itself, more
+    precisely, from the Runway screen's own arrival phase; offering the
+    same departure there too would let a manual Early/On time/Late tap
+    short-circuit that more honest capture. Judgment call, flagged rather
+    than silent — see `src/screens/Home.tsx`'s own comment.
+  - TemplateEdit and DepartureSetup both gain an "Arrival steps" section
+    below the existing step list — same row UI (reorder in TemplateEdit,
+    autocomplete in both), optional and empty by default.
+
 ## 0.20.0
 - **Learning**: Runway now learns realistic per-step and buffer times from
   lived data, instead of only flagging drift against a fixed median. The

@@ -8,6 +8,20 @@ import type { DepartureStep } from '../db/types';
  * them; only `plannedMinutes` on unchecked steps and `bufferMinutes` are
  * candidates for compression.
  *
+ * Arrival-steps increment: `steps` here is always PREP steps — Runway.tsx's
+ * replan panel only ever passes `departure.steps`, never `arrivalSteps`.
+ * Arrival steps are deliberately NOT compressible by this function: you
+ * can't rush the lift from your bathroom, and by the time an arrival step
+ * would even be checkable (after leaving, after arriving at the building)
+ * the pre-door replan panel this powers is no longer on screen at all —
+ * see Runway.tsx's own arrival-phase render branch, which offers no
+ * replan/compress action of its own. The available-minutes window this
+ * function squeezes prep steps into is `leaveBy − now` (Runway.tsx), and
+ * leaveBy (projection.ts) already subtracts remaining arrival-step minutes
+ * before this function ever sees the number — so a departure with arrival
+ * steps naturally gets LESS room to compress prep into, without this file
+ * needing to know arrival steps exist at all.
+ *
  * `fits: false` is the honest refusal (CLAUDE.md: "the honest 'no'"
  * throughout this app's other pure-math modules) — some available windows
  * are just too small for the remaining steps to make any sense at all, and

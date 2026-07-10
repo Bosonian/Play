@@ -74,6 +74,27 @@ export interface Template {
    * existed) the same as `false`, never assume the property is present.
    */
   autoLearn: boolean;
+  /**
+   * Arrival-steps increment: the field-tested insight behind it is that
+   * "on time" isn't the hospital door, it's the ward station AFTER
+   * changing into scrubs and taking the lift. `steps` above (renamed
+   * nowhere, but worth naming precisely here) covers PREP — everything
+   * before you leave. `arrivalSteps` covers the OTHER side of travel —
+   * whatever still stands between arriving at the building and the actual
+   * appointment. Optional and empty by default: most departures (this
+   * increment's own field report will tell us how many) have nothing here
+   * and behave exactly as before.
+   *
+   * Copied onto a Departure at creation time exactly like `steps` — see
+   * DepartureSetup's handleSave and materialize.ts's buildDeparture — so
+   * editing a template's arrival steps later never retroactively rewrites
+   * a departure already in progress, same reasoning as `steps` itself.
+   *
+   * Same undefined-as-null rule as `schedule`/`autoLearn` above: a row
+   * saved before this field existed has no `arrivalSteps` property at all,
+   * read everywhere as `arrivalSteps ?? []`, never assumed present.
+   */
+  arrivalSteps: StepTemplate[];
 }
 
 /**
@@ -192,6 +213,39 @@ export interface Departure {
    * like `false`, everywhere.
    */
   wasReplanned: boolean;
+  /**
+   * Arrival-steps increment (ward-station insight): optional steps that
+   * live AFTER travel and BEFORE `appointmentAt` — changing into scrubs,
+   * taking the lift, walking the corridor. `appointmentAt` has always been
+   * (and remains) the TRUE target this whole app is built around; these
+   * steps just make the projection honest about what still has to happen
+   * between "physically at the building" and "physically at the
+   * appointment" for a departure where that gap is real and worth
+   * tracking. Copied from `Template.arrivalSteps` at creation time exactly
+   * like `steps` (DepartureSetup's handleSave, materialize.ts's
+   * buildDeparture) — see that field's own doc comment for why a copy, not
+   * a reference. Same "empty by default, most departures have none"
+   * shape, and same undefined-as-null rule as every other late-added field
+   * on this row: `arrivalSteps ?? []` everywhere, never assumed present.
+   */
+  arrivalSteps: DepartureStep[];
+  /**
+   * Stamped the moment the arrival phase begins — Runway.tsx's "I'm at the
+   * building" button, shown once on first opening a 'left' departure that
+   * has arrival steps. `null` until tapped; `undefined` on a row saved
+   * before this field existed (undefined-as-null, same rule as
+   * `arrivalSteps` above — read as `arrivedAt == null`, never `=== null`).
+   *
+   * This is a deliberate explicit tap, not an inferred timestamp, because
+   * there's no honest signal in this app to guess "arrived" from —
+   * `leftAt` only marks when prep ended and the door was walked through,
+   * which for a departure with real travel time is minutes to hours before
+   * the building is actually reached. Guessing (e.g. `leftAt + travelMinutes`)
+   * would silently misattribute the whole journey to the first arrival
+   * step's timer. See calibration.ts's `deriveStepActuals` for exactly
+   * that anchor split enforced on the read side.
+   */
+  arrivedAt: string | null;
 }
 
 /**

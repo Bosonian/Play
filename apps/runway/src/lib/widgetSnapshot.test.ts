@@ -43,6 +43,8 @@ function makeDeparture(overrides: Partial<Departure> = {}): Departure {
     originalAppointmentAt: '2026-07-09T14:30:00.000Z',
     scheduledForDate: null,
     wasReplanned: false,
+    arrivalSteps: [],
+    arrivedAt: null,
     ...overrides,
   };
 }
@@ -222,5 +224,36 @@ describe('buildWidgetSnapshot — departure', () => {
     const snapshot = buildWidgetSnapshot(NOW, undefined, [], [], [departure]);
     const leaveBy = formatTime(computeProjection(NOW, departure).leaveBy);
     expect(snapshot.departure?.planLine).toBe(`Leave by ${leaveBy}`);
+  });
+
+  // Arrival-steps increment: no widgetSnapshot.ts code changed for this —
+  // buildDepartureWidgetData already calls computeProjection/computeStartBy
+  // with the full departure object, so leaveBy (and therefore planLine)
+  // picks up the new arrival-steps term automatically. These two tests
+  // verify that's actually true, not just assumed.
+  it('planLine\'s "leave by" shifts earlier once arrival steps exist, same as the live Runway screen', () => {
+    const withArrival = makeDeparture({
+      steps: [makeStep({ checkedAt: '2026-07-09T08:05:00.000Z' })],
+      arrivalSteps: [{ id: 'a1', name: 'Change into scrubs', plannedMinutes: 8, checkedAt: null }],
+    });
+    const withoutArrival = makeDeparture({ steps: [makeStep({ checkedAt: '2026-07-09T08:05:00.000Z' })] });
+
+    const snapshotWithArrival = buildWidgetSnapshot(NOW, undefined, [], [], [withArrival]);
+    const snapshotWithoutArrival = buildWidgetSnapshot(NOW, undefined, [], [], [withoutArrival]);
+    const leaveByWithArrival = formatTime(computeProjection(NOW, withArrival).leaveBy);
+
+    expect(snapshotWithArrival.departure?.planLine).toBe(`Leave by ${leaveByWithArrival}`);
+    expect(snapshotWithArrival.departure?.planLine).not.toBe(snapshotWithoutArrival.departure?.planLine);
+  });
+
+  it('a departure with zero arrival steps produces the exact same planLine as one with the field entirely absent', () => {
+    const departure = makeDeparture({ steps: [makeStep({ checkedAt: null })] });
+    const legacy: Partial<typeof departure> = { ...departure };
+    delete legacy.arrivalSteps;
+
+    const withEmpty = buildWidgetSnapshot(NOW, undefined, [], [], [{ ...departure, arrivalSteps: [] }]);
+    const legacySnapshot = buildWidgetSnapshot(NOW, undefined, [], [], [legacy as typeof departure]);
+
+    expect(withEmpty.departure?.planLine).toBe(legacySnapshot.departure?.planLine);
   });
 });

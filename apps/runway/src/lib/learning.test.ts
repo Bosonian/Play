@@ -32,6 +32,8 @@ function makeDeparture(overrides: Partial<Departure> = {}): Departure {
     originalAppointmentAt: '2026-07-09T09:00:00.000Z',
     scheduledForDate: null,
     wasReplanned: false,
+    arrivalSteps: [],
+    arrivedAt: null,
     ...overrides,
   };
 }
@@ -276,6 +278,7 @@ describe('computeSuggestions', () => {
     updatedAt: '2026-01-01T00:00:00.000Z',
     schedule: null,
     autoLearn: false,
+    arrivalSteps: [],
   };
 
   function showeredRun(id: string, showerMinutes: number): Departure {
@@ -375,6 +378,7 @@ describe('computeBufferSuggestions', () => {
       updatedAt: '2026-01-01T00:00:00.000Z',
       schedule: null,
       autoLearn: false,
+      arrivalSteps: [],
     };
     const departures = Array.from({ length: 6 }, (_, i) =>
       slippedDeparture(`d${i}`, 5, `2026-07-0${i + 1}T08:00:00.000Z`),
@@ -397,6 +401,7 @@ describe('computeBufferSuggestions', () => {
       updatedAt: '2026-01-01T00:00:00.000Z',
       schedule: null,
       autoLearn: false,
+      arrivalSteps: [],
     };
     expect(computeBufferSuggestions([template], [])).toEqual([]);
   });
@@ -441,6 +446,7 @@ describe('stepNameLibrary', () => {
       updatedAt: '2026-01-01T00:00:00.000Z',
       schedule: null,
       autoLearn: false,
+      arrivalSteps: [],
     };
 
     const library = stepNameLibrary(departures, [template]);
@@ -468,6 +474,7 @@ describe('stepNameLibrary', () => {
       updatedAt: '2026-01-01T00:00:00.000Z',
       schedule: null,
       autoLearn: false,
+      arrivalSteps: [],
     };
 
     const library = stepNameLibrary(departures, [template]);
