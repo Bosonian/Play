@@ -180,6 +180,8 @@ Reached from Home via the quiet "Prüfung" link beside History; departure mode r
 
 The exam overview also carries a next-move card: a single suggested topic and sprint length, with the reasoning that produced it always shown alongside it (recently-worked topic, or the topic furthest behind its estimate) — a suggestion with its work shown, never an oracle, and its "Start" button still runs through SprintSetup's own start ritual like every other way into a sprint. A first-open walkthrough offers a draft Facharzt Neurologie topic template when the topic list is empty; both the in-app copy and this line say the same thing — it is a starting point to correct, not a real curriculum.
 
+An exam with no topics yet (or topics with no hour estimates) reads honestly as "No topics yet." rather than a vacuous "Ready by today" — the projection has nothing to measure until real topics with real hour estimates exist. Below the actionable pace line, a thin weekly progress bar and a "Best week: N h." personal-best line give the week a glanceable, self-competitive read without resurrecting the progress-bar ban that still applies to topic coverage.
+
 There is no way to delete an exam in v1 — after the exam, starting fresh means clearing app data or waiting for v1.5's archive.
 
 ## Calendar and sharing

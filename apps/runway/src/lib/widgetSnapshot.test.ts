@@ -121,6 +121,26 @@ describe('buildWidgetSnapshot', () => {
     expect(snapshot.pruefung?.readyDayEpochMs).toBe(snapshot.pruefung?.generatedDayEpochMs);
   });
 
+  it('sets emptyExam (not neverReady) when the exam has zero topics — the vacuous-done bug', () => {
+    // The field screenshot this fixes: an exam with no topics used to
+    // produce the same widget data a genuinely finished exam does
+    // (remainingHours([], []) is trivially 0), rendering "Ready by
+    // {today}" on the home screen. emptyExam is now a distinct flag the
+    // native side checks before neverReady, and readyDayEpochMs is left at
+    // its 0 placeholder exactly like the neverReady case, never a real
+    // date.
+    const snapshot = buildWidgetSnapshot(NOW, makeExam(), [], [], []);
+    expect(snapshot.pruefung?.emptyExam).toBe(true);
+    expect(snapshot.pruefung?.neverReady).toBe(false);
+    expect(snapshot.pruefung?.readyDayEpochMs).toBe(0);
+  });
+
+  it('sets emptyExam when topics exist but every one has 0 estimated hours', () => {
+    const snapshot = buildWidgetSnapshot(NOW, makeExam(), [makeTopic({ estimatedHours: 0 })], [], []);
+    expect(snapshot.pruefung?.emptyExam).toBe(true);
+    expect(snapshot.pruefung?.neverReady).toBe(false);
+  });
+
   it('sets neverReady when the measured pace is zero, and leaves readyDayEpochMs at the 0 placeholder', () => {
     // A first sprint two complete weeks ago, then total silence — a
     // measured pace of exactly 0h/week (see examProjection.test.ts for the
@@ -129,6 +149,7 @@ describe('buildWidgetSnapshot', () => {
     const sprint = makeSprint({ startedAt: '2026-06-15T08:00:00.000Z', endedAt: '2026-06-15T08:50:00.000Z' });
     const snapshot = buildWidgetSnapshot(NOW, makeExam(), [topic], [sprint], []);
     expect(snapshot.pruefung?.neverReady).toBe(true);
+    expect(snapshot.pruefung?.emptyExam).toBe(false);
     expect(snapshot.pruefung?.readyDayEpochMs).toBe(0);
   });
 

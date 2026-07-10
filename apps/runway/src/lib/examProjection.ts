@@ -178,6 +178,50 @@ export function hoursThisWeek(now: Date, sprints: Sprint[]): number {
     .reduce((sum, sprint) => sum + sprintMinutes(sprint) / 60, 0);
 }
 
+/**
+ * The most hours ever logged in a single Monday-start week, across every
+ * completed sprint in this exam's history — the self-Competitor line
+ * (CLAUDE.md: secondary play personality) on ExamOverview: "Best week: N h."
+ * Deliberately NOT the last-4-week window measuredPaceHoursPerWeek uses —
+ * that window measures CURRENT pace; this measures a personal best over all
+ * of history, so a strong week from two months ago still counts.
+ *
+ * The current, still-in-progress week is excluded — same reasoning as
+ * measuredPaceHoursPerWeek's own exclusion of it (this file's header
+ * comment on that function): "best week" is a claim about a completed
+ * record, and a partial week is still accumulating. Without this exclusion,
+ * a big Monday could make Tuesday morning's screen claim a "best week"
+ * that's really just two days old and likely to be revised — the exact
+ * kind of approximate claim CLAUDE.md's copy rule ("exact, not
+ * approximate") warns against.
+ *
+ * `null` when there's no complete week to report on: no completed sprint
+ * anywhere, or every completed sprint so far falls inside the current
+ * (excluded) week — both read as "no best week yet" rather than 0, since 0
+ * would falsely claim a real, finished week that logged nothing.
+ *
+ * Week boundaries use startOfWeek (F6, same DST reasoning as
+ * measuredPaceHoursPerWeek/hoursThisWeek above) rather than fixed
+ * millisecond bucketing, so grouping stays correct across Europe/Berlin's
+ * DST transitions.
+ */
+export function bestWeekHours(now: Date, sprints: Sprint[]): number | null {
+  const completed = sprints.filter((sprint) => sprint.endedAt !== null);
+  if (completed.length === 0) return null;
+
+  const currentWeekStartMs = startOfWeek(now, { weekStartsOn: 1 }).getTime();
+
+  const hoursByWeekStartMs = new Map<number, number>();
+  for (const sprint of completed) {
+    const weekStartMs = startOfWeek(new Date(sprint.startedAt), { weekStartsOn: 1 }).getTime();
+    if (weekStartMs >= currentWeekStartMs) continue; // still in progress, not yet a "week" to compare
+    hoursByWeekStartMs.set(weekStartMs, (hoursByWeekStartMs.get(weekStartMs) ?? 0) + sprintMinutes(sprint) / 60);
+  }
+
+  if (hoursByWeekStartMs.size === 0) return null;
+  return Math.max(...hoursByWeekStartMs.values());
+}
+
 export interface ExamProjectionResult {
   readyDate: Date | null;
   anchor: Date;
@@ -186,7 +230,7 @@ export interface ExamProjectionResult {
    * falls after the exam. `null` only alongside a `null` readyDate — there's
    * no margin to report against an anchor when there's no projected date. */
   slackDays: number | null;
-  state: 'calm' | 'tight' | 'late' | 'done';
+  state: 'calm' | 'tight' | 'late' | 'done' | 'empty';
   /** hours/week actually used for this projection — measured pace when
    * available, DEFAULT_PACE_HOURS_PER_WEEK otherwise. */
   pace: number;
@@ -233,6 +277,36 @@ function projectFromAnchor(
   const measuredPace = measuredPaceHoursPerWeek(now, sprints);
   const paceIsMeasured = measuredPace !== null;
   const pace = measuredPace ?? DEFAULT_PACE_HOURS_PER_WEEK;
+
+  // Empty-exam honesty (field screenshot: an exam with ZERO topics rendered
+  // "Ready by 10 Jul" plus an emerald "All topics at their estimated
+  // hours." — a confident, fully-done-looking screen for an exam with
+  // nothing in it). remainingHours() sums to 0 over an empty topic list, or
+  // over a list where every topic's estimatedHours is 0, exactly the same
+  // way it does once real topics are genuinely finished — the `remaining
+  // === 0` branch below can't tell "nothing to study" apart from "studied
+  // everything" on its own. 'empty' is checked first and short-circuits
+  // before that branch so the two can never be confused: 'done' now means
+  // real topics, with real hour estimates, actually covered — not merely
+  // "the number happens to be zero". readyDate/slackDays/
+  // requiredPaceHoursPerWeek are all null here (there is no projection to
+  // report against topics that don't exist yet), and this applies to
+  // milestoneProjection's fallback-to-whole-exam case too, not just
+  // examProjection directly — a milestone that resolves to an empty topic
+  // set is exactly as vacuous as the exam-level case.
+  if (topics.length === 0 || topics.reduce((sum, topic) => sum + topic.estimatedHours, 0) === 0) {
+    return {
+      readyDate: null,
+      anchor,
+      anchorKind,
+      slackDays: null,
+      state: 'empty',
+      pace,
+      paceIsMeasured,
+      remainingHours: remaining,
+      requiredPaceHoursPerWeek: null,
+    };
+  }
 
   const weeksUntilAnchor = (anchor.getTime() - now.getTime()) / MS_PER_WEEK;
   // Once the anchor is today or in the past, "hours needed per week to get

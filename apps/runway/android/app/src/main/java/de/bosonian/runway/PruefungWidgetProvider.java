@@ -56,6 +56,16 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
     // used versus renderFallback.
     private static final String NO_EXAM_LINE1 = "No exam set up.";
 
+    // Empty-exam honesty (widgetSnapshot.ts's `emptyExam` field): an exam
+    // that exists but has zero topics (or every topic at 0 estimated
+    // hours) used to fall through to the ordinary "Ready by {today}"
+    // render below — remainingHours sums to 0 over an empty/all-zero topic
+    // list exactly like a genuinely finished exam does. Same shape as
+    // NO_EXAM_LINE1/renderNoExam (one line, calm colour, lines 2-3 blank)
+    // but a distinct sentence: "no exam" and "an exam with nothing in it
+    // yet" are different facts and must not share copy.
+    private static final String EMPTY_EXAM_LINE1 = "No topics yet.";
+
     // Same calm/tight/late palette as the app's own STATE_TEXT
     // (src/screens/ExamOverview.tsx) — kept as literal ARGB ints here
     // rather than a values/colors.xml resource, since the widget provider
@@ -151,6 +161,26 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
         JSONObject pruefung = root.getJSONObject("pruefung");
 
         boolean neverReady = pruefung.getBoolean("neverReady");
+        // optBoolean(..., false): a snapshot written by a pre-empty-exam-fix
+        // APK build has no "emptyExam" key at all — org.json's optBoolean
+        // tolerates that (returns the default) rather than throwing, same
+        // graceful-degradation window this class's JSONException catch
+        // already documents for other schema upgrades. Defaulting to false
+        // means an old snapshot just falls through to its old rendering
+        // until the app is next opened and overwrites it.
+        boolean emptyExam = pruefung.optBoolean("emptyExam", false);
+
+        if (emptyExam) {
+            // Same shape as renderNoExam (one line, calm colour, lines 2-3
+            // blank) — see EMPTY_EXAM_LINE1's own comment for why the
+            // sentence must differ from NO_EXAM_LINE1's.
+            views.setTextViewText(R.id.widget_line1, EMPTY_EXAM_LINE1);
+            views.setTextColor(R.id.widget_line1, COLOR_CALM);
+            views.setTextViewText(R.id.widget_line2, "");
+            views.setTextViewText(R.id.widget_line3, "");
+            return;
+        }
+
         String anchorLabel = pruefung.getString("anchorLabel");
         String weekLine = pruefung.getString("weekLine");
         long weekStartEpochMs = pruefung.getLong("weekStartEpochMs");

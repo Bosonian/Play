@@ -8,6 +8,7 @@ import { TextAction } from '../ui/TextAction';
 import { useNow } from '../hooks/useNow';
 import {
   DEFAULT_PACE_HOURS_PER_WEEK,
+  bestWeekHours,
   examProjection,
   findLiveSprint,
   hoursThisWeek,
@@ -42,6 +43,7 @@ interface ExamOverviewProps {
 const STATE_TEXT: Record<ExamProjectionResult['state'], string> = {
   calm: 'text-slate-100',
   done: 'text-slate-100',
+  empty: 'text-slate-400',
   tight: 'text-amber-400',
   late: 'text-red-400',
 };
@@ -136,6 +138,7 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
   const loggedByTopic = loggedHoursByTopic(sprints);
   const textAccent = STATE_TEXT[projection.state];
   const thisWeekHours = hoursThisWeek(now, sprints);
+  const bestWeek = bestWeekHours(now, sprints);
 
   // Next-move card's suggestion (guided-layer increment §1) — see
   // showNextMoveArea below, where this combines with `liveSprint` (defined
@@ -234,7 +237,15 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
           margin line below it share the same motion-safe 300ms colour
           crossfade Runway's own state-tinted elements use. */}
       <div className="flex flex-col items-center gap-1 text-center">
-        {projection.readyDate ? (
+        {projection.state === 'empty' ? (
+          // Empty-exam honesty: no topics yet, or every topic reads 0
+          // estimated hours — there is nothing for the projection to
+          // measure against, so nothing here pretends there is one. Plain
+          // slate, not the huge-date treatment below — a missing topic
+          // list is a setup step, not a projection result, and shouldn't
+          // borrow that result's visual weight.
+          <p className="text-2xl font-medium text-slate-400">No topics yet.</p>
+        ) : projection.readyDate ? (
           <p
             className={`text-huge font-bold tracking-tight tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${textAccent}`}
           >
@@ -251,37 +262,85 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
           </>
         )}
 
-        <p className="text-lg tabular-nums text-slate-500">{formatExamAnchorLine(exam)}</p>
-
-        {projection.state === 'done' ? (
-          // Moments (UI-polish increment): the one place on this screen
-          // that reads as an acknowledgment rather than a status — every
-          // topic at its estimate — so this line alone gets emerald-300,
-          // independent of `textAccent` (which stays slate-100 for 'done'
-          // on the centerpiece above; the finished *state* isn't a warning,
-          // but it isn't the specific "well done" moment either — this
-          // margin line is).
-          <p className="text-base font-medium text-emerald-300 motion-safe:transition-colors motion-safe:duration-300">
-            All topics at their estimated hours.
+        {projection.state === 'empty' ? (
+          <p className="text-base text-slate-400">
+            The projection starts when the exam has topics with hour estimates.
           </p>
         ) : (
-          // slackDays is only null alongside a null readyDate (the "Never"
-          // case above already explains itself) — nothing more to say here
-          // in that state, so the line is omitted rather than forced.
-          projection.slackDays !== null && (
-            <p className={`text-base font-medium tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${textAccent}`}>
-              {formatExamMarginLine(projection.slackDays)}
-            </p>
-          )
+          <>
+            <p className="text-lg tabular-nums text-slate-500">{formatExamAnchorLine(exam)}</p>
+
+            {projection.state === 'done' ? (
+              // Moments (UI-polish increment): the one place on this screen
+              // that reads as an acknowledgment rather than a status — every
+              // topic at its estimate — so this line alone gets emerald-300,
+              // independent of `textAccent` (which stays slate-100 for 'done'
+              // on the centerpiece above; the finished *state* isn't a warning,
+              // but it isn't the specific "well done" moment either — this
+              // margin line is).
+              <p className="text-base font-medium text-emerald-300 motion-safe:transition-colors motion-safe:duration-300">
+                All topics at their estimated hours.
+              </p>
+            ) : (
+              // slackDays is only null alongside a null readyDate (the
+              // "Never" case above already explains itself) — nothing more
+              // to say here in that state, so the line is omitted rather
+              // than forced.
+              projection.slackDays !== null && (
+                <p className={`text-base font-medium tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${textAccent}`}>
+                  {formatExamMarginLine(projection.slackDays)}
+                </p>
+              )
+            )}
+          </>
         )}
       </div>
 
-      <div className="flex flex-col items-center gap-1 text-center">
-        <p className="text-sm tabular-nums text-slate-400">
-          {formatRequiredPaceLine(projection.anchor, projection.requiredPaceHoursPerWeek, thisWeekHours, now)}
-        </p>
-        {!projection.paceIsMeasured && <p className="text-sm text-slate-500">{PACE_ASSUMPTION_LINE}</p>}
-      </div>
+      {/* Actionable pace line + weekly tactical surface — omitted entirely
+          for 'empty': formatRequiredPaceLine's own null-anchor branch
+          ("The exam window is open.") is meant for a real exam that's
+          simply past its anchor, not for an exam with nothing to pace
+          against yet, so this whole block would say something true-looking
+          but pointless rather than nothing at all. */}
+      {projection.state !== 'empty' && (
+        <div className="flex flex-col items-center gap-1 text-center">
+          <p className="text-sm tabular-nums text-slate-400">
+            {formatRequiredPaceLine(projection.anchor, projection.requiredPaceHoursPerWeek, thisWeekHours, now)}
+          </p>
+          {!projection.paceIsMeasured && <p className="text-sm text-slate-500">{PACE_ASSUMPTION_LINE}</p>}
+
+          {/* Weekly tactical surface: a thin progress bar for this week's
+              logged hours against the required weekly pace. Deliberately
+              the ONE progress bar in this app — topic coverage below stays
+              plain numbers, per RUNWAY_PRUFUNG_PLAN.md §4.1's "a bar at 8%
+              is demoralising" rule. A week bar is a different shape of
+              fact and doesn't fall under that rule: it fills across DAYS,
+              not months, and resets to empty every Monday regardless of
+              how last week went — it can never accumulate into the kind of
+              standing low-percentage indictment a topic-coverage bar would
+              become over a months-long prep window. Hidden (not shown at
+              0%) whenever there's no real weekly target to compare
+              against. */}
+          {projection.requiredPaceHoursPerWeek !== null && projection.requiredPaceHoursPerWeek > 0 && (
+            <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+              <div
+                className={`h-full rounded-full motion-safe:transition-all motion-safe:duration-300 ${
+                  thisWeekHours >= projection.requiredPaceHoursPerWeek ? 'bg-emerald-300' : 'bg-sky-500'
+                }`}
+                style={{ width: `${Math.min(100, (thisWeekHours / projection.requiredPaceHoursPerWeek) * 100)}%` }}
+              />
+            </div>
+          )}
+
+          {/* Self-Competitor line (CLAUDE.md's secondary play personality)
+              — a personal-best fact, not a comparison to anyone else and
+              not a streak. Omitted entirely (bestWeekHours returns null)
+              until a full Monday-start week of history exists. */}
+          {bestWeek !== null && (
+            <p className="text-sm tabular-nums text-slate-500">Best week: {bestWeek.toFixed(1)} h.</p>
+          )}
+        </div>
+      )}
 
       {/* Next-move card (guided-layer increment §1) — directly under the
           actionable pace line, above milestones. Two mutually-exclusive
@@ -349,17 +408,31 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
       )}
 
       {/* Falls back to a plain, unprefilled "Start a sprint" whenever the
-          next-move card isn't showing — no topics yet, every topic already
-          at its estimate, or a live sprint already running (its own quiet
-          pointer is further down). Kept as the one remaining path into
-          SprintSetup in those states rather than removed outright: the
-          card replaces this button when it can offer a real suggestion, it
-          doesn't replace the ability to start a sprint at all. */}
-      {!showNextMoveArea && (
-        <Button onClick={() => onNavigate({ name: 'sprintSetup' })} className="w-full">
-          Start a sprint
-        </Button>
-      )}
+          next-move card isn't showing — every topic already at its
+          estimate, or a live sprint already running (its own quiet pointer
+          is further down). Kept as the one remaining path into SprintSetup
+          in those states rather than removed outright: the card replaces
+          this button when it can offer a real suggestion, it doesn't
+          replace the ability to start a sprint at all.
+
+          Empty-exam honesty: `showNextMoveArea` is already false here
+          whenever `projection.state === 'empty'` (nextMove() itself
+          returns null with no topics, or with every topic at 0 remaining
+          hours — see nextMove.ts) — there is nothing to sprint on yet, so
+          the primary action switches to "Edit topics" instead of offering
+          a sprint button with nowhere real to point it. SprintSetup's own
+          "No topics yet." guard (its own empty-topics branch) stays as the
+          backstop for any other path that might still reach it. */}
+      {!showNextMoveArea &&
+        (projection.state === 'empty' ? (
+          <Button onClick={() => onNavigate({ name: 'topicEdit', examId: exam.id })} className="w-full">
+            Edit topics
+          </Button>
+        ) : (
+          <Button onClick={() => onNavigate({ name: 'sprintSetup' })} className="w-full">
+            Start a sprint
+          </Button>
+        ))}
 
       {/* Milestones — the real external dates (RUNWAY_PRUFUNG_PLAN.md §3,
           §4.1, increment 4). Placed right after the primary "Start a
@@ -369,7 +442,16 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
       <section className="flex flex-col gap-3">
         <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Milestones</h2>
 
-        {milestones.length === 0 && <p className="text-sm text-slate-500">No milestones yet.</p>}
+        {/* This IS the empty state, not a nag toward booking one —
+            RUNWAY_PRUFUNG_PLAN.md §7: the app renders milestones, it never
+            invents them. The line says so plainly rather than prompting
+            "add a milestone" the way an ordinary empty-list placeholder
+            would. */}
+        {milestones.length === 0 && (
+          <p className="text-sm text-slate-500">
+            No milestones yet. A booked mock oral is the strongest deadline this app can render.
+          </p>
+        )}
 
         <div className="flex flex-col gap-2">
           {upcomingMilestones.map((milestone) => {
@@ -430,14 +512,23 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
         {topics.length === 0 && <p className="text-sm text-slate-500">No topics yet.</p>}
         {topics.map((topic) => {
           const logged = loggedByTopic.get(topic.id) ?? 0;
+          // "Topics as chapters": a topic at or past its own estimate reads
+          // as a closed chapter — emerald-300, same accent the exam-level
+          // "done" moment uses, plus a trailing "· complete". Still no bar
+          // and no percentage (the ban stands for topic rows — see the
+          // comment above); this is a colour + word change on the same
+          // plain number, not a new visual element. `estimatedHours > 0`
+          // guards a 0-estimate topic from reading "complete" the moment
+          // it's created with nothing logged yet (0 >= 0 is true).
+          const complete = topic.estimatedHours > 0 && logged >= topic.estimatedHours;
           return (
             <div
               key={topic.id}
               className="flex items-center justify-between rounded-xl border border-slate-800/60 bg-surface p-4"
             >
               <p className="text-slate-100">{topic.name}</p>
-              <p className="text-sm tabular-nums text-slate-400">
-                {logged.toFixed(1)} of {topic.estimatedHours.toFixed(1)} h
+              <p className={`text-sm tabular-nums ${complete ? 'text-emerald-300' : 'text-slate-400'}`}>
+                {logged.toFixed(1)} of {topic.estimatedHours.toFixed(1)} h{complete ? ' · complete' : ''}
               </p>
             </div>
           );

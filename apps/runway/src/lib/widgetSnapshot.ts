@@ -57,10 +57,26 @@ export interface PruefungWidgetData {
    * built on — the native side's reference point for "how many days old is
    * this snapshot" (see readyDayEpochMs above). */
   generatedDayEpochMs: number;
-  /** Mirrors examProjection's readyDate === null (zero measured pace, or an
-   * overflowed projection) — the widget shows "Ready: never at current
-   * pace" instead of a date. */
+  /** Mirrors examProjection's readyDate === null EXCLUDING the 'empty'
+   * state (zero measured pace, or an overflowed projection) — the widget
+   * shows "Ready: never at current pace" instead of a date. `emptyExam`
+   * below is the separate, distinct flag for the vacuous case; a snapshot
+   * is never both `neverReady` and `emptyExam` at once. */
   neverReady: boolean;
+  /** Empty-exam honesty (the same fix as examProjection.ts's 'empty'
+   * state): true when the exam has zero topics, or every topic reads 0
+   * estimated hours — there is nothing to project, so the widget must not
+   * render "Ready by {today}" the way it used to (remainingHours sums to 0
+   * over an empty/all-zero topic list exactly like a genuinely finished
+   * exam does). The native side checks this before `neverReady` and shows
+   * a distinct "No topics yet." line instead of either a date or "never".
+   * Old snapshots (written before this field existed) parse this as
+   * `false` via `optBoolean` on the Java side — org.json tolerates a
+   * missing key, and a pre-update snapshot simply falls through to its old
+   * (buggy) rendering until the app is next opened and overwrites it,
+   * same as every other schema-upgrade window this file's own header
+   * comment already accepts. */
+  emptyExam: boolean;
   anchorEpochMs: number;
   /** "Exam window opens 1 Nov 2026" / "Exam 1 Nov 2026" — prebaked via
    * formatExamAnchorLine so the widget never needs its own date-formatting
@@ -204,10 +220,16 @@ export function buildWidgetSnapshot(
   const loggedThisWeek = hoursThisWeek(now, sprints);
   const weekStart = startOfWeek(now, { weekStartsOn: 1 });
 
-  const neverReady = projection.readyDate === null;
-  // 0 in the neverReady branch is a placeholder, not a real answer — see
-  // PruefungWidgetData.readyDayEpochMs's doc comment: the native side must
-  // check neverReady before ever reading this field.
+  const emptyExam = projection.state === 'empty';
+  // 'empty' is a distinct flag, not a flavour of "never ready" — see
+  // PruefungWidgetData.emptyExam's doc comment. neverReady stays false for
+  // it so the native side's two branches (empty vs. genuinely-never) can't
+  // be conflated even though both leave readyDate/readyDayEpochMs unset.
+  const neverReady = !emptyExam && projection.readyDate === null;
+  // 0 in both the neverReady and emptyExam branches is a placeholder, not a
+  // real answer — see PruefungWidgetData.readyDayEpochMs's doc comment: the
+  // native side must check emptyExam, then neverReady, before ever reading
+  // this field.
   const readyDayEpochMs = projection.readyDate === null ? 0 : localMidnight(projection.readyDate).getTime();
 
   return {
@@ -215,6 +237,7 @@ export function buildWidgetSnapshot(
       readyDayEpochMs,
       generatedDayEpochMs: localMidnight(now).getTime(),
       neverReady,
+      emptyExam,
       anchorEpochMs: projection.anchor.getTime(),
       anchorLabel: formatExamAnchorLine(exam),
       weekLine: buildWeekLine(loggedThisWeek, projection.requiredPaceHoursPerWeek),

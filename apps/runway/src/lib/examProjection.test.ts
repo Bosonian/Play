@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_PACE_HOURS_PER_WEEK,
+  bestWeekHours,
   examProjection,
   hoursThisWeek,
   loggedHoursByTopic,
@@ -252,8 +253,55 @@ describe('hoursThisWeek', () => {
   });
 });
 
+describe('bestWeekHours', () => {
+  it('is null when there are no completed sprints at all', () => {
+    expect(bestWeekHours(NOW, [])).toBeNull();
+    const live = makeSprint({ endedAt: null });
+    expect(bestWeekHours(NOW, [live])).toBeNull();
+  });
+
+  it('is null when every completed sprint falls inside the current, still-in-progress week', () => {
+    // A big Monday shouldn't let Tuesday morning's screen claim a "best
+    // week" that's really just one or two days old and still growing.
+    const thisWeek = makeSprint({ startedAt: '2026-07-06T08:00:00.000Z', endedAt: '2026-07-06T14:00:00.000Z' });
+    expect(bestWeekHours(NOW, [thisWeek])).toBeNull();
+  });
+
+  it('picks the MAX complete week, not the most recent or the sum', () => {
+    // Weekly totals (oldest to newest): 3h, 9h, 2h -> max is 9, not the
+    // most recent (2) and not the sum (14).
+    const sprints = [sprintWeeksAgo(3, 3), sprintWeeksAgo(2, 9), sprintWeeksAgo(1, 2)];
+    expect(bestWeekHours(NOW, sprints)).toBe(9);
+  });
+
+  it('sums multiple sprints within the same week before comparing across weeks', () => {
+    // Two separate sprints in the week 2 weeks ago (2h + 4h = 6h) beat a
+    // single 5h sprint the following week — a week's total, not any one
+    // sprint's length, is what gets compared.
+    const sprints = [
+      sprintWeeksAgo(2, 2), // Monday of that week, +1h, 2h sprint
+      makeSprint({ topicId: 'topic-1', startedAt: '2026-06-24T08:00:00.000Z', endedAt: '2026-06-24T12:00:00.000Z' }), // same week (Wed), 4h
+      sprintWeeksAgo(1, 5),
+    ];
+    expect(bestWeekHours(NOW, sprints)).toBe(6);
+  });
+
+  it('groups weeks by calendar (startOfWeek), not fixed millisecond width, across the late-October DST boundary', () => {
+    // 2026-10-25 is the last Sunday of October — Germany's DST-end. A
+    // sprint the Monday before it and one the Monday after sit in
+    // adjacent-but-distinct Monday-start weeks; startOfWeek (date-fns
+    // calendar arithmetic, not a fixed 7*MS_PER_DAY offset) is what keeps
+    // them apart regardless of the wall-clock shift between them — same
+    // F6 reasoning as measuredPaceHoursPerWeek/hoursThisWeek above.
+    const now = new Date('2026-11-09T08:00:00.000Z'); // safely past both weeks
+    const beforeDst = makeSprint({ startedAt: '2026-10-19T08:00:00.000Z', endedAt: '2026-10-19T10:00:00.000Z' }); // 2h
+    const afterDst = makeSprint({ startedAt: '2026-10-26T08:00:00.000Z', endedAt: '2026-10-26T13:00:00.000Z' }); // 5h
+    expect(bestWeekHours(now, [beforeDst, afterDst])).toBe(5);
+  });
+});
+
 describe('examProjection', () => {
-  it('is "done" once remaining hours hit 0, with readyDate = now', () => {
+  it('is "done" once remaining hours hit 0 across REAL, covered topics, with readyDate = now', () => {
     const exam = makeExam();
     const topics = [makeTopic({ estimatedHours: 5 })];
     const sprints = [makeSprint({ startedAt: '2026-07-01T00:00:00.000Z', endedAt: '2026-07-01T05:00:00.000Z' })];
@@ -262,6 +310,46 @@ describe('examProjection', () => {
     expect(result.state).toBe('done');
     expect(result.readyDate?.toISOString()).toBe(NOW.toISOString());
     expect(result.remainingHours).toBe(0);
+  });
+
+  it('is "empty", not "done", for an exam with zero topics (the vacuous-done bug)', () => {
+    // The field screenshot this fixes: an exam with no topics at all used
+    // to sail through the same `remaining === 0` branch a genuinely
+    // finished exam does — remainingHours([], []) is trivially 0 — and
+    // render a confident "Ready by {today}" plus "All topics at their
+    // estimated hours." for an exam that has nothing in it yet.
+    const exam = makeExam();
+    const result = examProjection(NOW, exam, [], []);
+
+    expect(result.state).toBe('empty');
+    expect(result.readyDate).toBeNull();
+    expect(result.slackDays).toBeNull();
+    expect(result.requiredPaceHoursPerWeek).toBeNull();
+  });
+
+  it('is "empty" when topics exist but every one has 0 estimated hours', () => {
+    // Distinct from the zero-topics case above but the same vacuous shape:
+    // a topic list that exists but carries no real hour estimates has
+    // nothing for the projection to measure against either.
+    const exam = makeExam();
+    const topics = [makeTopic({ id: 'a', estimatedHours: 0 }), makeTopic({ id: 'b', estimatedHours: 0 })];
+    const result = examProjection(NOW, exam, topics, []);
+
+    expect(result.state).toBe('empty');
+    expect(result.readyDate).toBeNull();
+  });
+
+  it('an "empty" exam still reports its own remaining hours and pace, just no projection off them', () => {
+    // 'empty' only forces readyDate/slackDays/requiredPaceHoursPerWeek to
+    // null (there is nothing to project against) — pace/paceIsMeasured/
+    // remainingHours stay real, ordinary values in case a future screen
+    // wants them.
+    const exam = makeExam();
+    const result = examProjection(NOW, exam, [], []);
+
+    expect(result.remainingHours).toBe(0);
+    expect(result.pace).toBe(DEFAULT_PACE_HOURS_PER_WEEK);
+    expect(result.paceIsMeasured).toBe(false);
   });
 
   it('projects "never" (readyDate null, state late) at a measured pace of exactly 0', () => {
