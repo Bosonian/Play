@@ -121,5 +121,6 @@ db.on('populate', async () => {
     schedule: null,
     autoLearn: false,
     arrivalSteps: [],
+    arrivalWifiSsid: null,
   });
 });

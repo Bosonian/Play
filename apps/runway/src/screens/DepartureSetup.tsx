@@ -105,6 +105,9 @@ export function DepartureSetup({
   // default; only ever populated by hand, from an existing departure being
   // edited, or copied from a template, exactly like `steps`.
   const [arrivalSteps, setArrivalSteps] = useState<DepartureStep[]>([]);
+  // Arrival-detection increment: same shape as TemplateEdit's own field —
+  // blank form state means "not set", converted to the DB's `null` on save.
+  const [arrivalWifiSsid, setArrivalWifiSsid] = useState<string>('');
   const [touched, setTouched] = useState(false);
 
   // Task-memory autocomplete (learning increment §5) — every step name
@@ -145,6 +148,7 @@ export function DepartureSetup({
       // undefined-as-null: a departure saved before arrival steps existed
       // carries no `arrivalSteps` property at all, not an `[]` one.
       setArrivalSteps(existingDeparture.arrivalSteps ?? []);
+      setArrivalWifiSsid(existingDeparture.arrivalWifiSsid ?? '');
     }
   }, [existingDeparture]);
 
@@ -171,6 +175,7 @@ export function DepartureSetup({
           checkedAt: null,
         })),
       );
+      setArrivalWifiSsid(sourceTemplate.arrivalWifiSsid ?? '');
     }
   }, [sourceTemplate]);
 
@@ -310,6 +315,8 @@ export function DepartureSetup({
       bufferMinutes,
       steps,
       arrivalSteps,
+      // '' -> null, same tri-state rule TemplateEdit's own save uses.
+      arrivalWifiSsid: arrivalWifiSsid.trim() === '' ? null : arrivalWifiSsid.trim(),
     };
 
     let savedDeparture: Departure;
@@ -673,6 +680,19 @@ export function DepartureSetup({
         <Button variant="secondary" onClick={addArrivalStep}>
           Add arrival step
         </Button>
+
+        {/* Arrival-detection increment (0.23.0): same gating and copy as
+            TemplateEdit's own field — only offered once there's an arrival
+            phase for Wi-Fi detection to matter to. */}
+        {arrivalSteps.length > 0 && (
+          <TextField
+            label="Arrival Wi-Fi network"
+            value={arrivalWifiSsid}
+            onChange={(e) => setArrivalWifiSsid(e.target.value)}
+            hint="Exact network name (SSID). When the phone joins it with Runway open, arrival is recorded automatically."
+            placeholder="e.g. Klinikum-Guest"
+          />
+        )}
       </section>
 
       {preview && (

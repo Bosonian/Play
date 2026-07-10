@@ -160,6 +160,9 @@ function buildDeparture(template: Template, occurrence: Occurrence): Departure {
       checkedAt: null,
     })),
     arrivedAt: null,
+    // Arrival-detection increment: same undefined-as-null copy-from-template
+    // shape as `arrivalSteps` above.
+    arrivalWifiSsid: template.arrivalWifiSsid ?? null,
     status: 'planned',
     startedAt: null,
     leftAt: null,

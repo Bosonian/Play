@@ -95,6 +95,22 @@ export interface Template {
    * read everywhere as `arrivalSteps ?? []`, never assumed present.
    */
   arrivalSteps: StepTemplate[];
+  /**
+   * Arrival-detection increment (0.23.0): the Wi-Fi network name (SSID) a
+   * departure created from this template should watch for during its
+   * journey phase — see `Departure.arrivalWifiSsid`'s own doc comment for
+   * how it's used. `null` (not just an empty string) means "not
+   * configured", same tri-state shape TemplateSchedule's absence uses:
+   * TemplateEdit's optional text field writes `null` when left blank on
+   * save, never `''`, so every reader can treat "unset" as one value
+   * instead of two.
+   *
+   * Same undefined-as-null rule as `schedule`/`autoLearn`/`arrivalSteps`
+   * above: a row saved before this field existed has no `arrivalWifiSsid`
+   * property at all, read everywhere as `arrivalWifiSsid ?? null` (or the
+   * equivalent truthiness check), never assumed present.
+   */
+  arrivalWifiSsid: string | null;
 }
 
 /**
@@ -246,6 +262,26 @@ export interface Departure {
    * that anchor split enforced on the read side.
    */
   arrivedAt: string | null;
+  /**
+   * Arrival-detection increment (0.23.0): the Wi-Fi network Runway.tsx's
+   * journey phase watches for to auto-stamp `arrivedAt`, copied from
+   * `Template.arrivalWifiSsid` at creation time exactly like `arrivalSteps`
+   * — see that field's own doc comment, and Template's for why `null`
+   * (never `''`) means "not configured." Editing a template's arrival
+   * Wi-Fi field later never retroactively changes a departure already in
+   * progress, same reasoning as every other template-copied field on this
+   * row.
+   *
+   * Matched case-insensitively against `WifiBridgePlugin`'s
+   * (src/native/wifi.ts) one-shot SSID read — see Runway.tsx's own comment
+   * on the polling effect for exactly when that check runs. This is
+   * ADDITIVE to the manual "I'm at the building" tap, never a replacement
+   * for it: Wi-Fi detection can fail to fire (network takes a moment to
+   * associate, the phone's screen stays off past the poll's mount/resume
+   * moments, the SSID was mistyped), so the explicit button always stays
+   * available as the honest fallback.
+   */
+  arrivalWifiSsid: string | null;
 }
 
 /**

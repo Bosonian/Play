@@ -166,4 +166,17 @@
          app open — same no-permission-ambush rule the geolocation/exact-alarm
          permissions above already follow. -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
+
+    <!-- Arrival-detection increment (0.23.0): WifiBridgePlugin reads the
+         currently-connected SSID via WifiManager#getConnectionInfo(), which
+         needs ACCESS_WIFI_STATE to call at all — a normal permission,
+         auto-granted at install, no runtime dialog. Resolving the SSID to
+         its real value (rather than the redacted `<unknown ssid>`
+         placeholder) additionally needs ACCESS_FINE_LOCATION, already
+         declared above for the live-travel increment; WifiBridgePlugin
+         checks that permission for itself at call time (see its own class
+         doc comment for why "location" is the alias it requests, not a new
+         "wifi" one) rather than assuming this manifest entry implies it's
+         been granted. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 </manifest>

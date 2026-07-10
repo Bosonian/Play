@@ -5,6 +5,46 @@ via the `runway-latest.apk` asset at
 https://github.com/Bosonian/Play/releases/tag/runway-latest — it carries
 whichever version built last.
 
+## 0.23.0
+- **Automatic arrival**: the "I'm at the building" tap (0.21.0's arrival
+  steps) now has two ways to happen without a tap at all, alongside the
+  manual button, which stays as the fallback for both.
+  - **Wi-Fi arrival detection**: a Template (and a Departure copied from
+    one) can carry an optional "Arrival Wi-Fi network" SSID, shown only
+    once its arrival-steps section is non-empty
+    (`src/screens/TemplateEdit.tsx`, `src/screens/DepartureSetup.tsx`). New
+    `WifiBridgePlugin.java` reads the phone's currently-connected SSID via
+    the deprecated-but-functional `WifiManager#getConnectionInfo()` — kept
+    deliberately conservative rather than migrated to the
+    `ConnectivityManager.NetworkCallback` replacement, which is built for a
+    long-lived listener, not the one-shot read this needs (see the
+    plugin's own doc comment). Permission-gated on `ACCESS_FINE_LOCATION`
+    (the alias is `"location"`, mirroring `CalendarBridgePlugin`) — Android
+    requires it to resolve a real SSID rather than the redacted
+    `<unknown ssid>` placeholder; most users will already have granted it
+    via the live-travel feature. `Runway.tsx`'s journey phase polls
+    `src/native/wifi.ts`'s `getCurrentSsid()` on mount and on
+    `visibilitychange`, and stamps `arrivedAt` with the exact same write
+    the manual button uses on a case-insensitive match.
+  - **`runway://arrived` deep link**: routes Deepak's own Samsung Modes &
+    Routines hospital-arrival automation into the app — see README's new
+    "Automatic arrival" section for the exact setup steps. New
+    `src/lib/externalArrival.ts` finds the one `'left'` departure (arrival
+    steps present, not yet arrived, appointment within ±12 h of now — a
+    zombie-departure guard, since the routine fires on every real arrival,
+    not just ones with a Runway departure in flight) and stamps it,
+    landing on that departure's Runway screen; zero matches lands on Home,
+    silently — the routine fires on ordinary shifts with no departure
+    planned too, and a toast on every one of those would be pure noise.
+    The match-selection logic is a pure, unit-tested function,
+    `selectArrivalCandidate`. `src/native/deepLinks.ts`'s existing
+    cold-start dedupe (`lastHandledUrl`) can't be reused here — every
+    delivery of this link is the literal same URL string, so reusing it
+    would permanently block every arrival after the first. A separate,
+    self-clearing in-flight guard handles only the real risk (the same
+    cold start delivered twice, once via each of `appUrlOpen` and
+    `getLaunchUrl()`) without blocking a genuinely later arrival.
+
 ## 0.22.0
 - **Landscape step focus**: the manifest never locked orientation (Capacitor's
   Android default, `sensor`, was already in effect — confirmed by reading

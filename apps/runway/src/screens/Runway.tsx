@@ -24,6 +24,7 @@ import { learnedRushedFloor, rushedActualsByStepName } from '../lib/learning';
 import { applyAutoLearn } from '../lib/autoLearn';
 import { TextField } from '../ui/TextField';
 import { TextAction } from '../ui/TextAction';
+import { getCurrentSsid } from '../native/wifi';
 
 /** Same confirm copy as Home's "Remove" action on a planned departure (M1) —
  * abandoning from either screen is the same operation with the same
@@ -219,6 +220,57 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
       void allowSleep();
     };
   }, [departure?.status, arrivalPhaseActive]);
+
+  // Arrival-detection increment (Wi-Fi path, 0.23.0): whether this
+  // departure's journey phase should be polling for its configured arrival
+  // Wi-Fi network right now — the same journey-phase gate the manual "I'm
+  // at the building" button uses (arrivalPhaseActive, not yet arrived),
+  // plus a non-empty `arrivalWifiSsid` actually configured on this
+  // departure. `?? ''` covers a departure saved before this field existed,
+  // same undefined-as-null treatment as every other late-added Departure
+  // field.
+  const arrivalWifiTarget = (departure?.arrivalWifiSsid ?? '').trim();
+  const wifiDetectionActive = arrivalPhaseActive && departure?.arrivedAt == null && arrivalWifiTarget !== '';
+
+  // Polls getCurrentSsid() (src/native/wifi.ts) on mount and every time the
+  // tab regains visibility — the moment a phone screen typically wakes back
+  // up after being locked for the drive — rather than on a timer: there is
+  // no native "just joined this network" event wired up here, only a
+  // one-shot SSID read (see wifi.ts's own comment on why that's the
+  // deliberately conservative choice), so polling at the moments the app is
+  // actually being looked at is the honest substitute. A match stamps
+  // `arrivedAt` with the EXACT SAME write handleArrived below uses, so a
+  // Wi-Fi-detected arrival and a manually-tapped one are indistinguishable
+  // to every downstream reader (calibration, History, this screen's own
+  // arrival-phase UI) — this is an ADDITIONAL path to the same write, never
+  // a second source of truth. The manual button stays visible regardless
+  // (see its own JSX below): Wi-Fi detection can fail to associate in time,
+  // the screen can stay off past both poll moments, or the SSID can simply
+  // be mistyped, and the button is the honest fallback for all three. This
+  // effect self-disarms the instant arrival is recorded, whichever path
+  // recorded it — `wifiDetectionActive` goes false on the next render, and
+  // the cleanup below removes the listener.
+  useEffect(() => {
+    if (!wifiDetectionActive || !departure) return;
+    let cancelled = false;
+    const target = arrivalWifiTarget.toLowerCase();
+    const checkNow = async () => {
+      const ssid = await getCurrentSsid();
+      if (cancelled || ssid === null) return;
+      if (ssid.trim().toLowerCase() !== target) return;
+      void hapticImpact('light');
+      await db.departures.update(departure.id, { arrivedAt: new Date().toISOString() });
+    };
+    void checkNow();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void checkNow();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [wifiDetectionActive, departure?.id, arrivalWifiTarget]);
 
   if (!departure) {
     // Still loading from Dexie (or a stale id) - nothing to show yet.
@@ -575,6 +627,15 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
               >
                 Open Maps
               </Button>
+            )}
+            {/* Arrival-detection increment: quiet reassurance that the tap
+                above isn't the only way in, not a claim that it's guaranteed
+                — see the polling effect's own comment for the failure modes
+                the manual button still covers. */}
+            {arrivalWifiTarget !== '' && (
+              <p className="text-sm text-slate-500">
+                Arrival is detected when the phone joins {arrivalWifiTarget}.
+              </p>
             )}
           </div>
         ) : (

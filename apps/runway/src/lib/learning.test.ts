@@ -34,6 +34,7 @@ function makeDeparture(overrides: Partial<Departure> = {}): Departure {
     wasReplanned: false,
     arrivalSteps: [],
     arrivedAt: null,
+    arrivalWifiSsid: null,
     ...overrides,
   };
 }
@@ -279,6 +280,7 @@ describe('computeSuggestions', () => {
     schedule: null,
     autoLearn: false,
     arrivalSteps: [],
+    arrivalWifiSsid: null,
   };
 
   function showeredRun(id: string, showerMinutes: number): Departure {
@@ -379,6 +381,7 @@ describe('computeBufferSuggestions', () => {
       schedule: null,
       autoLearn: false,
       arrivalSteps: [],
+      arrivalWifiSsid: null,
     };
     const departures = Array.from({ length: 6 }, (_, i) =>
       slippedDeparture(`d${i}`, 5, `2026-07-0${i + 1}T08:00:00.000Z`),
@@ -402,6 +405,7 @@ describe('computeBufferSuggestions', () => {
       schedule: null,
       autoLearn: false,
       arrivalSteps: [],
+      arrivalWifiSsid: null,
     };
     expect(computeBufferSuggestions([template], [])).toEqual([]);
   });
@@ -447,6 +451,7 @@ describe('stepNameLibrary', () => {
       schedule: null,
       autoLearn: false,
       arrivalSteps: [],
+      arrivalWifiSsid: null,
     };
 
     const library = stepNameLibrary(departures, [template]);
@@ -475,6 +480,7 @@ describe('stepNameLibrary', () => {
       schedule: null,
       autoLearn: false,
       arrivalSteps: [],
+      arrivalWifiSsid: null,
     };
 
     const library = stepNameLibrary(departures, [template]);

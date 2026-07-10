@@ -56,6 +56,23 @@ A Template (or a from-scratch Departure) can carry a second, optional list of st
 
 **Home's "Waiting on arrival" skips departures with arrival steps** while they're still under way — that departure resolves itself, more precisely, from the Runway screen's own arrival phase, and offering it there too would let a stray Early/On time/Late tap short-circuit the more honest capture.
 
+## Automatic arrival
+
+The manual "I'm at the building" tap always works, but two more ways to trigger it exist as of 0.23.0 — both stamp `arrivedAt` with the exact same write the button does, so nothing downstream (calibration, History, the arrival checklist itself) can tell which path recorded it. Neither is a replacement for the button: both can fail to fire (network timing, the phone's screen being off, a routine that doesn't run), so it stays as the honest fallback either way.
+
+**Wi-Fi network detection.** Set an "Arrival Wi-Fi network" SSID on a template or departure with arrival steps (TemplateEdit/DepartureSetup, shown once the arrival-steps section has at least one step), and the Runway screen's journey phase polls the phone's currently-connected Wi-Fi network — on opening the screen and whenever the app regains focus — comparing it case-insensitively against what you set. A match stamps arrival automatically. This needs the same `ACCESS_FINE_LOCATION` permission the live-travel feature already asks for (Android requires it to read a real SSID, not just the redacted `<unknown ssid>` placeholder) — most users who've used live travel have already granted it; there's no separate prompt for this feature specifically.
+
+**`runway://arrived` deep link, for a Samsung Modes & Routines automation.** If your phone already has (or you set up) a Routine that detects reaching the hospital — Wi-Fi, cell tower, geofence, whatever the Routines app offers — point its action at Runway instead of (or alongside) anything else it does:
+
+1. Open **Modes and Routines** → **Routines**.
+2. Open your hospital-arrival routine (or create one, using whatever trigger you'd otherwise use — a specific Wi-Fi network, a place, etc.).
+3. **Add action** → **Open app link** (sometimes shown as **Open URL**, depending on One UI version).
+4. Enter `runway://arrived` and save.
+
+Tapping this link finds the one departure it should mean — `'left'` status, arrival steps present, not yet arrived, appointment within 12 hours of now (a guard against an old, never-resolved departure silently absorbing today's arrival) — stamps it, and opens straight to that departure's checklist. If nothing matches (an ordinary shift with no Runway departure planned, or the routine firing at some unrelated moment), it opens to Home, silently — the routine fires on every real arrival, so a toast on every one of those would be constant noise for the common case.
+
+**Device-verify note:** whether One UI's "Open app link" action delivers the URL cleanly to a cold-started app versus one already running in the background hasn't been confirmed on-device as of this writing — both paths are handled by the same cold-start machinery every other `runway://` link already uses (`src/native/deepLinks.ts`), so it's expected to work either way, but "expected" isn't "verified."
+
 ## Learning
 
 Runway learns realistic per-step and buffer times from lived data, rather than relying only on whatever was typed in at setup or a fixed median that's late half the time by construction.

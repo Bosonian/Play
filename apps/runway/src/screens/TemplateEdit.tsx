@@ -26,6 +26,7 @@ const BLANK: Omit<Template, 'id' | 'createdAt' | 'updatedAt'> = {
   schedule: null,
   autoLearn: false,
   arrivalSteps: [],
+  arrivalWifiSsid: null,
 };
 
 /** Monday-first (CLAUDE.md), ISO weekday numbers 1..7 paired with the
@@ -67,6 +68,14 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
   // as separate arrays all the way down avoids a "which kind is this row"
   // check creeping into every place that touches steps.
   const [arrivalSteps, setArrivalSteps] = useState<StepTemplate[]>(BLANK.arrivalSteps);
+
+  // Arrival-detection increment (0.23.0): the Wi-Fi network name this
+  // template's arrival phase should watch for — see db/types.ts's
+  // Template.arrivalWifiSsid doc comment. Kept as a plain string in form
+  // state (blank means "not set") and only converted to the DB's `null`
+  // shape on save, same pattern DepartureSetup already uses for numeric
+  // fields that are optional in spirit but not in TypeScript's eyes.
+  const [arrivalWifiSsid, setArrivalWifiSsid] = useState<string>(BLANK.arrivalWifiSsid ?? '');
 
   // Recurring-departures increment. `repeatDays` holds ISO weekday numbers
   // (1 Monday .. 7 Sunday); kept as three separate pieces of local state
@@ -127,6 +136,10 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
       // carries no `arrivalSteps` property at all, not an `[]` one — same
       // rule as `autoLearn`/`schedule` just below.
       setArrivalSteps(existing.arrivalSteps ?? []);
+      // undefined-as-null: a template saved before this field existed
+      // carries no `arrivalWifiSsid` property at all, not a `null` one —
+      // both collapse to the same blank form value.
+      setArrivalWifiSsid(existing.arrivalWifiSsid ?? '');
       // undefined-as-null: a row saved before this field existed carries no
       // `autoLearn` property at all, not a `false` one — `=== true` (not a
       // truthy check) is what makes that read correctly regardless.
@@ -210,6 +223,10 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
     const now = new Date().toISOString();
     const schedule: TemplateSchedule | null = repeatEnabled ? { time: repeatTime, days: repeatDays } : null;
     const templateId = id ?? crypto.randomUUID();
+    // '' -> null, same tri-state rule as `schedule` above: a blank field
+    // means "not configured", never an empty-string SSID.
+    const trimmedArrivalWifiSsid = arrivalWifiSsid.trim();
+    const arrivalWifiSsidToSave = trimmedArrivalWifiSsid === '' ? null : trimmedArrivalWifiSsid;
 
     if (id && existing) {
       await db.templates.update(id, {
@@ -219,6 +236,7 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
         bufferMinutes,
         steps,
         arrivalSteps,
+        arrivalWifiSsid: arrivalWifiSsidToSave,
         updatedAt: now,
         schedule,
         autoLearn,
@@ -232,6 +250,7 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
         bufferMinutes,
         steps,
         arrivalSteps,
+        arrivalWifiSsid: arrivalWifiSsidToSave,
         createdAt: now,
         updatedAt: now,
         schedule,
@@ -546,6 +565,21 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
         <Button variant="secondary" onClick={addArrivalStep}>
           Add arrival step
         </Button>
+
+        {/* Arrival-detection increment (0.23.0): only offered once there's
+            an arrival phase to detect the start of — a departure with no
+            arrival steps never shows the journey-phase checklist this field
+            would auto-advance (Runway.tsx), so showing it unconditionally
+            would be an option with nothing to act on. */}
+        {arrivalSteps.length > 0 && (
+          <TextField
+            label="Arrival Wi-Fi network"
+            value={arrivalWifiSsid}
+            onChange={(e) => setArrivalWifiSsid(e.target.value)}
+            hint="Exact network name (SSID). When the phone joins it with Runway open, arrival is recorded automatically."
+            placeholder="e.g. Klinikum-Guest"
+          />
+        )}
       </section>
 
       <div className="mt-4 flex flex-col gap-3">

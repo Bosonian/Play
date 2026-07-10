@@ -45,6 +45,7 @@ function makeDeparture(overrides: Partial<Departure> = {}): Departure {
     wasReplanned: false,
     arrivalSteps: [],
     arrivedAt: null,
+    arrivalWifiSsid: null,
     ...overrides,
   };
 }

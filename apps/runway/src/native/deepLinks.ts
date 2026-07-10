@@ -3,6 +3,7 @@ import type { URLOpenListenerEvent } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import type { Screen } from '../App';
 import { parseSharedDestination } from '../lib/shareTarget';
+import { recordExternalArrival } from '../lib/externalArrival';
 
 // The ONLY file that imports @capacitor/app. Routes this app defines:
 // `runway://exam` (Prüfung overview) and `runway://new-departure` (a blank
@@ -15,12 +16,19 @@ import { parseSharedDestination } from '../lib/shareTarget';
 // tap target. Calendar/share-target increment (E1) adds
 // `runway://share-target?text=...` — see MainActivity.rewriteShareTargetIntent
 // for how a raw Android share becomes this URL with no new native bridge
-// code. Kept decoupled from `../lib/navigationRef` the same way
-// notifications.ts's registerNotificationNavigation is: this file only turns
-// a URL into a Screen and hands it to a caller-supplied function, rather
-// than importing navigationRef directly — main.tsx is what wires the two
-// together, same shape as its registerNotificationNavigation(
-// navigateToDeparture) call just above where this is used.
+// code. Arrival-detection increment (0.23.0) adds `runway://arrived` — the
+// URL Deepak's own Samsung Modes & Routines automation opens on reaching the
+// hospital (README.md's "Automatic arrival" section) — handled specially in
+// `handleUrl` below rather than through `screenForUrl`: unlike every other
+// route, it carries no departure id and isn't a plain URL-to-Screen mapping
+// at all — see `recordExternalArrival` (src/lib/externalArrival.ts) for the
+// Dexie lookup that decides which departure (if any) it means. Kept
+// decoupled from `../lib/navigationRef` the same way notifications.ts's
+// registerNotificationNavigation is: this file only turns a URL into a
+// Screen and hands it to a caller-supplied function, rather than importing
+// navigationRef directly — main.tsx is what wires the two together, same
+// shape as its registerNotificationNavigation(navigateToDeparture) call just
+// above where this is used.
 
 /** Parses a `runway://...` URL into the Screen it means, or null for
  * anything unrecognised (a future scheme addition, a malformed URL, or a
@@ -70,8 +78,25 @@ function screenForUrl(url: string): Screen | null {
         ? { name: 'departureSetup' }
         : { name: 'departureSetup', prefillDestination: destination };
     }
+    // `arrived` is deliberately NOT a case here — see `handleUrl` below,
+    // which intercepts it before this function is ever called. It has no
+    // Screen of its own to mean; which Screen (if any) it resolves to
+    // depends on an async Dexie lookup this synchronous function can't do.
     default:
       return null;
+  }
+}
+
+/** Whether `url` is the `runway://arrived` deep link — see `handleUrl`
+ * below for why this needs its own check rather than folding into
+ * `screenForUrl`. Same URL-parsing shape as that function (try the `URL`
+ * constructor, treat anything unparseable or non-`runway:` as "no"). */
+function isArrivedUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'runway:' && parsed.hostname === 'arrived';
+  } catch {
+    return false;
   }
 }
 
@@ -84,6 +109,26 @@ function screenForUrl(url: string): Screen | null {
 // resolved to a real Screen); an unrecognised URL never overwrites it,
 // since nothing was navigated to for the dedupe to guard.
 let lastHandledUrl: string | null = null;
+
+// Arrival-detection increment: `runway://arrived` deliberately does NOT
+// participate in `lastHandledUrl` above — it's a bare signal with no
+// departure id, so EVERY delivery of it is the literal same string, unlike
+// every other route (which either carries a unique id or is a one-off
+// static action). If it reused `lastHandledUrl`, the very first successful
+// arrival would permanently poison the dedupe for every later one: the
+// Samsung routine behind this link fires once per real hospital arrival,
+// meaning DIFFERENT days would keep sending the identical URL, and
+// `lastHandledUrl`'s plain string-equality check has no way to tell
+// "the same cold-start delivered twice" (which genuinely needs deduping —
+// see registerDeepLinkNavigation's own doc comment) apart from "a
+// completely new, later arrival" (which must NOT be deduped). This flag is
+// a narrower, self-clearing guard instead: it only suppresses a second
+// `runway://arrived` delivery that lands WHILE the first one's
+// `recordExternalArrival()` call is still in flight — exactly the
+// appUrlOpen-listener-vs-getLaunchUrl() race a single cold start can
+// produce — and resets the moment that call settles, so the next GENUINE
+// arrival (seconds, hours, or days later) is handled fresh.
+let arrivedHandlingInFlight = false;
 
 /**
  * Registers the tap/deep-link handler once, for the lifetime of the app,
@@ -115,6 +160,22 @@ export async function registerDeepLinkNavigation(handler: (screen: Screen) => vo
   if (!Capacitor.isNativePlatform()) return () => {};
 
   const handleUrl = (url: string) => {
+    // runway://arrived is handled entirely separately from every other
+    // route — see `arrivedHandlingInFlight`'s own comment above for why it
+    // can't reuse `lastHandledUrl` below. NOT a navigation on its own: the
+    // Screen it resolves to (if any) depends on which departure, if any,
+    // `recordExternalArrival` finds — see src/lib/externalArrival.ts.
+    if (isArrivedUrl(url)) {
+      if (arrivedHandlingInFlight) return; // the other cold-start path already picked this up
+      arrivedHandlingInFlight = true;
+      void recordExternalArrival()
+        .then((screen) => handler(screen))
+        .finally(() => {
+          arrivedHandlingInFlight = false;
+        });
+      return;
+    }
+
     if (url === lastHandledUrl) return; // already handled via the other cold-start path
     const screen = screenForUrl(url);
     if (!screen) return;
