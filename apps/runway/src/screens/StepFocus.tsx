@@ -130,21 +130,69 @@ export function StepFocus({ step, isCurrentStep, anchorIso, now, bottomLine, onB
       </button>
 
       <div className="relative z-10 flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
-        <p className="text-sm uppercase tracking-widest text-slate-500">{step.name || 'Step'}</p>
-        {/* text-7xl/8xl (not the app's usual text-huge) - this screen is
-            meant to be read from further away than anything else in the
-            app, so it earns the largest digits anywhere here. Sized to stay
-            inside a phone-width viewport even at "+12:34" (the longest
-            possible string: overrun sign + two digit minutes + seconds). */}
+        {/* landscape (landscape focus increment): the step name moves out of
+            this flex column entirely and pins to the true top of the
+            (rotated) viewport instead - freeing the whole flex-1 middle for
+            the digits alone, which is the point of going landscape here at
+            all. `top-safe-top`/`inset-x-0` use the same `safe-top` spacing
+            token pt-safe-top/mt-safe-top already use elsewhere in this file
+            (tailwind.config.ts) - env(safe-area-inset-top) correctly
+            reports the ROTATED top inset in landscape, not the physical
+            portrait-top, so this stays correct on a cutout/notch device.
+            landscape:pt-3 is a fixed nudge below that inset for devices
+            (like the S25 Ultra, no notch) where the env() value is 0. */}
+        <p className="text-sm uppercase tracking-widest text-slate-500 landscape:absolute landscape:inset-x-0 landscape:top-safe-top landscape:pt-3">
+          {step.name || 'Step'}
+        </p>
+        {/* text-7xl/8xl in portrait (not the app's usual text-huge) - this
+            screen is meant to be read from further away than anything else
+            in the app, so it earns the largest digits anywhere here. Sized
+            to stay inside a phone-width viewport even at "+12:34" (the
+            longest possible string: overrun sign + two digit minutes +
+            seconds).
+
+            landscape:text-[11rem] - landscape has ~2x the width to work
+            with (915px on the S25 Ultra vs. ~412px in portrait), so the
+            digits jump to the largest size that still comfortably fits the
+            widest possible string, computed rather than guessed:
+              - worst case string is "+88:88" (formatCountdown's overrun
+                sign + unpadded minutes that happen to land on two digits +
+                ":" + two-digit seconds) = 6 characters.
+              - tabular-nums digits advance at ~0.6em per character (a
+                standard estimate for monospaced/tabular figures in a
+                sans-serif face - there's no narrower "1" to throw the
+                estimate off since tabular-nums fixes every digit to the
+                same width).
+              - 6ch * 0.6em/ch = 3.6em of width at font-size F, so the
+                string's pixel width is 3.6 * F.
+              - target: stay under ~92vw of the 915px landscape viewport,
+                i.e. 3.6F <= 0.92 * 915 = 841.8px, so F <= 233.8px = 14.6rem
+                at the browser's 16px root.
+              - 11rem (176px) is chosen well inside that ceiling (3.6 *
+                176px = 633.6px = ~69% of 915px, not 92%) rather than
+                maxed-out, because the actual on-screen box also has to
+                clear the px-6 side padding (48px) and the absolutely
+                positioned name/leave-by lines above/below it - 11rem is
+                the largest round Tailwind arbitrary value that leaves
+                comfortable headroom for all of that rather than landing
+                exactly on the computed ceiling. */}
         <p
-          className={`text-7xl font-bold tabular-nums motion-safe:transition-colors motion-safe:duration-1000 sm:text-8xl ${DIGIT_COLOR[phase]}`}
+          className={`text-7xl font-bold tabular-nums motion-safe:transition-colors motion-safe:duration-1000 sm:text-8xl landscape:text-[11rem] ${DIGIT_COLOR[phase]}`}
         >
           {formatCountdown(remainingSeconds)}
         </p>
         {!isCurrentStep && <p className="text-sm text-slate-500">Starts when the steps before it are done.</p>}
       </div>
 
-      <div className="relative z-10 pb-8">
+      {/* landscape: same "pin to the true edge of the rotated viewport"
+          treatment as the step name above, mirrored to the bottom -
+          `bottom-safe-bottom` is the same `safe-bottom` spacing token the
+          outer container's own `pb-safe-bottom` already uses. Pinning this
+          absolutely (rather than trusting flex-col's normal end-of-column
+          placement, which is what portrait relies on) keeps it exactly
+          bottom-center regardless of how tall the name/digits stack above
+          it ends up being on a 412px-tall landscape viewport. */}
+      <div className="relative z-10 pb-8 landscape:absolute landscape:inset-x-0 landscape:bottom-safe-bottom landscape:pb-3">
         <p className="text-center text-sm tabular-nums text-slate-500">
           {bottomLine.label} {formatTime(bottomLine.time)}
         </p>
