@@ -88,6 +88,10 @@ Tapping this link finds the one departure it should mean — `'left'` status, ar
 
 **Device-verify note:** whether One UI's "Open app link" action delivers the URL cleanly to a cold-started app versus one already running in the background hasn't been confirmed on-device as of this writing — both paths are handled by the same cold-start machinery every other `runway://` link already uses (`src/native/deepLinks.ts`), so it's expected to work either way, but "expected" isn't "verified."
 
+## Corrections
+
+A forgotten tap used to force a choice between two bad options: a step checked 25 minutes late teaching the learner a false 40-minute shower, or a departure abandoned outright because the record was already wrong. As of 0.26.0 there's a third option — a quiet, bounded "Done earlier" / "Left earlier" / "Arrived earlier" action wherever a forgotten tap is actually discovered (the current-step card in both the prep and arrival phases, StepFocus, the leave block, the arrival gate, and a task's current-unit card) — that opens a small inline correction panel, never a modal, prefilled to now. A chosen time is clamped to fall between the previous real event in that departure or task and the present moment: nothing before it (an impossible timeline) and nothing after it (a prediction, not a correction). Runway never invents a backdated timestamp on its own — every correction is a deliberate, explicit choice, and that choice counts as real data, better than the silently-wrong `now` it replaces. A departure left stuck `running` hours after the fact (Home's "Past departure time" section → Open) is one of the places this closes out honestly instead of staying open forever.
+
 ## Learning
 
 Runway learns realistic per-step and buffer times from lived data, rather than relying only on whatever was typed in at setup or a fixed median that's late half the time by construction.

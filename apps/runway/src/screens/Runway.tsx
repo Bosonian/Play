@@ -24,6 +24,7 @@ import { learnedRushedFloor, rushedActualsByStepName } from '../lib/learning';
 import { applyAutoLearn } from '../lib/autoLearn';
 import { TextField } from '../ui/TextField';
 import { TextAction } from '../ui/TextAction';
+import { BackdateDialog } from '../ui/BackdateDialog';
 import { getCurrentSsid } from '../native/wifi';
 import { nextOccurrenceOf } from '../lib/nextOccurrence';
 
@@ -149,6 +150,24 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   // rendered as a sibling overlay below rather than something onNavigate
   // ever points at.
   const [focusStepId, setFocusStepId] = useState<string | null>(null);
+
+  // Backdating increment: whether each of the three "quiet correction"
+  // dialogs is open. Three separate flags, not one shared "which dialog"
+  // enum, because up to two of these genuinely can be relevant to the same
+  // render in principle (StepFocus's handoff closes the focus overlay and
+  // opens `stepBackdateOpen` in the same tap) and a single enum would force
+  // an arbitrary priority order between them for no benefit. `stepBackdateOpen`
+  // is shared between the prep current-step card and the arrival-phase
+  // current-step card (below) rather than split in two, because the two
+  // branches are mutually exclusive renders of this same component (the
+  // arrival branch is an early `return` — see `arrivalPhaseActive` below) —
+  // there is never a render where both cards exist to be confused with each
+  // other. Deliberately plain component state, not persisted: same
+  // "one-shot decision, not something that should reopen stale" reasoning
+  // as `replanOpen` above.
+  const [stepBackdateOpen, setStepBackdateOpen] = useState(false);
+  const [leaveBackdateOpen, setLeaveBackdateOpen] = useState(false);
+  const [arrivedBackdateOpen, setArrivedBackdateOpen] = useState(false);
 
   // Arrival-steps increment: whether this departure has an arrival-phase
   // checklist at all — computed here (not further down, past the
@@ -319,6 +338,28 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     void refreshWidgets();
   };
 
+  // Backdating increment ("Done earlier"): the same write toggleStep does
+  // when checking the current step, but stamping the chosen PAST instant
+  // instead of `new Date()` — for the step that actually finished a while
+  // ago and only just got remembered. Deliberately does NOT replicate
+  // toggleStep's 'planned' -> 'running' transition: the "Done earlier"
+  // TextAction below only renders once `departure.startedAt` already
+  // exists (see its own comment), so by the time this can ever be called
+  // the departure is already 'running' — there's no 'planned' case left
+  // here to handle. Re-reads "whichever step is current" fresh inside the
+  // transaction (same race protection as toggleStep's own `.modify()`)
+  // rather than trusting a step id captured in the render closure.
+  const handleStepBackdateConfirm = async (at: Date) => {
+    void hapticImpact('light');
+    const atIso = at.toISOString();
+    await db.departures.where('id').equals(departure.id).modify((d) => {
+      const s = d.steps.find((x) => x.checkedAt === null);
+      if (s) s.checkedAt = atIso;
+    });
+    void refreshWidgets();
+    setStepBackdateOpen(false);
+  };
+
   // 'planned' -> 'running' without checking a step - the explicit "Start
   // getting ready" button (M3). Same transactional shape as toggleStep for
   // the same reason: a fast tap here immediately followed by a step tap
@@ -352,6 +393,27 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     setJustLeft(true);
   };
 
+  // Backdating increment ("Left earlier"): same write and side effects as
+  // handleLeave — status 'left', alarms cancelled, auto-learn triggered,
+  // the one-time justLeft summary shown — just stamping the chosen PAST
+  // instant as `leftAt` instead of `new Date()`. Alarm cancellation is
+  // unchanged on purpose: the four staged alerts are all for moments still
+  // ahead of a real "I'm out the door," so they're exactly as pointless to
+  // leave scheduled after a backdated departure as after an on-time one.
+  // The justLeft summary that follows (this component's own `if (justLeft)`
+  // branch below) reads `departure.leftAt` back from the live query rather
+  // than anything captured here, so a backdated leave shows the true
+  // corrected time and slip automatically — nothing extra to wire for that.
+  const handleLeaveBackdateConfirm = async (at: Date) => {
+    void hapticImpact('heavy');
+    await db.departures.update(departure.id, { status: 'left', leftAt: at.toISOString() });
+    await cancelDepartureAlarms(departure.id);
+    void refreshWidgets();
+    if (departure.templateId) void applyAutoLearn(departure.templateId);
+    setJustLeft(true);
+    setLeaveBackdateOpen(false);
+  };
+
   // M1/M2: abandoning is available from the live Runway screen for either
   // 'planned' or 'running' - this is the only place 'abandoned' is
   // actually reachable from. Same confirm copy and same consequence
@@ -378,6 +440,18 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   const handleArrived = async () => {
     void hapticImpact('light');
     await db.departures.update(departure.id, { arrivedAt: new Date().toISOString() });
+  };
+
+  // Backdating increment ("Arrived earlier"): same write as handleArrived,
+  // stamping the chosen PAST instant instead of `new Date()` — for the
+  // building that was actually reached a while ago, phone left in a pocket.
+  // Lower bound for this dialog is `leftAt` (wired below), which is always
+  // set by the time this can render: `arrivedBackdateOpen` only exists in
+  // the arrival phase, reachable only once status is already 'left'.
+  const handleArrivedBackdateConfirm = async (at: Date) => {
+    void hapticImpact('light');
+    await db.departures.update(departure.id, { arrivedAt: at.toISOString() });
+    setArrivedBackdateOpen(false);
   };
 
   // Arrival-steps increment: same transactional-modify shape as toggleStep
@@ -421,6 +495,43 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     // OTHER place a departure reaches 'done' now, alongside Home's manual
     // arrival-capture actions.
     if (departure.templateId) void applyAutoLearn(departure.templateId);
+  };
+
+  // Backdating increment ("Done earlier", arrival flavor): the arrival-steps
+  // twin of handleStepBackdateConfirm above, mirroring toggleArrivalStep's
+  // full write — including the last-step auto-resolve to 'done' with a
+  // freshly-derived arrivalResult — rather than just the checkedAt stamp.
+  // That auto-resolve isn't optional to replicate here: if backdating the
+  // LAST arrival step didn't also resolve the departure, a corrected
+  // departure would sit stuck in the arrival phase forever, which is
+  // exactly the "corrupted slip record" this whole increment exists to
+  // prevent, just moved one step later. `at` (not `new Date()`) drives the
+  // lateMinutes math too, so a backdated last step reports the true
+  // corrected result, not a result measured against the moment it was
+  // finally remembered.
+  const handleArrivalStepBackdateConfirm = async (at: Date) => {
+    void hapticImpact('light');
+    const atIso = at.toISOString();
+    await db.departures.where('id').equals(departure.id).modify((d) => {
+      const arrivalStepsList = d.arrivalSteps ?? [];
+      const s = arrivalStepsList.find((x) => x.checkedAt === null);
+      if (!s) return;
+      s.checkedAt = atIso;
+      if (arrivalStepsList.every((x) => x.checkedAt !== null)) {
+        d.status = 'done';
+        const lateMinutes = Math.round((at.getTime() - new Date(d.appointmentAt).getTime()) / 60_000);
+        if (lateMinutes > 0) {
+          d.arrivalResult = 'late';
+          d.arrivalLateMinutes = lateMinutes;
+        } else {
+          d.arrivalResult = 'onTime';
+          d.arrivalLateMinutes = null;
+        }
+      }
+    });
+    void refreshWidgets();
+    if (departure.templateId) void applyAutoLearn(departure.templateId);
+    setStepBackdateOpen(false);
   };
 
   // F1: writes a compressed plan the confirmation block already showed on
@@ -549,10 +660,16 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     // chain's last event) is the honest one for this phase.
     const arrivalAnchorSource = { steps: arrivalStepsList, startedAt: departure.arrivedAt };
     const arrivalElapsed = currentStepElapsed(now, arrivalAnchorSource);
+    // Computed unconditionally (not just while StepFocus is open) —
+    // backdating increment: the current-step card's own "Done earlier"
+    // dialog (below) needs this exact anchor as its lower bound too, same
+    // "don't fork the anchor logic" reuse currentStepElapsed itself is
+    // built on.
+    const arrivalAnchorIso = currentStepAnchor(arrivalAnchorSource);
     const focusedArrivalStep = focusStepId ? (arrivalStepsList.find((s) => s.id === focusStepId) ?? null) : null;
     const focusedArrivalIsCurrent =
       !!focusedArrivalStep && !!currentArrivalStep && focusedArrivalStep.id === currentArrivalStep.id;
-    const focusArrivalAnchorIso = focusedArrivalIsCurrent ? currentStepAnchor(arrivalAnchorSource) : null;
+    const focusArrivalAnchorIso = focusedArrivalIsCurrent ? arrivalAnchorIso : null;
 
     // Tap-anywhere-to-advance, arrival flavor — same shape as the prep
     // view's advanceFocusAfterCheck below: toggleArrivalStep already carries
@@ -618,6 +735,27 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
                 Arrival is detected when the phone joins {arrivalWifiTarget}.
               </p>
             )}
+            {/* Backdating increment: the phone was left in a pocket for the
+                walk in — a forgotten tap here would otherwise pin the whole
+                arrival phase (every arrival step's timer) to whenever it's
+                finally remembered, not to when the building was actually
+                reached. Lower bound is `leftAt`: the journey can't have
+                ended before it began. `?? departure.createdAt` is
+                defensive-only — `leftAt` is always set alongside status
+                'left' (handleLeave/handleLeaveBackdateConfirm both write
+                them together), and this branch is only reachable once
+                status is 'left'. */}
+            {arrivedBackdateOpen ? (
+              <BackdateDialog
+                caption="When did you actually arrive?"
+                lowerBound={new Date(departure.leftAt ?? departure.createdAt)}
+                now={now}
+                onConfirm={(at) => void handleArrivedBackdateConfirm(at)}
+                onCancel={() => setArrivedBackdateOpen(false)}
+              />
+            ) : (
+              <TextAction onClick={() => setArrivedBackdateOpen(true)}>Arrived earlier</TextAction>
+            )}
           </div>
         ) : (
           <div className="flex flex-col gap-6">
@@ -654,6 +792,28 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
                     )}
                   </button>
                 </div>
+                {/* Backdating increment: "Done earlier", arrival flavor.
+                    Only the CURRENT arrival step ever gets this action —
+                    the same "later steps haven't started, so they can't
+                    have finished earlier" reasoning as the prep card below.
+                    No separate `arrivedAt`-exists guard needed here (unlike
+                    the prep card's `startedAt` check): this whole block
+                    only renders once `arrived` is already true. */}
+                {stepBackdateOpen ? (
+                  <div className="mt-3">
+                    <BackdateDialog
+                      caption="When did this actually finish?"
+                      lowerBound={new Date(arrivalAnchorIso ?? departure.arrivedAt ?? departure.createdAt)}
+                      now={now}
+                      onConfirm={(at) => void handleArrivalStepBackdateConfirm(at)}
+                      onCancel={() => setStepBackdateOpen(false)}
+                    />
+                  </div>
+                ) : (
+                  <TextAction className="mt-2" onClick={() => setStepBackdateOpen(true)}>
+                    Done earlier
+                  </TextAction>
+                )}
               </div>
             )}
 
@@ -720,6 +880,14 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
           bottomLine={{ label: 'Appointment', time: new Date(departure.appointmentAt) }}
           onBack={() => setFocusStepId(null)}
           onTap={focusedArrivalIsCurrent ? () => void advanceArrivalFocusAfterCheck() : undefined}
+          onBackdate={() => {
+            // Backdating increment: the handoff. Focus is a full-screen
+            // overlay, the dialog lives on the card underneath it — closing
+            // one and opening the other is the whole trick, no shared
+            // "which is showing" state beyond the two flags this already is.
+            setFocusStepId(null);
+            setStepBackdateOpen(true);
+          }}
         />
       )}
       </>
@@ -812,6 +980,13 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   const laterSteps = uncheckedSteps.slice(1);
   const allChecked = uncheckedSteps.length === 0;
 
+  // The current step's anchor - computed unconditionally (not just while
+  // StepFocus is open) because the backdating increment's "Done earlier"
+  // dialog on the current-step card (below) needs it as its lower bound
+  // too, same reuse `focusAnchorIso` already relied on before this
+  // increment added a second consumer.
+  const stepAnchorIso = currentStepAnchor(departure);
+
   // Step-focus increment: the step the overlay (if open) is showing, and
   // whether that's the CURRENT step - only the current step gets the live
   // countdown + tap-to-advance; see StepFocus's own header comment for why
@@ -821,7 +996,24 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   // step that isn't running yet.
   const focusedStep = focusStepId ? (departure.steps.find((s) => s.id === focusStepId) ?? null) : null;
   const focusedStepIsCurrent = !!focusedStep && !!currentStep && focusedStep.id === currentStep.id;
-  const focusAnchorIso = focusedStepIsCurrent ? currentStepAnchor(departure) : null;
+  const focusAnchorIso = focusedStepIsCurrent ? stepAnchorIso : null;
+
+  // Backdating increment ("Left earlier"): the honest lower bound for a
+  // backdated "I'm out the door" is whichever prep event happened last —
+  // the most recently checked step's timestamp, or `startedAt` if
+  // (unusually) nothing was ever checked. Can't reuse `currentStepAnchor`
+  // unchanged here: it returns `null` once every step is checked (there's
+  // no "current" step left), which is exactly the state the leave block
+  // below only ever renders in (`allChecked`) — so this walks the same
+  // "most recent checkedAt" rule over the FULL list instead.
+  // `?? departure.createdAt` is a last-resort defensive fallback (a
+  // running departure always has `startedAt`); it only exists so this is
+  // never literally `null` for the dialog's required `lowerBound` prop.
+  const lastCheckedAtIso = departure.steps.reduce<string | null>(
+    (latest, s) => (s.checkedAt !== null && (latest === null || s.checkedAt > latest) ? s.checkedAt : latest),
+    null,
+  );
+  const leaveLowerBoundIso = lastCheckedAtIso ?? departure.startedAt ?? departure.createdAt;
 
   // Tap-anywhere-to-advance (step-focus increment): reuses toggleStep
   // exactly as the checkbox does (no duplicated `.modify()` logic, and the
@@ -1068,6 +1260,24 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
               Open Maps
             </Button>
           )}
+          {/* Backdating increment: the forgotten-tap case this whole
+              increment is named for — every prep step got checked off, but
+              the door itself never got a tap, and the auto-now the app
+              WOULD otherwise stamp (if leftAt were ever inferred rather
+              than tapped) would corrupt this morning's whole slip record.
+              A deliberate correction here counts as data; a silent guess
+              never would. */}
+          {leaveBackdateOpen ? (
+            <BackdateDialog
+              caption="When did you actually leave?"
+              lowerBound={new Date(leaveLowerBoundIso)}
+              now={now}
+              onConfirm={(at) => void handleLeaveBackdateConfirm(at)}
+              onCancel={() => setLeaveBackdateOpen(false)}
+            />
+          ) : (
+            <TextAction onClick={() => setLeaveBackdateOpen(true)}>Left earlier</TextAction>
+          )}
         </div>
       ) : (
         <div className="flex flex-col gap-6">
@@ -1111,6 +1321,34 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
                   )}
                 </button>
               </div>
+              {/* Backdating increment: "Done earlier" — current step only.
+                  A later step (laterSteps, below) hasn't started yet, so it
+                  can't honestly have finished "earlier" than a start time it
+                  doesn't have; only the current step's row gets this action.
+                  Gated on `departure.startedAt` existing: the current-step
+                  card also renders before "Start getting ready" is pressed
+                  (status still 'planned'), and a departure that hasn't
+                  started has no lower bound to correct against yet — see
+                  handleStepBackdateConfirm's own comment for why that lets
+                  it skip toggleStep's planned -> running transition
+                  entirely rather than needing to replicate it. */}
+              {departure.startedAt != null && stepAnchorIso && (
+                stepBackdateOpen ? (
+                  <div className="mt-3">
+                    <BackdateDialog
+                      caption="When did this actually finish?"
+                      lowerBound={new Date(stepAnchorIso)}
+                      now={now}
+                      onConfirm={(at) => void handleStepBackdateConfirm(at)}
+                      onCancel={() => setStepBackdateOpen(false)}
+                    />
+                  </div>
+                ) : (
+                  <TextAction className="mt-2" onClick={() => setStepBackdateOpen(true)}>
+                    Done earlier
+                  </TextAction>
+                )
+              )}
             </div>
           )}
 
@@ -1208,6 +1446,13 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
         bottomLine={{ label: 'Leave by', time: projection.leaveBy }}
         onBack={() => setFocusStepId(null)}
         onTap={focusedStepIsCurrent ? () => void advanceFocusAfterCheck() : undefined}
+        onBackdate={() => {
+          // Backdating increment: same handoff as the arrival-phase
+          // StepFocus above — close the overlay, open the dialog on the
+          // card underneath it.
+          setFocusStepId(null);
+          setStepBackdateOpen(true);
+        }}
       />
     )}
     </>

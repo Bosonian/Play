@@ -7,6 +7,7 @@ import type { Screen } from '../App';
 import { ScreenHeader } from '../ui/ScreenHeader';
 import { Button } from '../ui/Button';
 import { TextAction } from '../ui/TextAction';
+import { BackdateDialog } from '../ui/BackdateDialog';
 import { taskProjection, deriveTaskUnitActuals } from '../lib/taskProjection';
 import type { TaskProjection } from '../lib/taskProjection';
 import { currentStepAnchor, currentStepElapsed } from '../lib/currentStepElapsed';
@@ -61,6 +62,11 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
   const now = useNow(1000);
 
   const [focusUnitId, setFocusUnitId] = useState<string | null>(null);
+
+  // Backdating increment: same "quiet correction dialog" flag as Runway.tsx's
+  // stepBackdateOpen — see that state's own comment for why this is plain,
+  // unpersisted component state.
+  const [unitBackdateOpen, setUnitBackdateOpen] = useState(false);
 
   // Defensive clear — same reasoning as Runway.tsx's own focusStepId effect:
   // if the task stops being 'running' (finishes, is abandoned) while this
@@ -132,6 +138,31 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
     });
   };
 
+  // Backdating increment ("Done earlier"): the task twin of Runway.tsx's
+  // handleStepBackdateConfirm — same write toggleUnit does when checking
+  // the current unit (including the last-unit auto-resolve to 'done'), but
+  // stamping the chosen PAST instant instead of `new Date()`. Same "no
+  // planned -> running transition to replicate" reasoning: the "Done
+  // earlier" TextAction below only renders once `task.startedAt` already
+  // exists, so a task reaching this handler is already 'running'.
+  // deriveTaskUnitActuals (taskProjection.ts) reads `checkedAt` straight
+  // off the unit, so a backdated last unit's corrected time is exactly
+  // what the 'done' summary's total-minutes figure ends up built from —
+  // nothing extra to wire for that.
+  const handleUnitBackdateConfirm = async (at: Date) => {
+    void hapticImpact('light');
+    const atIso = at.toISOString();
+    await db.tasks.where('id').equals(task.id).modify((t) => {
+      const u = t.units.find((x) => x.checkedAt === null);
+      if (!u) return;
+      u.checkedAt = atIso;
+      if (t.units.every((x) => x.checkedAt !== null)) {
+        t.status = 'done';
+      }
+    });
+    setUnitBackdateOpen(false);
+  };
+
   const handleAbandon = async () => {
     if (!window.confirm(ABANDON_CONFIRM)) return;
     await db.tasks.update(task.id, { status: 'abandoned' });
@@ -188,11 +219,15 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
   const currentUnit = uncheckedUnits[0] ?? null;
   const laterUnits = uncheckedUnits.slice(1);
 
+  // Computed unconditionally (not just while focus is open) — backdating
+  // increment: the current-unit card's own "Done earlier" dialog (below)
+  // needs this exact anchor as its lower bound too, same reuse Runway.tsx's
+  // stepAnchorIso relies on for the equivalent departure-step card.
+  const unitAnchorIso = currentStepAnchor({ steps: task.units, startedAt: task.startedAt });
+
   const focusedUnit = focusUnitId ? (ordinalUnits.find((u) => u.unit.id === focusUnitId) ?? null) : null;
   const focusedUnitIsCurrent = !!focusedUnit && !!currentUnit && focusedUnit.unit.id === currentUnit.unit.id;
-  const focusAnchorIso = focusedUnitIsCurrent
-    ? currentStepAnchor({ steps: task.units, startedAt: task.startedAt })
-    : null;
+  const focusAnchorIso = focusedUnitIsCurrent ? unitAnchorIso : null;
 
   // Tap-anywhere-to-advance — same shape as Runway.tsx's advanceFocusAfterCheck.
   const advanceFocusAfterCheck = async () => {
@@ -286,6 +321,29 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
                   )}
                 </button>
               </div>
+              {/* Backdating increment: "Done earlier" — current unit only,
+                  same "a later unit hasn't started, so it can't have
+                  finished earlier" reasoning as Runway.tsx's equivalent
+                  step card. Gated on `task.startedAt`: this card also
+                  renders before Start is pressed (still 'planned'), and an
+                  unstarted task has no lower bound to correct against. */}
+              {task.startedAt != null && unitAnchorIso && (
+                unitBackdateOpen ? (
+                  <div className="mt-3">
+                    <BackdateDialog
+                      caption="When did this actually finish?"
+                      lowerBound={new Date(unitAnchorIso)}
+                      now={now}
+                      onConfirm={(at) => void handleUnitBackdateConfirm(at)}
+                      onCancel={() => setUnitBackdateOpen(false)}
+                    />
+                  </div>
+                ) : (
+                  <TextAction className="mt-2" onClick={() => setUnitBackdateOpen(true)}>
+                    Done earlier
+                  </TextAction>
+                )
+              )}
             </div>
           )}
 
@@ -359,6 +417,13 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
           bottomLine={task.deadlineAt !== null ? { label: 'Deadline', time: new Date(task.deadlineAt) } : undefined}
           onBack={() => setFocusUnitId(null)}
           onTap={focusedUnitIsCurrent ? () => void advanceFocusAfterCheck() : undefined}
+          onBackdate={() => {
+            // Backdating increment: same handoff as Runway.tsx's StepFocus
+            // usages — close the overlay, open the dialog on the card
+            // underneath it.
+            setFocusUnitId(null);
+            setUnitBackdateOpen(true);
+          }}
         />
       )}
     </>

@@ -42,6 +42,19 @@ interface StepFocusProps {
    * caller when `isCurrentStep` is true - a step that hasn't started yet
    * has no "done" action, so there's nothing to wire up here for it. */
   onTap?: () => void;
+  /** Backdating increment: "the step already finished, a while ago" — a
+   * small, quiet escape hatch beside the back chevron, deliberately NOT
+   * part of the whole-screen tap zone `onTap` owns (same "excluded from
+   * the tap-to-check zone" treatment the back chevron itself already
+   * gets, for the same reason: a stray tap here must never silently
+   * check the step off at `now`). Rendered only when `isCurrentStep` is
+   * also true - see this prop's own render guard below and `onTap`'s
+   * comment above for why a step that hasn't started can't honestly be
+   * "done earlier" either. The caller (Runway.tsx/TaskRun.tsx) owns what
+   * happens next; this component only ever fires the callback, never
+   * opens anything itself - see those callers' own comments on the
+   * close-focus-then-open-the-card's-dialog handoff. */
+  onBackdate?: () => void;
 }
 
 const DIGIT_COLOR: Record<FocusTone['phase'], string> = {
@@ -66,7 +79,7 @@ const DIGIT_COLOR: Record<FocusTone['phase'], string> = {
  * panel only truly turns pixels off at pure black. #020617 is dark enough
  * to look black in the rest of the app but still measurably lit here.
  */
-export function StepFocus({ step, isCurrentStep, anchorIso, now, bottomLine, onBack, onTap }: StepFocusProps) {
+export function StepFocus({ step, isCurrentStep, anchorIso, now, bottomLine, onBack, onTap, onBackdate }: StepFocusProps) {
   const plannedSeconds = step.plannedMinutes * 60;
 
   // A step that hasn't started yet has no real "time since it began" - any
@@ -121,20 +134,45 @@ export function StepFocus({ step, isCurrentStep, anchorIso, now, bottomLine, onB
         />
       )}
 
-      <button
-        type="button"
-        onClick={(e) => {
-          // Excluded from the tap-to-check zone: without this, tapping
-          // "back" would also bubble to the container's onClick above and
-          // silently check the step off on the way out.
-          e.stopPropagation();
-          onBack();
-        }}
-        aria-label="Back"
-        className="relative z-10 mt-safe-top flex h-12 w-12 shrink-0 items-center justify-center self-start text-2xl text-slate-500 transition-colors hover:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
-      >
-        ‹
-      </button>
+      {/* Backdating increment: the back chevron and "Done earlier" now
+          share one top row rather than the chevron sitting alone - both are
+          "excluded from the tap-to-check zone" escape hatches, so they read
+          as one family of quiet controls at the top of the screen. Doesn't
+          touch the landscape name/digits/bottom-line pinning below, which
+          is absolutely positioned independent of this row's height either
+          way. */}
+      <div className="relative z-10 mt-safe-top flex items-center justify-between">
+        <button
+          type="button"
+          onClick={(e) => {
+            // Excluded from the tap-to-check zone: without this, tapping
+            // "back" would also bubble to the container's onClick above and
+            // silently check the step off on the way out.
+            e.stopPropagation();
+            onBack();
+          }}
+          aria-label="Back"
+          className="flex h-12 w-12 shrink-0 items-center justify-center self-start text-2xl text-slate-500 transition-colors hover:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+        >
+          ‹
+        </button>
+        {/* Only the CURRENT step gets this - see onBackdate's own doc
+            comment above for why a step that hasn't started can't
+            honestly have finished "earlier." */}
+        {isCurrentStep && onBackdate && (
+          <button
+            type="button"
+            onClick={(e) => {
+              // Same exclusion as the back chevron above, same reason.
+              e.stopPropagation();
+              onBackdate();
+            }}
+            className="mr-2 min-h-11 shrink-0 rounded-lg px-2 text-sm font-medium text-slate-500 transition-colors hover:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+          >
+            Done earlier
+          </button>
+        )}
+      </div>
 
       <div className="relative z-10 flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
         {/* landscape (landscape focus increment): the step name moves out of

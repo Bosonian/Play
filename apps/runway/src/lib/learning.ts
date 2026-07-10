@@ -60,7 +60,20 @@ export function quantile(sorted: number[], p: number): number {
  * production would compute between those check-offs is noise, not a
  * measurement. Two checked close together is normal (a fast step really
  * can take under a minute); three or more within a single one-minute
- * window is the retroactive-door-checking pattern this exists to catch. */
+ * window is the retroactive-door-checking pattern this exists to catch.
+ *
+ * Backdating increment: a deliberate single correction - "Done earlier" /
+ * "Left earlier" / "Arrived earlier" (src/lib/backdate.ts, wired in
+ * Runway.tsx/StepFocus.tsx/TaskRun.tsx) - writes exactly one checkedAt/
+ * leftAt/arrivedAt stamped with a chosen PAST time. It does NOT trip this
+ * guard, and shouldn't: a bounded, explicit correction is the user's
+ * considered best truth about when something actually happened - the
+ * opposite of the unattended catch-up-tapping this function exists to
+ * filter out. The two guards are complementary, not contradictory:
+ * isBatchedRun still catches three-or-more check-offs landing within the
+ * same real-time minute regardless of how far in the past they're dated;
+ * a single corrected timestamp just isn't shaped like that pattern on its
+ * own. */
 export function isBatchedRun(departure: Pick<Departure, 'steps'>): boolean {
   const checkedAtTimes = departure.steps
     .filter((step): step is typeof step & { checkedAt: string } => step.checkedAt !== null)
