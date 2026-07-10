@@ -46,7 +46,15 @@ export function TaskSetup({ onNavigate }: TaskSetupProps) {
   // dropdown, cleared on any further typing, same as TemplateEdit/
   // DepartureSetup never claiming provenance for a name that hasn't
   // actually been confirmed as a match.
-  const [learnedRunCount, setLearnedRunCount] = useState<number | null>(null);
+  //
+  // `applied` tracks a separate fact from `runCount`: `learnedEstimate`
+  // (learning.ts) needs 3+ samples before it returns anything at all, so a
+  // name with 1 or 2 recorded runs has real history (`runCount > 0`) but no
+  // learned minutes were actually applied to the form (`entry.learnedMinutes
+  // === null`) — the caption below has to say which of those happened,
+  // not just "learned" regardless (that word claims minutesPerUnit was
+  // actually updated, which under 3 samples it wasn't).
+  const [selectedEntry, setSelectedEntry] = useState<{ runCount: number; applied: boolean } | null>(null);
 
   // Task-memory autocomplete (learning increment §5, extended by the tasks
   // increment): every step name ever used across departures/templates, PLUS
@@ -134,16 +142,20 @@ export function TaskSetup({ onNavigate }: TaskSetupProps) {
           library={library}
           onNameChange={(next) => {
             setName(next);
-            setLearnedRunCount(null);
+            setSelectedEntry(null);
           }}
           onSelect={(entry) => {
             setName(entry.name);
             if (entry.learnedMinutes !== null) setMinutesPerUnit(entry.learnedMinutes);
-            setLearnedRunCount(entry.runCount);
+            setSelectedEntry({ runCount: entry.runCount, applied: entry.learnedMinutes !== null });
           }}
         />
-        {learnedRunCount !== null && learnedRunCount > 0 && (
-          <p className="mt-1.5 text-sm text-slate-500">learned · {learnedRunCount} runs</p>
+        {selectedEntry !== null && selectedEntry.runCount > 0 && (
+          <p className="mt-1.5 text-sm text-slate-500">
+            {selectedEntry.applied
+              ? `learned · ${selectedEntry.runCount} runs`
+              : `${selectedEntry.runCount} run${selectedEntry.runCount === 1 ? '' : 's'} recorded. A learned time needs 3.`}
+          </p>
         )}
       </div>
 

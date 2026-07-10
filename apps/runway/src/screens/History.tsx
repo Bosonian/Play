@@ -1,10 +1,11 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
-import type { Departure } from '../db/types';
+import type { Departure, WorkTask } from '../db/types';
 import type { Screen } from '../App';
 import { ScreenHeader } from '../ui/ScreenHeader';
 import { medianMinutes, slipMinutes } from '../lib/calibration';
 import { formatDateDisplay, formatTime } from '../lib/format';
+import { deriveTaskUnitActuals, taskDeadlineResult, taskFinishedAt } from '../lib/taskProjection';
 
 interface HistoryProps {
   onNavigate: (screen: Screen) => void;
@@ -42,6 +43,25 @@ function arrivalResultClass(departure: Departure): string {
   }
 }
 
+/** Task-mode twin of `arrivalResultLabel` above — same "one function decides
+ * the words, a second decides the colour" split, mirrored rather than
+ * shared because a task's four outcomes ('done'+met / 'done'+overshot /
+ * 'done'+no-deadline / 'abandoned') don't line up one-to-one with a
+ * departure's three arrivalResult values. */
+function taskResultLabel(task: WorkTask): string {
+  if (task.status === 'abandoned') return 'abandoned';
+  const result = taskDeadlineResult(task);
+  if (result === null) return '—';
+  return result.kind === 'met' ? 'on time' : `past deadline +${result.minutes} min`;
+}
+
+function taskResultClass(task: WorkTask): string {
+  if (task.status === 'abandoned') return 'text-slate-400';
+  const result = taskDeadlineResult(task);
+  if (result === null) return 'text-slate-400';
+  return result.kind === 'met' ? 'text-emerald-300' : 'text-red-400';
+}
+
 export function History({ onNavigate }: HistoryProps) {
   // Last 10 departures that actually happened, most recent appointment
   // first. Sorted ascending by the indexed field then reversed, rather
@@ -58,6 +78,26 @@ export function History({ onNavigate }: HistoryProps) {
     .map(slipMinutes)
     .filter((value): value is number => value !== undefined);
   const medianSlip = slips.length >= 3 ? medianMinutes(slips) : null;
+
+  // The field bug this section fixes: Home only ever lists planned/running
+  // tasks, so a task that finished (or was abandoned) used to vanish from
+  // every screen the moment it left that status — the row was intact in
+  // Dexie the whole time, there was simply no surface left that queried for
+  // it. Sorted most-recently-finished first via `taskFinishedAt`, falling
+  // back to `createdAt` ONLY for ordering ties/abandoned-with-no-checked-
+  // units — `taskFinishedAt` itself never makes that substitution (see its
+  // own comment), so this fallback lives here, one layer up, where it's an
+  // honest tiebreak rather than a fabricated finish time.
+  const finishedTasks = useLiveQuery(async () => {
+    const tasks = await db.tasks.where('status').anyOf(['done', 'abandoned']).toArray();
+    return tasks
+      .sort((a, b) => {
+        const aTime = taskFinishedAt(a) ?? a.createdAt;
+        const bTime = taskFinishedAt(b) ?? b.createdAt;
+        return bTime.localeCompare(aTime);
+      })
+      .slice(0, HISTORY_LIMIT);
+  }, []);
 
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-6 px-4 pb-12 pt-safe-top">
@@ -105,6 +145,37 @@ export function History({ onNavigate }: HistoryProps) {
           );
         })}
       </div>
+
+      {/* Rendered only when there's at least one finished/abandoned task —
+          CLAUDE.md's "defaults lean toward less, not more": an empty Tasks
+          section with a "Nothing here yet" line would be one more thing on
+          screen saying nothing, for the (currently the more common) case of
+          a Runway install that hasn't run a task yet. */}
+      {finishedTasks !== undefined && finishedTasks.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Tasks</h2>
+          {finishedTasks.map((task) => {
+            const finishedAt = taskFinishedAt(task);
+            const totalMinutes = deriveTaskUnitActuals(task).reduce((sum, actual) => sum + actual.actualMinutes, 0);
+            return (
+              <div key={task.id} className="rounded-xl border border-slate-800/60 bg-surface p-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-xl font-medium text-slate-100">{task.name}</p>
+                  <p className="text-sm text-slate-500">{finishedAt ? formatDateDisplay(new Date(finishedAt)) : '—'}</p>
+                </div>
+                <div className="mt-1 flex items-center justify-between text-sm tabular-nums text-slate-400">
+                  <p>
+                    {task.units.length} unit{task.units.length === 1 ? '' : 's'} · {totalMinutes} min.
+                  </p>
+                  <p className={`motion-safe:transition-colors motion-safe:duration-300 ${taskResultClass(task)}`}>
+                    {taskResultLabel(task)}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

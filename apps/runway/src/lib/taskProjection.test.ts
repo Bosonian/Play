@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveTaskUnitActuals, taskProjection } from './taskProjection';
+import { deriveTaskUnitActuals, taskDeadlineResult, taskFinishedAt, taskProjection } from './taskProjection';
 import type { WorkTask } from '../db/types';
 
 // Fixed "now" for every test, same reasoning as projection.test.ts's own
@@ -210,5 +210,97 @@ describe('deriveTaskUnitActuals', () => {
       { stepId: 'u2', name: 'Befunden EEG', plannedMinutes: 15, actualMinutes: 10 },
       { stepId: 'u1', name: 'Befunden EEG', plannedMinutes: 15, actualMinutes: 10 },
     ]);
+  });
+});
+
+describe('taskFinishedAt', () => {
+  it('returns the MAX checkedAt across units, regardless of list order', () => {
+    const task = makeTask({
+      units: [
+        { id: 'u1', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-09T08:10:00.000Z' },
+        { id: 'u2', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-09T08:25:00.000Z' },
+        { id: 'u3', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-09T08:05:00.000Z' },
+      ],
+    });
+
+    expect(taskFinishedAt(task)).toBe('2026-07-09T08:25:00.000Z');
+  });
+
+  it('returns null when no unit has a checkedAt — e.g. an abandoned task that never started', () => {
+    const task = makeTask(); // default makeTask units are all unchecked
+
+    expect(taskFinishedAt(task)).toBeNull();
+  });
+});
+
+describe('taskDeadlineResult', () => {
+  it('reports "met" with the whole minutes of margin before the deadline, floored', () => {
+    const task = makeTask({
+      deadlineAt: '2026-07-09T08:20:00.000Z',
+      units: [
+        { id: 'u1', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-09T08:00:00.000Z' },
+        { id: 'u2', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-09T08:15:59.000Z' },
+      ],
+    });
+
+    // 4 min 1 sec of margin -> floors to 4, not a rounded-up 5.
+    expect(taskDeadlineResult(task)).toEqual({ kind: 'met', minutes: 4 });
+  });
+
+  it('finishing exactly at the deadline counts as "met" with 0 minutes', () => {
+    const task = makeTask({
+      deadlineAt: '2026-07-09T08:15:00.000Z',
+      units: [{ id: 'u1', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-09T08:15:00.000Z' }],
+    });
+
+    expect(taskDeadlineResult(task)).toEqual({ kind: 'met', minutes: 0 });
+  });
+
+  it('reports "overshot" with the whole minutes past the deadline, ceiled', () => {
+    const task = makeTask({
+      deadlineAt: '2026-07-09T08:00:00.000Z',
+      units: [{ id: 'u1', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-09T08:07:00.000Z' }],
+    });
+
+    expect(taskDeadlineResult(task)).toEqual({ kind: 'overshot', minutes: 7 });
+  });
+
+  it('ceils a sub-minute overshoot up to 1 min — never reads "0 min past" for a real miss', () => {
+    const task = makeTask({
+      deadlineAt: '2026-07-09T08:15:00.000Z',
+      units: [{ id: 'u1', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-09T08:15:30.000Z' }],
+    });
+
+    expect(taskDeadlineResult(task)).toEqual({ kind: 'overshot', minutes: 1 });
+  });
+
+  it('returns null when the task has no deadline', () => {
+    const task = makeTask({
+      deadlineAt: null,
+      units: [{ id: 'u1', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-09T08:15:00.000Z' }],
+    });
+
+    expect(taskDeadlineResult(task)).toBeNull();
+  });
+
+  it('returns null when no unit has been checked, even with a deadline set', () => {
+    const task = makeTask({ deadlineAt: '2026-07-09T08:15:00.000Z' }); // default units all unchecked
+
+    expect(taskDeadlineResult(task)).toBeNull();
+  });
+
+  it('returns null when deadlineAt is missing entirely (legacy row), not just explicitly null', () => {
+    const task = makeTask({
+      deadlineAt: '2026-07-09T08:00:00.000Z',
+      units: [{ id: 'u1', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-09T07:55:00.000Z' }],
+    });
+    // Same Partial-delete pattern as projection.test.ts's own legacy-row
+    // test — a real IndexedDB row from before this field existed has the
+    // property missing outright, not set to `null`; `== null` (not `===`)
+    // in taskDeadlineResult is what makes the two indistinguishable here.
+    const legacy: Partial<typeof task> = { ...task };
+    delete legacy.deadlineAt;
+
+    expect(taskDeadlineResult(legacy as typeof task)).toBeNull();
   });
 });

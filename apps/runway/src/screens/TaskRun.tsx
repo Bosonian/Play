@@ -8,7 +8,7 @@ import { ScreenHeader } from '../ui/ScreenHeader';
 import { Button } from '../ui/Button';
 import { TextAction } from '../ui/TextAction';
 import { BackdateDialog } from '../ui/BackdateDialog';
-import { taskProjection, deriveTaskUnitActuals } from '../lib/taskProjection';
+import { taskProjection, deriveTaskUnitActuals, taskDeadlineResult } from '../lib/taskProjection';
 import type { TaskProjection } from '../lib/taskProjection';
 import { currentStepAnchor, currentStepElapsed } from '../lib/currentStepElapsed';
 import { useNow } from '../hooks/useNow';
@@ -176,12 +176,27 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
     // any time, so there's no reason to special-case "the instant it
     // happened" the way a departure's out-the-door slip does.
     const actualTotalMinutes = deriveTaskUnitActuals(task).reduce((sum, a) => sum + a.actualMinutes, 0);
+    // Field bug fix: the deadline verdict used to exist nowhere — this is
+    // the plain-stated truth CLAUDE.md asks for over a reassuring "nice
+    // work" the app can't actually back up. `null` (no deadline was ever
+    // set) renders no line at all, same "nothing to be honest ABOUT here"
+    // reasoning taskDeadlineResult's own doc comment gives.
+    const deadlineResult = taskDeadlineResult(task);
     return (
       <div className="mx-auto flex min-h-screen max-w-lg flex-col items-center justify-center gap-2 px-4 pb-12 pt-safe-top text-center">
         <p className="text-lg text-slate-100">{task.name}</p>
         <p className="mt-2 tabular-nums text-emerald-300">
           {task.units.length} unit{task.units.length === 1 ? '' : 's'} · {actualTotalMinutes} min.
         </p>
+        {deadlineResult !== null && (
+          <p className={`tabular-nums ${deadlineResult.kind === 'overshot' ? 'text-red-400' : 'text-slate-400'}`}>
+            {deadlineResult.kind === 'overshot'
+              ? `Finished ${deadlineResult.minutes} min past the deadline.`
+              : deadlineResult.minutes === 0
+                ? 'Finished on the deadline.'
+                : `Finished ${deadlineResult.minutes} min before the deadline.`}
+          </p>
+        )}
         <Button onClick={() => onNavigate({ name: 'home' })} className="mt-8 w-full">
           Back to home
         </Button>

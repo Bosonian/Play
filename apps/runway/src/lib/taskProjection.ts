@@ -93,3 +93,65 @@ export function taskProjection(now: Date, task: Pick<WorkTask, 'units' | 'deadli
 export function deriveTaskUnitActuals(task: Pick<WorkTask, 'units' | 'startedAt'>): StepActual[] {
   return deriveStepActuals({ steps: task.units, startedAt: task.startedAt, arrivalSteps: [], arrivedAt: null });
 }
+
+/**
+ * The ISO datetime a task actually finished — the MAX `checkedAt` across its
+ * units. ISO 8601 timestamps sort correctly as plain strings (the same fact
+ * calibration.ts's `deriveChain` already leans on for its own sort), so a
+ * lexicographic string max IS the chronological max here — no `Date`
+ * parsing needed to find it. `null` when no unit has been checked at all
+ * (an abandoned task may have started and gone nowhere).
+ *
+ * Deliberately does NOT fall back to `task.createdAt` — that answers "when
+ * was this row created", not "when did the work finish", and folding the
+ * two together here would let a caller silently treat an unstarted task as
+ * having finished at creation time. History.tsx's own sort falls back to
+ * `createdAt` for ORDERING only, one layer up, where that's an honest
+ * tiebreak rather than a fabricated finish time.
+ */
+export function taskFinishedAt(task: Pick<WorkTask, 'units'>): string | null {
+  let latest: string | null = null;
+  for (const unit of task.units) {
+    if (unit.checkedAt !== null && (latest === null || unit.checkedAt > latest)) {
+      latest = unit.checkedAt;
+    }
+  }
+  return latest;
+}
+
+/**
+ * Did a finished task make its deadline, and by how much? `null` covers two
+ * genuinely different "nothing to report" cases, collapsed into one because
+ * every caller (History.tsx's Tasks section, TaskRun.tsx's done summary)
+ * renders the same "nothing" either way: no deadline was ever set
+ * (`task.deadlineAt == null` — `==`, not `===`, so a legacy row where the
+ * field is missing entirely reads the same as an explicit `null`, same
+ * undefined-as-null discipline as every other legacy-row comment in this
+ * app), or the task has no checked units to measure a finish time from
+ * (`taskFinishedAt` returns `null` — an abandoned task, most often).
+ *
+ * `minutes` is always a whole, non-negative number, but rounds in OPPOSITE
+ * directions depending on which side of the deadline the finish landed:
+ * 'met' floors (finishing 4 min 59 sec early reads "4 min before the
+ * deadline", not a rounded-up 5 — the honest floor of how much margin there
+ * really was), while 'overshot' ceils (finishing 30 seconds late must still
+ * read "1 min past the deadline", not "0 min past" — flooring a sub-minute
+ * overshoot to zero would be more forgiving than what actually happened,
+ * exactly the kind of soft rounding CLAUDE.md's "truth over reassurance"
+ * rule warns against). Landing exactly ON the deadline is 'met' with
+ * `minutes: 0` — the deadline is a boundary you can meet, not one you're
+ * already past.
+ */
+export function taskDeadlineResult(
+  task: Pick<WorkTask, 'units' | 'deadlineAt'>,
+): { kind: 'met' | 'overshot'; minutes: number } | null {
+  if (task.deadlineAt == null) return null;
+  const finishedAt = taskFinishedAt(task);
+  if (finishedAt === null) return null;
+
+  const marginMs = new Date(task.deadlineAt).getTime() - new Date(finishedAt).getTime();
+  if (marginMs >= 0) {
+    return { kind: 'met', minutes: Math.floor(marginMs / 60_000) };
+  }
+  return { kind: 'overshot', minutes: Math.ceil(-marginMs / 60_000) };
+}
