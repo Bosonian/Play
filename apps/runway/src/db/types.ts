@@ -298,6 +298,85 @@ export interface Setting {
   value: string;
 }
 
+// --- Tasks (tasks increment, Dexie v5) ---
+// Timed work WITHOUT travel — "befunden 5 EEGs, ~15 min each, before the
+// 16:00 Übergabe." A Task is a Departure with travel, buffer and arrival
+// subtracted out: no destination to route to, no keys-and-toilet friction
+// to pad for, nowhere to arrive after the work itself. Everything else —
+// live projection, per-unit check-off, step-focus, name-keyed learning —
+// runs on the exact same machinery a departure's steps already use, because
+// a TaskUnit is deliberately shaped identically to a DepartureStep (see its
+// own doc comment below). Two things a departure has that a task
+// deliberately does NOT get, both stated here so they read as considered
+// cuts rather than gaps: no plan compression (a unit of clinical work can't
+// be squeezed the way a shower can — the honest lever when time is short is
+// "which units still fit", not "make each one faster"), and no scheduled
+// notifications (a task starts deliberately, at a desk, with the live
+// screen already open — there's no "wake me up to start getting ready"
+// moment the way there is before leaving somewhere). See README.md's
+// "Tasks" section for both, spelled out for a reader who wasn't in the room
+// for the decision.
+
+/**
+ * One identical unit of a WorkTask's work — "EEG 3" in the UI. `name` here
+ * is always the PARENT TASK's name, the same string on every unit of one
+ * task, not a per-unit label — that's what makes the task's name the join
+ * key `naturalActualsByStepName`/`stepNameLibrary` (learning.ts) use to
+ * pool a task's lived history into the exact same name-keyed pools a
+ * departure step's actuals already feed. The UI's per-unit ordinal
+ * ("EEG 1", "EEG 2", ...) is a display-time concatenation of this name plus
+ * list position (TaskRun.tsx), computed at render, never stored — renaming
+ * a task's units is really renaming the one task, not N separate rows.
+ *
+ * Field-for-field identical to DepartureStep ({id, name, plannedMinutes,
+ * checkedAt}) — deliberately, not by coincidence: every step-shaped
+ * function this app already has (deriveStepActuals, currentStepAnchor/
+ * currentStepElapsed, isBatchedRun, the StepFocus component) reuses
+ * verbatim against a task's units with zero new math, by passing a
+ * `{ steps: task.units, ... }`-shaped object where those functions already
+ * expect `{ steps: DepartureStep[], ... }`. See src/lib/taskProjection.ts's
+ * `deriveTaskUnitActuals` for exactly that reuse.
+ */
+export interface TaskUnit {
+  id: string;
+  name: string;
+  plannedMinutes: number;
+  checkedAt: string | null;
+}
+
+export type TaskStatus = 'planned' | 'running' | 'done' | 'abandoned';
+
+/**
+ * A block of N identical units of timed work with no travel component. Runs
+ * on the departure model's exact machinery (live projection, per-unit
+ * check-off, step-focus chain) with travel/buffer/arrival/destination
+ * removed — see this section's header comment for why those cuts are
+ * deliberate, not partial coverage.
+ *
+ * `units` are embedded (not a separate table), same reasoning as
+ * Departure.steps (db/types.ts, above): always read/written as a whole
+ * alongside their parent task, and there's no query in this app that needs
+ * "all units across all tasks" independent of which task they belong to.
+ */
+export interface WorkTask {
+  id: string;
+  /** "Befunden EEG" — also every unit's `name` (TaskUnit.name above); see
+   * that field's own comment for why sharing this exact string is what
+   * makes the task's history joinable with departure-step history by name. */
+  name: string;
+  units: TaskUnit[];
+  /** ISO datetime, or null for a task with no deadline. `taskProjection`
+   * (src/lib/taskProjection.ts) only computes slack/state/unitsThatFit once
+   * this is set — mirroring computeProjection's appointmentAt-driven
+   * state, but genuinely optional here: "befund these when you get to
+   * them" is a real, deadline-less use a departure's model has no
+   * equivalent of. */
+  deadlineAt: string | null;
+  status: TaskStatus;
+  startedAt: string | null;
+  createdAt: string;
+}
+
 // --- Prüfung mode (exam prep) — RUNWAY_PRUFUNG_PLAN.md §3, Dexie v3 ---
 // Additive to everything above; departure mode's tables and types are
 // untouched. This increment defines the schema and setup screens only —

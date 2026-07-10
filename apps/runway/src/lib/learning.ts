@@ -1,5 +1,7 @@
-import type { Departure, Template } from '../db/types';
+import type { Departure, Template, WorkTask } from '../db/types';
 import { deriveStepActuals, medianMinutes, slipMinutes } from './calibration';
+import { deriveTaskUnitActuals } from './taskProjection';
+import type { StepActual } from './calibration';
 
 /**
  * Runway's calibration layer (calibration.ts) reconstructs how long a step
@@ -91,29 +93,45 @@ function departureOccurredAtMs(departure: Pick<Departure, 'leftAt' | 'startedAt'
   return iso ? new Date(iso).getTime() : 0;
 }
 
+/** Same "when did this actually happen" reasoning as departureOccurredAtMs
+ * above, for a task (tasks increment) — a task has no `leftAt` equivalent
+ * (there's no journey it ever left for), so `startedAt` is already the
+ * single truest anchor a task ever gets. */
+function taskOccurredAtMs(task: Pick<WorkTask, 'startedAt'>): number {
+  return task.startedAt ? new Date(task.startedAt).getTime() : 0;
+}
+
+/** One real occurrence's contribution to a name-keyed actuals pool — either
+ * a departure run or a task run, reduced down to "when it happened" and
+ * "what it measured", the only two things `mergeOccurrenceActuals` below
+ * needs to know. This is what lets a departure's step history and a task's
+ * unit history interleave into ONE correctly recency-ordered pool per name
+ * (tasks increment) instead of two separately-capped pools concatenated
+ * together, which would let a name's effective window balloon past
+ * RECENCY_WINDOW whenever both sources have history for it. */
+interface NamedOccurrence {
+  occurredAtMs: number;
+  actuals: StepActual[];
+}
+
 /**
- * Shared builder behind naturalActualsByStepName/rushedActualsByStepName
- * below — same shape (status left/done, startedAt set, batched runs
- * excluded, recency-capped per name), differing only in which side of the
- * wasReplanned split `runFilter` selects. Keeping the shared shape in one
- * place is what makes "same shape" in this file's own header comment true
- * by construction rather than by two hand-kept-in-sync copies.
+ * Shared builder behind naturalActualsByStepName/rushedActualsByStepName —
+ * same shape (recency-ordered oldest-to-newest, capped per name to the
+ * most recent RECENCY_WINDOW), fed by whatever mix of departure and task
+ * occurrences the caller has already filtered and reduced to
+ * `NamedOccurrence`s. Keeping the merge-and-cap logic in exactly one place
+ * is what makes "same shape" in this file's own header comment true by
+ * construction rather than by hand-kept-in-sync copies.
  */
-function actualsByStepName(
-  departures: Departure[],
-  runFilter: (departure: Departure) => boolean,
-): Map<string, number[]> {
-  const eligible = departures.filter(
-    (d) => (d.status === 'left' || d.status === 'done') && d.startedAt !== null && !isBatchedRun(d) && runFilter(d),
-  );
+function mergeOccurrenceActuals(occurrences: NamedOccurrence[]): Map<string, number[]> {
   // Oldest first, so appending to each per-name array below naturally
   // leaves it "recency-ordered, newest last" — the cap after the loop then
   // just takes the tail.
-  eligible.sort((a, b) => departureOccurredAtMs(a) - departureOccurredAtMs(b));
+  const sorted = [...occurrences].sort((a, b) => a.occurredAtMs - b.occurredAtMs);
 
   const byName = new Map<string, number[]>();
-  for (const departure of eligible) {
-    for (const actual of deriveStepActuals(departure)) {
+  for (const occurrence of sorted) {
+    for (const actual of occurrence.actuals) {
       const existing = byName.get(actual.name);
       if (existing) {
         existing.push(actual.actualMinutes);
@@ -130,16 +148,57 @@ function actualsByStepName(
   return byName;
 }
 
+/** Departure occurrences eligible for either the natural or rushed pool —
+ * status left/done, started, not a batched retroactive check-off —
+ * differing only in which side of the wasReplanned split `runFilter`
+ * selects. Shared by naturalActualsByStepName/rushedActualsByStepName. */
+function departureOccurrences(
+  departures: Departure[],
+  runFilter: (departure: Departure) => boolean,
+): NamedOccurrence[] {
+  return departures
+    .filter(
+      (d) => (d.status === 'left' || d.status === 'done') && d.startedAt !== null && !isBatchedRun(d) && runFilter(d),
+    )
+    .map((d) => ({ occurredAtMs: departureOccurredAtMs(d), actuals: deriveStepActuals(d) }));
+}
+
+/** Task occurrences eligible for the natural pool (tasks increment) — a
+ * `done` task, started, not a batched retroactive check-off. There is no
+ * task equivalent of rushedActualsByStepName's compressed-run pool: tasks
+ * have no compression at all (see db/types.ts's header comment on this
+ * section for why), so every eligible task occurrence is natural, full
+ * stop — nothing to split on the way departures split on wasReplanned.
+ * `isBatchedRun` is reused verbatim against `{ steps: task.units }` — the
+ * same field-for-field TaskUnit/DepartureStep shape every other reused
+ * function in this feature leans on (db/types.ts's TaskUnit doc comment). */
+function taskOccurrences(tasks: WorkTask[]): NamedOccurrence[] {
+  return tasks
+    .filter((t) => t.status === 'done' && t.startedAt !== null && !isBatchedRun({ steps: t.units }))
+    .map((t) => ({ occurredAtMs: taskOccurredAtMs(t), actuals: deriveTaskUnitActuals(t) }));
+}
+
 /**
- * Per step NAME, actual minutes from every UNCOMPRESSED, non-batched,
+ * Per step/task NAME, actual minutes from every UNCOMPRESSED, non-batched,
  * genuinely-lived run — the "how long does this really take" pool.
- * Excludes `wasReplanned` runs (see this file's header comment) and
- * batched check-offs (`isBatchedRun`). Each list is recency-ordered
- * (newest last) and capped to the most recent `RECENCY_WINDOW` (14)
- * occurrences.
+ * Excludes `wasReplanned` departure runs (see this file's header comment)
+ * and batched check-offs (`isBatchedRun`) from either source. Each list is
+ * recency-ordered (newest last) and capped to the most recent
+ * `RECENCY_WINDOW` (14) occurrences — ACROSS both sources together, not 14
+ * departures plus a separate 14 tasks, since they're joined by the same
+ * name and measuring the same real-world quantity.
+ *
+ * `tasks` (tasks increment, default `[]`): a task's units join this pool
+ * under the task's own name — see db/types.ts's TaskUnit doc comment for
+ * why that's the correct join key. Defaulted to `[]` so every pre-existing
+ * call site (TemplateEdit, autoLearn.ts — neither has a reason to load the
+ * tasks table) is unaffected without an explicit empty array at each one.
  */
-export function naturalActualsByStepName(departures: Departure[]): Map<string, number[]> {
-  return actualsByStepName(departures, (d) => d.wasReplanned !== true);
+export function naturalActualsByStepName(departures: Departure[], tasks: WorkTask[] = []): Map<string, number[]> {
+  return mergeOccurrenceActuals([
+    ...departureOccurrences(departures, (d) => d.wasReplanned !== true),
+    ...taskOccurrences(tasks),
+  ]);
 }
 
 /**
@@ -151,7 +210,7 @@ export function naturalActualsByStepName(departures: Departure[]): Map<string, n
  * retroactively checked off teaches nothing about either distribution.
  */
 export function rushedActualsByStepName(departures: Departure[]): Map<string, number[]> {
-  return actualsByStepName(departures, (d) => d.wasReplanned === true);
+  return mergeOccurrenceActuals(departureOccurrences(departures, (d) => d.wasReplanned === true));
 }
 
 export interface LearnedEstimate {
@@ -410,8 +469,20 @@ export interface StepNameLibraryEntry {
  * point is surfacing "you've called this 'Shoes and door' before" even
  * while setting up a brand-new template that has no history of its own
  * yet.
+ *
+ * `tasks` (tasks increment, default `[]`): every task's own name joins this
+ * same corpus — TaskSetup's name field gets the identical "you've called
+ * this before" autocomplete a step name field gets, and a task name with
+ * enough natural history (naturalActualsByStepName below already merges
+ * task actuals in) surfaces its learned per-unit minutes exactly the way a
+ * step name does. Defaulted to `[]` for the same "existing call sites stay
+ * unaffected" reason naturalActualsByStepName's own `tasks` default does.
  */
-export function stepNameLibrary(departures: Departure[], templates: Template[]): StepNameLibraryEntry[] {
+export function stepNameLibrary(
+  departures: Departure[],
+  templates: Template[],
+  tasks: WorkTask[] = [],
+): StepNameLibraryEntry[] {
   const names = new Set<string>();
   for (const departure of departures) {
     for (const step of departure.steps) {
@@ -434,12 +505,20 @@ export function stepNameLibrary(departures: Departure[], templates: Template[]):
       if (step.name.trim() !== '') names.add(step.name);
     }
   }
+  // Tasks increment: a task's own name IS its units' shared name (see
+  // db/types.ts's TaskUnit doc comment) — one add per task covers every
+  // unit, there's no separate per-unit name to walk the way there is for
+  // departure/template steps above.
+  for (const task of tasks) {
+    if (task.name.trim() !== '') names.add(task.name);
+  }
 
-  // naturalActualsByStepName already covers arrival-step actuals too — see
-  // deriveStepActuals' (calibration.ts) two-chain split — so a name that's
-  // only ever appeared as an arrival step still gets a learned estimate
+  // naturalActualsByStepName already covers arrival-step actuals AND task
+  // unit actuals too — see deriveStepActuals' (calibration.ts) two-chain
+  // split and this file's own taskOccurrences — so a name that's only ever
+  // appeared as an arrival step or a task still gets a learned estimate
   // here where the sample size supports one, no separate lookup needed.
-  const naturalByName = naturalActualsByStepName(departures);
+  const naturalByName = naturalActualsByStepName(departures, tasks);
 
   const entries: StepNameLibraryEntry[] = [...names].map((name) => {
     const actuals = naturalByName.get(name);

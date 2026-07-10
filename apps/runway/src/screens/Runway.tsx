@@ -25,6 +25,7 @@ import { applyAutoLearn } from '../lib/autoLearn';
 import { TextField } from '../ui/TextField';
 import { TextAction } from '../ui/TextAction';
 import { getCurrentSsid } from '../native/wifi';
+import { nextOccurrenceOf } from '../lib/nextOccurrence';
 
 /** Same confirm copy as Home's "Remove" action on a planned departure (M1) —
  * abandoning from either screen is the same operation with the same
@@ -36,26 +37,6 @@ const ABANDON_CONFIRM = 'Remove this departure? Its alarms are cancelled.';
  * block and the post-departure confirmation). */
 function mapsUrl(destination: string): string {
   return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}&travelmode=driving`;
-}
-
-/**
- * Combines today's date with an `<input type="time">` value ("HH:mm") into
- * the NEXT occurrence of that time from `now` — if today's instance has
- * already gone by, it rolls to tomorrow instead of landing in the past.
- * This is what makes "pick 00:30 while it's 23:50" mean "in 40 minutes",
- * not "in almost 24 hours" — the natural reading of a clock-time picker
- * that doesn't also ask for a date. Returns an Invalid Date (getTime() is
- * NaN) for anything that isn't a well-formed "HH:mm" string, which the
- * caller (Runway.tsx's re-anchor panel) treats the same as "nothing valid
- * chosen yet" rather than crashing on it.
- */
-function nextOccurrenceOf(now: Date, hhmm: string): Date {
-  const match = /^(\d{2}):(\d{2})$/.exec(hhmm);
-  if (!match) return new Date(NaN);
-  const candidate = new Date(now);
-  candidate.setHours(Number(match[1]), Number(match[2]), 0, 0);
-  if (candidate.getTime() <= now.getTime()) candidate.setDate(candidate.getDate() + 1);
-  return candidate;
 }
 
 interface RunwayProps {

@@ -31,10 +31,19 @@ export function formatTimeInput(date: Date): string {
  * the Runway screen's slack/overdue line. Switches from plain minutes to an
  * hours+minutes form once the magnitude reaches two hours: "134 min of
  * slack" doesn't read at a glance the way a clock duration does, and this
- * app's whole premise is numbers that are legible at a glance. */
-export function formatSlackLine(slackMinutes: number): string {
+ * app's whole premise is numbers that are legible at a glance.
+ *
+ * `lateSuffix` (tasks increment): the late-branch wording is the one part
+ * of this line that's specific to what's being measured against — "past
+ * your appointment" is exactly right for a departure, but wrong (there is
+ * no appointment) for a task deadline. Defaulted to the original departure
+ * copy so every existing call site is unaffected; TaskRun.tsx passes "past
+ * the deadline" instead of duplicating this whole function for one string.
+ * The "of slack" branch needs no equivalent parameter — "slack" reads true
+ * regardless of what the deadline belongs to. */
+export function formatSlackLine(slackMinutes: number, lateSuffix: string = 'past your appointment'): string {
   const magnitude = Math.abs(slackMinutes);
-  const suffix = slackMinutes >= 0 ? 'of slack' : 'past your appointment';
+  const suffix = slackMinutes >= 0 ? 'of slack' : lateSuffix;
   if (magnitude >= 120) {
     const hours = Math.floor(magnitude / 60);
     const minutes = magnitude % 60;

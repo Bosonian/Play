@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { Departure, Exam, FieldReport, Milestone, Setting, Sprint, Template, Topic } from './types';
+import type { Departure, Exam, FieldReport, Milestone, Setting, Sprint, Template, Topic, WorkTask } from './types';
 
 // Dexie's index string only lists the fields we actually query by
 // (`id` is the implicit primary key for both tables). `appointmentAt` and
@@ -18,6 +18,8 @@ class RunwayDB extends Dexie {
   milestones!: EntityTable<Milestone, 'id'>;
   // Field reports (Dexie v4 below) — in-app bug/improvement reports.
   fieldReports!: EntityTable<FieldReport, 'id'>;
+  // Tasks (Dexie v5 below) — timed work without travel.
+  tasks!: EntityTable<WorkTask, 'id'>;
 
   constructor() {
     super('runway');
@@ -78,6 +80,25 @@ class RunwayDB extends Dexie {
       sprints: 'id, examId, topicId, startedAt',
       milestones: 'id, examId, at',
       fieldReports: 'id, status, createdAt',
+    });
+    // v5 (tasks increment): adds `tasks`, a genuinely new table — same
+    // "new store needs a version bump" reasoning as fieldReports' v4 above,
+    // unlike a non-indexed field added to an EXISTING table (Template.
+    // schedule, Departure.scheduledForDate), which needs none. Indexed on
+    // `status` (Home's "Tasks" section reads planned/running rows) and
+    // `createdAt` (tiebreak sort when two tasks share a deadline, or have
+    // none) — same shape as `departures`' own index choice. Purely
+    // additive otherwise; every existing table and row is untouched.
+    this.version(5).stores({
+      templates: 'id',
+      departures: 'id, appointmentAt, status',
+      settings: 'key',
+      exams: 'id',
+      topics: 'id, examId',
+      sprints: 'id, examId, topicId, startedAt',
+      milestones: 'id, examId, at',
+      fieldReports: 'id, status, createdAt',
+      tasks: 'id, status, createdAt',
     });
   }
 }

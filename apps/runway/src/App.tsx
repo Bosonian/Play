@@ -12,6 +12,8 @@ import { SprintSetup } from './screens/SprintSetup';
 import { Sprint } from './screens/Sprint';
 import { MilestoneEdit } from './screens/MilestoneEdit';
 import { ReportProblem } from './screens/ReportProblem';
+import { TaskSetup } from './screens/TaskSetup';
+import { TaskRun } from './screens/TaskRun';
 import { setNavigationRef } from './lib/navigationRef';
 
 // Navigation as plain React state, not a router library. There's no
@@ -105,7 +107,14 @@ export type Screen =
   // of the two it was opened from — both the screenshot-less context this
   // screen writes onto the saved FieldReport (db/types.ts's `screenName`)
   // and where "back" (and the post-save navigate) return to.
-  | { name: 'report'; fromScreen: string };
+  | { name: 'report'; fromScreen: string }
+  // Tasks increment: timed work without travel — "befunden 5 EEGs before
+  // the 16:00 Übergabe." `taskSetup` is create-only (see TaskSetup.tsx's
+  // own doc comment on why there's no `taskId` to edit an existing one);
+  // `task` is the live screen, TaskRun.tsx, mirroring `runway`'s own
+  // `departureId` shape.
+  | { name: 'taskSetup' }
+  | { name: 'task'; taskId: string };
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'home' });
@@ -161,6 +170,10 @@ export default function App() {
         return <MilestoneEdit examId={screen.examId} onNavigate={setScreen} />;
       case 'report':
         return <ReportProblem fromScreen={screen.fromScreen} onNavigate={setScreen} />;
+      case 'taskSetup':
+        return <TaskSetup onNavigate={setScreen} />;
+      case 'task':
+        return <TaskRun taskId={screen.taskId} onNavigate={setScreen} />;
     }
   }
 

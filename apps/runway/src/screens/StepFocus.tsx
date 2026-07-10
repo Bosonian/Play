@@ -17,8 +17,8 @@ interface StepFocusProps {
   anchorIso: string | null;
   now: Date;
   /**
-   * The bottom line's time and its label — two different callers, two
-   * different honest readings of "when this all needs to land":
+   * The bottom line's time and its label — different callers, different
+   * honest readings of "when this all needs to land":
    *   - prep phase (Runway.tsx's main view): `{ label: 'Leave by',
    *     time: projection.leaveBy }` — live, from computeProjection.
    *   - arrival phase (Runway.tsx's arrival-steps branch, ward-station
@@ -26,10 +26,17 @@ interface StepFocusProps {
    *     "Leave by" would be actively wrong copy once you've already left;
    *     the true target left to name at that point is the appointment
    *     itself, not a door that's already behind you.
-   * A single prop pair, not two optional ones, so a caller can't
+   *   - task focus (TaskRun.tsx, tasks increment): `{ label: 'Deadline',
+   *     time: deadline }` when the task has one, `undefined` when it
+   *     doesn't — a task genuinely has nothing to land against without a
+   *     deadline, unlike a departure, which always has an appointment. The
+   *     prop stays a single pair (not two independently-optional fields)
+   *     for the reason below whenever it IS supplied; it's the whole pair
+   *     that's optional, not just the time.
+   * A single prop pair (rather than two optional fields) so a caller can't
    * accidentally supply a time with no label or vice versa.
    */
-  bottomLine: { label: string; time: Date };
+  bottomLine?: { label: string; time: Date };
   onBack: () => void;
   /** Whole-screen tap-to-check-and-advance. Only ever provided by the
    * caller when `isCurrentStep` is true - a step that hasn't started yet
@@ -192,11 +199,17 @@ export function StepFocus({ step, isCurrentStep, anchorIso, now, bottomLine, onB
           placement, which is what portrait relies on) keeps it exactly
           bottom-center regardless of how tall the name/digits stack above
           it ends up being on a 412px-tall landscape viewport. */}
-      <div className="relative z-10 pb-8 landscape:absolute landscape:inset-x-0 landscape:bottom-safe-bottom landscape:pb-3">
-        <p className="text-center text-sm tabular-nums text-slate-500">
-          {bottomLine.label} {formatTime(bottomLine.time)}
-        </p>
-      </div>
+      {/* Tasks increment: omitted entirely for a deadline-less task — see
+          `bottomLine`'s own doc comment above for why there's honestly
+          nothing to show here in that case, rather than a blank or
+          placeholder line. */}
+      {bottomLine && (
+        <div className="relative z-10 pb-8 landscape:absolute landscape:inset-x-0 landscape:bottom-safe-bottom landscape:pb-3">
+          <p className="text-center text-sm tabular-nums text-slate-500">
+            {bottomLine.label} {formatTime(bottomLine.time)}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

@@ -7,7 +7,15 @@ import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { TextAction } from '../ui/TextAction';
-import { formatAppointmentLine, formatDateDisplay, formatDateTimeShort, formatScheduleDays, formatTime } from '../lib/format';
+import {
+  formatAppointmentLine,
+  formatDateDisplay,
+  formatDateTimeShort,
+  formatScheduleDays,
+  formatSlackLine,
+  formatTime,
+} from '../lib/format';
+import { taskProjection } from '../lib/taskProjection';
 import {
   cancelDepartureAlarms,
   getExactAlarmStatus,
@@ -76,6 +84,12 @@ const MAX_VISIBLE_SUGGESTIONS = 2;
  * around the same time, which is still a real list worth trimming at a
  * glance rather than a duplicate-card artifact to eliminate. */
 const MAX_VISIBLE_UPCOMING = 5;
+
+/** Cap on Tasks cards shown at once (tasks increment; CLAUDE.md's "defaults
+ * lean toward less, not more") — same "+N more" pattern as Upcoming above,
+ * just a smaller number: unlike a week of scheduled departures, a resident
+ * realistically has a small handful of task blocks in flight at once. */
+const MAX_VISIBLE_TASKS = 3;
 
 /** "Not now" dismissals, scoped to templateId+stepName. A module-level Set
  * (not component state) so a dismissal survives navigating away from Home
@@ -250,6 +264,30 @@ export function Home({ onNavigate }: HomeProps) {
   const pastDepartures = upcoming?.filter(
     (departure) => new Date(departure.appointmentAt).getTime() < now.getTime() - PAST_DEPARTURE_THRESHOLD_MS,
   );
+
+  // Tasks increment: planned/running tasks, same status scope as `upcoming`
+  // above but its own query — a task and a departure are different tables,
+  // never merged into one list, per the brief's binding "run on the exact
+  // same machinery, but stay a distinct kind of thing" design.
+  const tasksInProgress = useLiveQuery(
+    () => db.tasks.where('status').anyOf(['planned', 'running']).toArray(),
+    [],
+  );
+  // Soonest-deadline-first, deadline-less tasks last (Infinity sorts them
+  // to the bottom), createdAt as the tiebreak — the ordering that puts the
+  // most time-pressured task at the top of a capped, glanceable list,
+  // mirroring Upcoming's own soonest-appointment-first intent above.
+  const sortedTasks = useMemo(() => {
+    if (!tasksInProgress) return undefined;
+    return [...tasksInProgress].sort((a, b) => {
+      const aDeadline = a.deadlineAt ? new Date(a.deadlineAt).getTime() : Number.POSITIVE_INFINITY;
+      const bDeadline = b.deadlineAt ? new Date(b.deadlineAt).getTime() : Number.POSITIVE_INFINITY;
+      if (aDeadline !== bDeadline) return aDeadline - bDeadline;
+      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    });
+  }, [tasksInProgress]);
+  const visibleTasks = sortedTasks?.slice(0, MAX_VISIBLE_TASKS);
+  const hiddenTasksCount = Math.max(0, (sortedTasks?.length ?? 0) - MAX_VISIBLE_TASKS);
 
   // templateId -> Template, for the "Repeats Mon-Fri . 08:00" line below.
   // `templates` is already fetched (top of this component) for the
@@ -659,6 +697,44 @@ export function Home({ onNavigate }: HomeProps) {
       <Button onClick={() => onNavigate({ name: 'departureSetup' })} className="w-full">
         New departure
       </Button>
+
+      {/* Tasks increment: timed work without travel, run on the same live-
+          projection/check-off machinery as a departure. Always shows its
+          header + "New task" action, same as Templates below (a genuine
+          affordance to discover, not a guilt list) — unlike Waiting on
+          arrival just below, which deliberately has no empty state at all
+          (see that section's own comment) because an empty task list is
+          honestly nothing, not a thing this app is nagging about. */}
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Tasks</h2>
+          <TextAction onClick={() => onNavigate({ name: 'taskSetup' })}>New task</TextAction>
+        </div>
+
+        {tasksInProgress?.length === 0 && <p className="text-sm text-slate-500">No tasks in progress.</p>}
+
+        <div className="flex flex-col gap-2">
+          {visibleTasks?.map((task) => {
+            const checkedCount = task.units.filter((unit) => unit.checkedAt !== null).length;
+            const projection = taskProjection(now, task);
+            return (
+              <Card key={task.id} onClick={() => onNavigate({ name: 'task', taskId: task.id })}>
+                <p className="text-xl font-medium text-slate-100">{task.name}</p>
+                <p className="text-sm text-slate-400">
+                  {checkedCount} of {task.units.length} units
+                </p>
+                <p className="mt-1 text-sm tabular-nums text-slate-500">
+                  {task.deadlineAt
+                    ? `Deadline ${formatTime(new Date(task.deadlineAt))} · ${formatSlackLine(projection.slackMinutes ?? 0, 'past the deadline')}`
+                    : `Finishes ${formatTime(projection.projectedFinish)}`}
+                </p>
+              </Card>
+            );
+          })}
+        </div>
+
+        {hiddenTasksCount > 0 && <p className="text-sm text-slate-500">+{hiddenTasksCount} more</p>}
+      </section>
 
       {/* No empty state here on purpose — a departure only ever appears in
           this section for as long as it's genuinely waiting, and "Skip"

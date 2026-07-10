@@ -11,7 +11,20 @@ import {
   rushedActualsByStepName,
   stepNameLibrary,
 } from './learning';
-import type { Departure, Template } from '../db/types';
+import type { Departure, Template, WorkTask } from '../db/types';
+
+function makeTask(overrides: Partial<WorkTask> = {}): WorkTask {
+  return {
+    id: 't1',
+    name: 'Befunden EEG',
+    units: [],
+    deadlineAt: null,
+    status: 'done',
+    startedAt: '2026-07-09T08:00:00.000Z',
+    createdAt: '2026-07-09T07:00:00.000Z',
+    ...overrides,
+  };
+}
 
 function makeDeparture(overrides: Partial<Departure> = {}): Departure {
   return {
@@ -180,6 +193,90 @@ describe('naturalActualsByStepName / rushedActualsByStepName', () => {
     expect(actuals).toHaveLength(14);
     // The two oldest (1, 2) are dropped; newest (16) is last.
     expect(actuals).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+  });
+
+  // Tasks increment: naturalActualsByStepName's optional second argument —
+  // a done task's unit actuals join the same name-keyed pool as departure
+  // step actuals, by task name (== every unit's own name, see db/types.ts's
+  // TaskUnit doc comment).
+  describe('naturalActualsByStepName — tasks', () => {
+    it('a done task\'s unit actuals join the same pool as a departure step of the same name', () => {
+      const departure = makeDeparture({
+        id: 'd1',
+        startedAt: '2026-07-01T08:00:00.000Z',
+        leftAt: '2026-07-01T08:15:00.000Z', // before the task below, so it sorts first
+        steps: [checkedStep('Befunden EEG', '2026-07-01T08:15:00.000Z')], // 15 min
+      });
+      const task = makeTask({
+        startedAt: '2026-07-02T08:00:00.000Z',
+        units: [
+          { id: 'u1', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-02T08:12:00.000Z' }, // 12 min
+          { id: 'u2', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-02T08:26:00.000Z' }, // 14 min
+        ],
+      });
+
+      expect(naturalActualsByStepName([departure], [task]).get('Befunden EEG')).toEqual([15, 12, 14]);
+    });
+
+    it('defaults to [] — a call site that never passes tasks is completely unaffected', () => {
+      const departure = makeDeparture({
+        startedAt: '2026-07-01T08:00:00.000Z',
+        steps: [checkedStep('Shower', '2026-07-01T08:15:00.000Z')],
+      });
+      expect(naturalActualsByStepName([departure])).toEqual(naturalActualsByStepName([departure], []));
+    });
+
+    it('excludes a batched (retroactive check-off) task run entirely — same guard as a departure', () => {
+      const task = makeTask({
+        startedAt: '2026-07-02T08:00:00.000Z',
+        units: [
+          { id: 'u1', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-02T08:20:00.000Z' },
+          { id: 'u2', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-02T08:20:10.000Z' },
+          { id: 'u3', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-02T08:20:20.000Z' },
+        ],
+      });
+      expect(naturalActualsByStepName([], [task]).size).toBe(0);
+    });
+
+    it('excludes tasks that never started, or are not done', () => {
+      const notStarted = makeTask({ id: 'a', status: 'planned', startedAt: null, units: [] });
+      const running = makeTask({
+        id: 'b',
+        status: 'running',
+        units: [{ id: 'u1', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-02T08:15:00.000Z' }],
+      });
+      expect(naturalActualsByStepName([], [notStarted, running]).size).toBe(0);
+    });
+
+    it('caps a name to the most recent 14 occurrences ACROSS departures and tasks combined, not 14 of each', () => {
+      const departures: Departure[] = [];
+      for (let i = 1; i <= 10; i++) {
+        const startedAt = new Date(2026, 6, 1, i, 0, 0).toISOString();
+        const checkedAt = new Date(2026, 6, 1, i, i, 0).toISOString();
+        departures.push(
+          makeDeparture({ id: `d${i}`, startedAt, leftAt: checkedAt, steps: [checkedStep('Befunden EEG', checkedAt)] }),
+        );
+      }
+      const tasks: WorkTask[] = [];
+      for (let i = 11; i <= 16; i++) {
+        const startedAt = new Date(2026, 6, 1, i, 0, 0).toISOString();
+        const checkedAt = new Date(2026, 6, 1, i, i, 0).toISOString();
+        tasks.push(
+          makeTask({
+            id: `t${i}`,
+            startedAt,
+            units: [{ id: `u${i}`, name: 'Befunden EEG', plannedMinutes: i, checkedAt }],
+          }),
+        );
+      }
+
+      const actuals = naturalActualsByStepName(departures, tasks).get('Befunden EEG');
+      // 10 departures + 6 tasks = 16 occurrences total; capped to the most
+      // recent 14 combined (the two oldest departures, 1 and 2, drop out),
+      // not 10 departures + a separately-capped-to-14 task pool.
+      expect(actuals).toHaveLength(14);
+      expect(actuals).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+    });
   });
 });
 
@@ -485,5 +582,38 @@ describe('stepNameLibrary', () => {
 
     const library = stepNameLibrary(departures, [template]);
     expect(library.filter((entry) => entry.name === 'Shower')).toHaveLength(1);
+  });
+
+  it('includes task names (tasks increment), deduplicated against a matching departure step name', () => {
+    const departures = [
+      makeDeparture({
+        id: 'd1',
+        startedAt: '2026-07-01T08:00:00.000Z',
+        steps: [checkedStep('Befunden EEG', '2026-07-01T08:15:00.000Z')],
+      }),
+    ];
+    const tasks = [
+      makeTask({
+        id: 't1',
+        startedAt: '2026-07-02T08:00:00.000Z',
+        units: [
+          { id: 'u1', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-02T08:12:00.000Z' },
+          { id: 'u2', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-02T08:24:00.000Z' },
+        ],
+      }),
+      makeTask({ id: 't2', name: 'Sign discharge letters', startedAt: null, units: [] }),
+    ];
+
+    const library = stepNameLibrary(departures, [], tasks);
+    // "Befunden EEG" appears exactly once (deduplicated), with a learned
+    // estimate now that it has 3 combined natural samples (1 departure +
+    // 2 task units); "Sign discharge letters" appears with 0 runs, same
+    // "template-only name, never lived" treatment a never-run template
+    // step gets.
+    expect(library.filter((entry) => entry.name === 'Befunden EEG')).toHaveLength(1);
+    const eegEntry = library.find((entry) => entry.name === 'Befunden EEG');
+    expect(eegEntry?.runCount).toBe(3);
+    expect(eegEntry?.learnedMinutes).not.toBeNull();
+    expect(library.map((entry) => entry.name)).toContain('Sign discharge letters');
   });
 });
