@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { milestoneNotificationId, notificationId, sprintNotificationId } from './notifications';
+import {
+  milestoneNotificationId,
+  notificationId,
+  sprintNotificationId,
+  studyBlockNotificationId,
+  studyBlockNotificationIds,
+} from './notifications';
+import { calendarDates, occurrenceDates } from '../lib/recurrence';
+import type { TemplateSchedule } from '../db/types';
 
 // Android LocalNotifications ids are signed 32-bit ints
 // (Integer.MIN_VALUE..Integer.MAX_VALUE). This app only ever produces
@@ -72,5 +80,64 @@ describe('milestoneNotificationId', () => {
   it('is deterministic, so cancelMilestoneAlarm can recompute the same id on a fresh launch', () => {
     const milestoneId = crypto.randomUUID();
     expect(milestoneNotificationId(milestoneId)).toBe(milestoneNotificationId(milestoneId));
+  });
+});
+
+// Prüfung rework 2 (armed study blocks).
+describe('studyBlockNotificationId', () => {
+  it('is deterministic for the same (examId, date) pair — required so cancelStudyBlockAlarms can recompute it on a fresh launch', () => {
+    const examId = crypto.randomUUID();
+    expect(studyBlockNotificationId(examId, '2026-07-14')).toBe(studyBlockNotificationId(examId, '2026-07-14'));
+  });
+
+  it('differs by date for the same exam — one alarm id per occurrence, not one shared id for the whole schedule', () => {
+    const examId = 'exam-1';
+    expect(studyBlockNotificationId(examId, '2026-07-14')).not.toBe(studyBlockNotificationId(examId, '2026-07-15'));
+  });
+
+  it('differs by exam for the same date — two exams (however unlikely in v1) never fight over the same id', () => {
+    const date = '2026-07-14';
+    expect(studyBlockNotificationId('exam-a', date)).not.toBe(studyBlockNotificationId('exam-b', date));
+  });
+
+  it('stays within the signed-32-bit range every other notification id in this file already relies on', () => {
+    const INT32_MAX = 2147483647;
+    const id = studyBlockNotificationId(crypto.randomUUID(), '2026-12-25');
+    expect(id).toBeGreaterThanOrEqual(0);
+    expect(id).toBeLessThanOrEqual(INT32_MAX);
+  });
+});
+
+describe('studyBlockNotificationIds', () => {
+  it('maps each date through studyBlockNotificationId, in order', () => {
+    const examId = 'exam-1';
+    const dates = ['2026-07-14', '2026-07-16', '2026-07-21'];
+    expect(studyBlockNotificationIds(examId, dates)).toEqual(dates.map((date) => studyBlockNotificationId(examId, date)));
+  });
+
+  it("cancelStudyBlockAlarms's 14-day date window covers every id scheduleStudyBlockAlarms's 7-day occurrenceDates call could have minted", () => {
+    // The binding design constraint from notifications.ts's own
+    // STUDY_BLOCK_CANCEL_WINDOW_DAYS comment: the cancel window must be wide
+    // enough that a schedule edit (a day removed, or the whole schedule
+    // turned off) can never leave an orphaned alarm the next cancel pass
+    // fails to reach. Checked here as a property over a handful of
+    // "now" instants and every possible day-of-week schedule, rather than
+    // one hand-picked example, since the whole point of the 14-day margin is
+    // that it holds regardless of which day `now` happens to be.
+    const examId = 'exam-1';
+    const dailySchedule: TemplateSchedule = { time: '19:00', days: [1, 2, 3, 4, 5, 6, 7] };
+    const nowInstants = [
+      new Date(2026, 6, 9, 8, 0, 0), // Thursday
+      new Date(2026, 6, 12, 23, 0, 0), // Sunday, late
+      new Date(2026, 9, 21, 7, 0, 0), // the DST-week Wednesday recurrence.test.ts also uses
+    ];
+
+    for (const now of nowInstants) {
+      const scheduledDates = occurrenceDates(now, dailySchedule, 7).map((occurrence) => occurrence.date);
+      const cancelWindowIds = new Set(studyBlockNotificationIds(examId, calendarDates(now, 14)));
+      for (const date of scheduledDates) {
+        expect(cancelWindowIds.has(studyBlockNotificationId(examId, date))).toBe(true);
+      }
+    }
   });
 });

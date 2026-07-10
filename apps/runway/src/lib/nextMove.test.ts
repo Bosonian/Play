@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nextMove, suggestedPlannedMinutes } from './nextMove';
+import { autoSuggestSelection, nextMove, suggestedPlannedMinutes } from './nextMove';
 import type { Sprint, Topic } from '../db/types';
 
 const NOW = new Date('2026-07-09T08:00:00.000Z');
@@ -186,5 +186,49 @@ describe('suggestedPlannedMinutes', () => {
       makeSprint({ plannedMinutes, startedAt: new Date(NOW.getTime() - (1000 + i) * 60_000).toISOString() }),
     );
     expect(suggestedPlannedMinutes([...old, ...recent])).toBe(90);
+  });
+});
+
+// Prüfung rework 2 (armed study blocks): the tapped-study-block-alarm
+// prefill SprintSetup's `autoSuggest` reads.
+describe('autoSuggestSelection', () => {
+  it('returns null exactly when nextMove itself has nothing to suggest', () => {
+    expect(autoSuggestSelection(NOW, [], [], 50)).toBeNull();
+  });
+
+  it("uses the schedule's own minutes for length, overriding nextMove's momentum-based guess", () => {
+    const topics = [makeTopic({ id: 't1', estimatedHours: 40 })];
+    // Five recent 90-minute sprints would make suggestedPlannedMinutes (and
+    // therefore nextMove's own plannedMinutes) suggest 90 - the schedule's
+    // fixed 25 must win instead, since it's the box Deepak actually chose
+    // when he set the schedule up, not a momentum-derived guess.
+    const sprints = [90, 90, 90, 90, 90].map((plannedMinutes, i) =>
+      makeSprint({ topicId: 't1', plannedMinutes, startedAt: new Date(NOW.getTime() - i * 60_000).toISOString() }),
+    );
+    const result = autoSuggestSelection(NOW, topics, sprints, 25);
+    expect(result).toEqual({ topicId: 't1', plannedMinutes: 25 });
+  });
+
+  it("still picks nextMove's own topic (momentum/start/behind reasoning unchanged)", () => {
+    const topics = [
+      makeTopic({ id: 't1', name: 'Vascular', order: 0, estimatedHours: 40 }),
+      makeTopic({ id: 't2', name: 'Epilepsy', order: 1, estimatedHours: 10 }),
+    ];
+    const sprints = [
+      makeSprint({
+        topicId: 't2',
+        startedAt: new Date(NOW.getTime() - 2 * 60 * 60_000).toISOString(),
+        endedAt: new Date(NOW.getTime() - 1.5 * 60 * 60_000).toISOString(),
+      }),
+    ];
+    const result = autoSuggestSelection(NOW, topics, sprints, 50);
+    expect(result?.topicId).toBe('t2'); // momentum, same as nextMove's own test above
+    expect(result?.plannedMinutes).toBe(50);
+  });
+
+  it("falls back to nextMove's own suggested length when no schedule minutes are given (e.g. a schedule saved before this field existed)", () => {
+    const topics = [makeTopic({ id: 't1', estimatedHours: 40 })];
+    const result = autoSuggestSelection(NOW, topics, [], null);
+    expect(result).toEqual({ topicId: 't1', plannedMinutes: 25 }); // START's no-history default
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HORIZON_DAYS, occurrenceDates } from './recurrence';
+import { HORIZON_DAYS, calendarDates, occurrenceDates } from './recurrence';
 import type { TemplateSchedule } from '../db/types';
 
 // A fixed "now" for every test so assertions aren't racing the real clock —
@@ -79,5 +79,38 @@ describe('occurrenceDates', () => {
     const result = occurrenceDates(THURSDAY_0800, schedule({ days: [1, 4, 6] }), 10);
     const times = result.map((o) => o.at.getTime());
     expect(times).toEqual([...times].sort((a, b) => a - b));
+  });
+});
+
+// Prüfung rework 2 (armed study blocks): `calendarDates` backs
+// `cancelStudyBlockAlarms`'s over-wide cancellation window (notifications.ts)
+// — unlike `occurrenceDates` above, it must NOT filter by weekday or by
+// whether a time has already passed today, since it's answering "every date
+// an id could have been minted for," not "which occurrences a live schedule
+// produces."
+describe('calendarDates', () => {
+  it('returns exactly `days` consecutive local dates starting today, with no weekday filter', () => {
+    // THURSDAY_0800 is 2026-07-09; every calendar day should appear, not
+    // just the ones a `schedule.days` filter would keep.
+    expect(calendarDates(THURSDAY_0800, 5)).toEqual([
+      '2026-07-09',
+      '2026-07-10',
+      '2026-07-11',
+      '2026-07-12',
+      '2026-07-13',
+    ]);
+  });
+
+  it("includes today's date even when `now` is late in the day", () => {
+    // occurrenceDates would exclude an already-past time-of-day occurrence;
+    // calendarDates has no time-of-day to exclude by, so today's date is
+    // always the first entry regardless of what time `now` reads.
+    const lateInTheDay = new Date(2026, 6, 9, 23, 45, 0);
+    expect(calendarDates(lateInTheDay, 1)).toEqual(['2026-07-09']);
+  });
+
+  it('rolls over a month boundary correctly (JS Date normalizes the out-of-range day)', () => {
+    const nearMonthEnd = new Date(2026, 0, 30, 8, 0, 0); // 2026-01-30
+    expect(calendarDates(nearMonthEnd, 4)).toEqual(['2026-01-30', '2026-01-31', '2026-02-01', '2026-02-02']);
   });
 });

@@ -7,7 +7,7 @@ import { registerNotificationNavigation } from './native/notifications';
 import { registerDeepLinkNavigation } from './native/deepLinks';
 import { refreshWidgets } from './native/widgets';
 import { navigateToDeparture, navigateToScreen } from './lib/navigationRef';
-import { materializeScheduledDepartures } from './lib/materialize';
+import { materializeScheduledDepartures, materializeStudyBlockAlarms } from './lib/materialize';
 import { syncPendingReports } from './lib/reportSync';
 
 // Registered here, before the first render, rather than inside App — this
@@ -15,8 +15,15 @@ import { syncPendingReports } from './lib/reportSync';
 // gives it the best chance of catching a notification tap that cold-started
 // the app (see the comment on registerNotificationNavigation for the
 // caveat: this is still not a guarantee, just the best available option).
-// navigateToDeparture queues the navigation if App hasn't mounted yet.
-void registerNotificationNavigation(navigateToDeparture);
+// navigateToDeparture queues the navigation if App hasn't mounted yet. The
+// second callback (Prüfung rework 2) is a tapped study-block alarm's
+// destination — SprintSetup, prefilled via `autoSuggest` — routed through
+// the same navigateToScreen queue-or-navigate helper the deep-link handler
+// below already uses, rather than a departure id `registerNotificationNavigation`
+// has none of for this kind of alarm.
+void registerNotificationNavigation(navigateToDeparture, () =>
+  navigateToScreen({ name: 'sprintSetup', autoSuggest: true }),
+);
 
 // Widgets increment: a tap on the Prüfung widget or a static home-screen
 // shortcut cold-starts (or resumes) the app via a `runway://...` URL —
@@ -44,6 +51,17 @@ void refreshWidgets();
 // keeping the two Dexie-reading startup calls adjacent makes this list
 // easier to scan.
 void materializeScheduledDepartures();
+
+// Prüfung rework 2 (armed study blocks): the same "re-run on every open"
+// shape as materializeScheduledDepartures directly above, for the exam's
+// studySchedule instead of a template's — see materialize.ts's own doc
+// comment on materializeStudyBlockAlarms for why it's a full
+// cancel-and-reschedule rather than a missing-occurrence diff (there's no
+// row to diff against; see notifications.ts's scheduleStudyBlockAlarms for
+// the "no ledger table" decision). Placed after the departure materializer
+// for readability (the two Dexie-reading startup calls stay adjacent), not
+// because ordering between them matters.
+void materializeStudyBlockAlarms();
 
 // Field-reports increment: retries whatever's still `status: 'pending'` in
 // the fieldReports table against GitHub Issues, same fire-and-forget

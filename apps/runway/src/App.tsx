@@ -95,7 +95,15 @@ export type Screen =
   // the prefill only removes the topic/length decisions, never the ritual
   // gate. Omitted (as from the plain "Start a sprint" button, or the card's
   // own "Choose differently" link) means the ordinary blank form.
-  | { name: 'sprintSetup'; topicId?: string; plannedMinutes?: number }
+  // `autoSuggest` (Prüfung rework 2): set only by a tapped study-block
+  // alarm's notification-tap handler (main.tsx), which has no topicId/
+  // plannedMinutes of its own to prefill with the way ExamOverview's
+  // next-move card does above — SprintSetup computes the same suggestion
+  // itself once its topics/sprints/exam queries resolve (see its own
+  // `autoSuggest` prop comment). Mutually exclusive with topicId/
+  // plannedMinutes in practice, since the two prefill mechanisms have
+  // exactly one caller each.
+  | { name: 'sprintSetup'; topicId?: string; plannedMinutes?: number; autoSuggest?: boolean }
   | { name: 'sprint'; sprintId: string }
   // Increment 4: ExamOverview's "Add milestone" link and each milestone
   // row's "Edit" action both land here — a single list+form screen (see
@@ -163,7 +171,14 @@ export default function App() {
       case 'topicEdit':
         return <TopicEdit examId={screen.examId} onNavigate={setScreen} />;
       case 'sprintSetup':
-        return <SprintSetup topicId={screen.topicId} plannedMinutes={screen.plannedMinutes} onNavigate={setScreen} />;
+        return (
+          <SprintSetup
+            topicId={screen.topicId}
+            plannedMinutes={screen.plannedMinutes}
+            autoSuggest={screen.autoSuggest}
+            onNavigate={setScreen}
+          />
+        );
       case 'sprint':
         return <Sprint sprintId={screen.sprintId} onNavigate={setScreen} />;
       case 'milestoneEdit':

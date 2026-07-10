@@ -32,6 +32,18 @@ interface RepeatEditorProps {
    * toggle was pre-enabled from a parsed calendar RRULE (field report #10
    * §2). Omitted renders nothing extra; TemplateEdit has no such caller. */
   extraCaption?: string;
+  /** The checkbox's own label text — defaults to "Repeat this departure",
+   * the only wording every existing caller (TemplateEdit, DepartureSetup)
+   * needs. Overridable (Prüfung rework 2) so ExamSetup's study-block toggle
+   * doesn't have to say "departure" for something that isn't one. */
+  label?: string;
+  /** The closing guidance line shown only while `enabled`, below the day
+   * chips — defaults to the original "Planned 7 days ahead..." departure
+   * wording. Overridable (Prüfung rework 2) so a caller whose alarms mean
+   * something other than "departure" can state that exactly, rather than
+   * this component's default text quietly being wrong for what it's
+   * actually describing. */
+  footerCaption?: string;
 }
 
 /**
@@ -58,6 +70,8 @@ export function RepeatEditor({
   onToggleDay,
   valid,
   extraCaption,
+  label = 'Repeat this departure',
+  footerCaption = 'Planned 7 days ahead. Open Runway at least once a week to keep alarms armed.',
 }: RepeatEditorProps) {
   return (
     <section className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
@@ -68,7 +82,7 @@ export function RepeatEditor({
           onChange={(e) => onEnabledChange(e.target.checked)}
           className="size-6 shrink-0 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
         />
-        <span className="flex-1 text-slate-100">Repeat this departure</span>
+        <span className="flex-1 text-slate-100">{label}</span>
       </label>
 
       {enabled && (
@@ -107,9 +121,7 @@ export function RepeatEditor({
 
           {!valid && <p className="text-sm text-red-400">Set a time and pick at least one day.</p>}
 
-          <p className="text-sm text-slate-500">
-            Planned 7 days ahead. Open Runway at least once a week to keep alarms armed.
-          </p>
+          <p className="text-sm text-slate-500">{footerCaption}</p>
         </div>
       )}
     </section>

@@ -157,3 +157,37 @@ export function nextMove(now: Date, topics: Topic[], sprints: Sprint[]): NextMov
   const behindTopic = behindOrdered[0];
   return { topicId: behindTopic.id, topicName: behindTopic.name, plannedMinutes, reason: 'behind' };
 }
+
+/**
+ * SprintSetup's `autoSuggest` prefill (Prüfung rework 2, "armed study
+ * blocks"): the selection a tapped study-block alarm lands on. Reuses
+ * `nextMove` verbatim for WHICH topic — the momentum/start/behind
+ * reasoning above is exactly as valid for "I tapped a scheduled alarm" as
+ * for "I opened the exam overview and want a suggestion" — but overrides
+ * the LENGTH with the study schedule's own fixed `minutes` whenever one is
+ * given, rather than `nextMove`'s own recent-sprints-median guess. That's
+ * deliberate: `scheduleMinutes` is the exact box Deepak chose when he set
+ * up the schedule (25/50/90, the same "Tuesday 19:00" kind of legitimate
+ * commitment as the alarm time itself — see `StudySchedule`'s own doc
+ * comment, db/types.ts), and honoring that chosen box is more faithful to
+ * "the alarm lands you in a prefilled sprint" than re-deriving a length
+ * from momentum data that has nothing to do with why this particular alarm
+ * fired. Falls back to `nextMove`'s own suggested length when
+ * `scheduleMinutes` is null — a caller with no schedule to read from (or a
+ * schedule saved before this field existed) still gets a sensible prefill,
+ * not a broken one.
+ *
+ * Returns null under the exact same conditions `nextMove` does (no topics,
+ * or every topic already at its estimate) — there's nothing to preselect
+ * when `nextMove` itself has nothing to suggest.
+ */
+export function autoSuggestSelection(
+  now: Date,
+  topics: Topic[],
+  sprints: Sprint[],
+  scheduleMinutes: SprintLength | null,
+): { topicId: string; plannedMinutes: SprintLength } | null {
+  const move = nextMove(now, topics, sprints);
+  if (!move) return null;
+  return { topicId: move.topicId, plannedMinutes: scheduleMinutes ?? move.plannedMinutes };
+}

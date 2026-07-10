@@ -1,6 +1,11 @@
 import { db } from '../db/db';
 import type { Departure, Template } from '../db/types';
-import { cancelDepartureAlarms, ensurePermissions, scheduleDepartureAlarms } from '../native/notifications';
+import {
+  cancelDepartureAlarms,
+  ensurePermissions,
+  scheduleDepartureAlarms,
+  scheduleStudyBlockAlarms,
+} from '../native/notifications';
 import { refreshWidgets } from '../native/widgets';
 import { HORIZON_DAYS, occurrenceDates, type Occurrence } from './recurrence';
 
@@ -174,6 +179,38 @@ function buildDeparture(template: Template, occurrence: Occurrence): Departure {
     // compressPlan - see db/types.ts's own comment on wasReplanned.
     wasReplanned: false,
   };
+}
+
+/**
+ * Prüfung rework 2's study-block analogue of `materializeScheduledDepartures`
+ * above, with a structurally different job: there is no `studyBlocks` table
+ * and no per-occurrence row to diff "already planned" against (see
+ * db/types.ts's `Exam.studySchedule` doc comment and
+ * notifications.ts's `scheduleStudyBlockAlarms` for the "notification-only,
+ * no ledger" decision this reads). So instead of computing which occurrences
+ * are MISSING, this just reads the one exam (v1 supports exactly one —
+ * db/types.ts's `Exam` doc comment) and hands it straight to
+ * `scheduleStudyBlockAlarms`, which does its own cancel-then-reschedule of
+ * the next `HORIZON_DAYS` from scratch every time. Simpler than the
+ * departure path, and correct for the same reason a full reschedule is
+ * always correct: there's nothing partially-materialized to preserve when
+ * the only output is alarms, not database rows.
+ *
+ * Called fire-and-forget from the same two places as
+ * `materializeScheduledDepartures`: main.tsx on every startup (right after
+ * that call — see main.tsx's own comment on why the order doesn't matter)
+ * and ExamSetup's save path. Never throws, same reasoning as
+ * `materializeScheduledDepartures`'s own doc comment — a materializer glitch
+ * must never block app startup or a save.
+ */
+export async function materializeStudyBlockAlarms(): Promise<void> {
+  try {
+    const exam = await db.exams.toCollection().first();
+    if (!exam) return;
+    await scheduleStudyBlockAlarms(exam);
+  } catch (err) {
+    console.warn('Runway: study-block materializer failed', err);
+  }
 }
 
 /**

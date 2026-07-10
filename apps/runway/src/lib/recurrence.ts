@@ -56,6 +56,27 @@ function isoDateString(year: number, month: number, day: number): string {
  * `now` and that occurrence. See recurrence.test.ts's DST-week case for a
  * pinned example spanning the (German) October clock change.
  */
+/**
+ * Every calendar date (YYYY-MM-DD, local Y/M/D — `isoDateString` above)
+ * from today through `days - 1` days ahead. No weekday filter, no
+ * past-time exclusion — unlike `occurrenceDates`, which answers "which
+ * future instants does THIS schedule actually produce", this answers a
+ * blunter question notifications.ts's `cancelStudyBlockAlarms` needs:
+ * "every date a study-block alarm id could possibly have been minted for."
+ * That has to include a day a schedule USED to cover before an edit
+ * shrank it — by cancel time there's no schedule object left for
+ * `occurrenceDates` to read that day back out of, so cancellation walks
+ * plain calendar days instead of re-deriving them from a schedule.
+ */
+export function calendarDates(now: Date, days: number): string[] {
+  const dates: string[] = [];
+  for (let offset = 0; offset < days; offset++) {
+    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset);
+    dates.push(isoDateString(day.getFullYear(), day.getMonth(), day.getDate()));
+  }
+  return dates;
+}
+
 export function occurrenceDates(now: Date, schedule: TemplateSchedule, horizonDays: number): Occurrence[] {
   const [hours, minutes] = schedule.time.split(':').map(Number);
   const occurrences: Occurrence[] = [];

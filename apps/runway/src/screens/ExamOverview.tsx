@@ -26,6 +26,7 @@ import {
   formatExamAnchorLine,
   formatExamMarginLine,
   formatRequiredPaceLine,
+  formatScheduleDays,
   formatTime,
 } from '../lib/format';
 import { cancelSprintEndAlarm } from '../native/notifications';
@@ -338,6 +339,24 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
               until a full Monday-start week of history exists. */}
           {bestWeek !== null && (
             <p className="text-sm tabular-nums text-slate-500">Best week: {bestWeek.toFixed(1)} h.</p>
+          )}
+
+          {/* Prüfung rework 2: the commitment made visible, not a per-block
+              list — study blocks are scheduled ALARMS, not entities (see
+              db/types.ts's Exam.studySchedule and notifications.ts's
+              scheduleStudyBlockAlarms for the "no ledger" decision), so
+              there is nothing here to enumerate, only the standing schedule
+              itself. `exam.studySchedule` is checked with `!= null` rather
+              than plain truthiness only as a matter of habit — both read
+              identically for this field, but every other reader of a
+              non-indexed, possibly-`undefined` field in this app uses the
+              explicit form (see the field's own undefined-as-null doc
+              comment) and this stays consistent with that. */}
+          {exam.studySchedule != null && (
+            <p className="text-sm tabular-nums text-slate-500">
+              Study blocks: {formatScheduleDays(exam.studySchedule.days)} · {exam.studySchedule.time} ·{' '}
+              {exam.studySchedule.minutes} min.
+            </p>
           )}
         </div>
       )}

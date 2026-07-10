@@ -184,6 +184,14 @@ An exam with no topics yet (or topics with no hour estimates) reads honestly as 
 
 There is no way to delete an exam in v1 — after the exam, starting fresh means clearing app data or waiting for v1.5's archive.
 
+## Study blocks
+
+Departure mode works because every departure is ARMED: scheduled, alarmed, materialized a week ahead. Study time had none of that — it relied on deciding, in the moment, to open the app and start a sprint. This section gives study time the same footing: on ExamSetup, turn on "Study blocks," set a 24-hour time and the days it repeats on (the same day-chip control "Recurring departures" above uses), and pick a fixed sprint length (25/50/90 min). That schedule is a real, chosen commitment — picking "Tuesday 19:00" here carries the same weight as picking a departure's own appointment time, not a softer app-invented suggestion.
+
+**How it works:** every time Runway opens, and again right after ExamSetup is saved, `materializeStudyBlockAlarms()` (`src/lib/materialize.ts`) cancels whatever study-block alarms were pending and schedules fresh ones for the next 7 days from the current schedule — the same horizon, and the same "open Runway at least once a week to keep alarms armed" honest limitation, "Recurring departures" above already states for departures. Tapping a study-block alarm opens SprintSetup with the suggested topic and the schedule's own length already selected — the same reasoning the exam overview's next-move card already shows, just triggered by an alarm instead of a screen visit. The start ritual still applies; the alarm removes the "which topic, how long" decisions, never the ignition itself.
+
+**No per-block ledger, on purpose.** Unlike a departure, a study block is not backed by any database row — it exists only as a scheduled notification. A block you never start simply vanishes once its time passes, with no record and no "missed" entry anywhere; the weekly hours bar on the exam overview is already the honest, true account of what got studied. A block you DO start becomes a real logged `Sprint` the moment you begin it, through the same SprintSetup flow every other sprint uses — that Sprint, not a ledger of intentions, is the record that matters.
+
 ## Calendar and sharing
 
 Two independent ways an appointment already sitting somewhere else on the phone can become a departure, without retyping it.

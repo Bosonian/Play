@@ -383,6 +383,33 @@ export interface WorkTask {
 // sprints and milestones exist here as rows-in-waiting for increments 3–4.
 
 /**
+ * A repeating schedule attached to an Exam (Prüfung rework 2, "armed study
+ * blocks" increment) — the study-time analogue of `TemplateSchedule` above,
+ * and the structural fix this increment exists for: a departure is a real,
+ * chosen commitment with an exact alarm; study time had none of that and
+ * relied on a spontaneous decision, which is exactly the kind of decision
+ * ADHD declines to make. A study schedule gives study time the same
+ * legitimacy — Deepak picking "Tuesday 19:00" here carries the same weight
+ * as picking a departure's appointment time, not a softer, easier-to-skip
+ * suggestion.
+ *
+ * `time`/`days` mean exactly what they mean on `TemplateSchedule` (a plain
+ * "HH:mm" 24-hour string; ISO weekday numbers, 1 Monday .. 7 Sunday,
+ * matching CLAUDE.md's Monday-first week) — `occurrenceDates`
+ * (src/lib/recurrence.ts) is reused verbatim for both, since a study
+ * schedule and a departure schedule are the same occurrence math over
+ * different data. `minutes` is the fixed sprint length (25/50/90,
+ * SprintSetup's own SPRINT_LENGTHS) that a materialized block's tap-to-open
+ * prefills SprintSetup with — see notifications.ts's
+ * scheduleStudyBlockAlarms and nextMove.ts's autoSuggestSelection.
+ */
+export interface StudySchedule {
+  time: string;
+  days: number[];
+  minutes: 25 | 50 | 90;
+}
+
+/**
  * Prüfung mode's deadline anchor — the exam the mode's math points at.
  * `windowStart` is the earliest the exam could fall (usually all that's
  * known for a long-lead exam like the Facharztprüfung, e.g. "November
@@ -402,6 +429,24 @@ export interface Exam {
   examDate: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Non-null when this exam has scheduled, alarmed study blocks (Prüfung
+   * rework 2 — see `StudySchedule`'s own doc comment above for the "armed
+   * vs. spontaneous" rationale). DELIBERATELY not backed by any row-per-
+   * occurrence table: see notifications.ts's `scheduleStudyBlockAlarms` doc
+   * comment for the full "no ledger" decision — a study block that was
+   * never started should vanish without trace, and a block that WAS
+   * started already becomes a real `Sprint`, which is the only record that
+   * matters.
+   *
+   * Not indexed — same undefined-as-null discipline as `Template.schedule`
+   * (db.ts's `version()` comments explain which fields DO need a Dexie
+   * version bump; a non-indexed addition to an EXISTING table needs none):
+   * every read must treat `undefined` (an exam saved before this field
+   * existed) the same as `null`, via `studySchedule == null`, never
+   * `=== null`.
+   */
+  studySchedule: StudySchedule | null;
 }
 
 /**

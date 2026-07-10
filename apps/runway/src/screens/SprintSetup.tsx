@@ -8,6 +8,7 @@ import { ScreenHeader } from '../ui/ScreenHeader';
 import { TextAction } from '../ui/TextAction';
 import { useNow } from '../hooks/useNow';
 import { findLiveSprint, loggedHoursByTopic } from '../lib/examProjection';
+import { autoSuggestSelection } from '../lib/nextMove';
 import { ensurePermissions, scheduleSprintEndAlarm } from '../native/notifications';
 import { hapticImpact } from '../native/haptics';
 
@@ -16,6 +17,15 @@ interface SprintSetupProps {
    * present only when reached via that card's "Start" button. */
   topicId?: string;
   plannedMinutes?: number;
+  /** Prüfung rework 2: set only when this screen was reached by tapping a
+   * study-block alarm (main.tsx's notification-tap handler). Unlike
+   * `topicId`/`plannedMinutes` above — a same-instant navigation from
+   * ExamOverview, which already has live `topics`/`sprints` in hand — a
+   * notification tap can cold-start the app, so there's nothing to prefill
+   * WITH yet at mount time; this screen computes its own suggestion once
+   * its own queries resolve (see the effect below, `autoSuggestSelection`
+   * in lib/nextMove.ts). */
+  autoSuggest?: boolean;
   onNavigate: (screen: Screen) => void;
 }
 
@@ -54,7 +64,7 @@ interface RitualItemDraft {
  * itself makes for reading the single exam directly rather than taking an
  * examId prop.
  */
-export function SprintSetup({ topicId, plannedMinutes, onNavigate }: SprintSetupProps) {
+export function SprintSetup({ topicId, plannedMinutes, autoSuggest, onNavigate }: SprintSetupProps) {
   const exam = useLiveQuery(() => db.exams.toCollection().first(), []);
   const topics = useLiveQuery(
     async () => (exam ? db.topics.where('examId').equals(exam.id).sortBy('order') : []),
@@ -94,6 +104,27 @@ export function SprintSetup({ topicId, plannedMinutes, onNavigate }: SprintSetup
   const [selectedMinutes, setSelectedMinutes] = useState<SprintLength | null>(
     plannedMinutes === 25 || plannedMinutes === 50 || plannedMinutes === 90 ? plannedMinutes : null,
   );
+
+  // Prüfung rework 2's `autoSuggest` prefill. Can't be a lazy useState
+  // initializer the way topicId/plannedMinutes above are — those arrive
+  // already computed from live data at the instant of navigation, but a
+  // notification tap can cold-start the app, so `topics`/`sprints`/`exam`
+  // above may still be `undefined` (their first Dexie read not yet
+  // resolved) on this component's very first render. Runs once all three
+  // have loaded, and only while nothing has been chosen yet — a topic tap
+  // that beats this effect to the punch (a real possibility once
+  // topics/sprints load on a slow device) is the user's own choice and
+  // must not be silently overwritten a moment later.
+  useEffect(() => {
+    if (!autoSuggest || !topics || !sprints || exam === undefined) return;
+    if (selectedTopicId !== null || selectedMinutes !== null) return;
+    const suggestion = autoSuggestSelection(new Date(), topics, sprints, exam?.studySchedule?.minutes ?? null);
+    if (suggestion) {
+      setSelectedTopicId(suggestion.topicId);
+      setSelectedMinutes(suggestion.plannedMinutes);
+    }
+  }, [autoSuggest, topics, sprints, exam, selectedTopicId, selectedMinutes]);
+
   const [ritualItems, setRitualItems] = useState<RitualItemDraft[]>([]);
   const [ritualLoaded, setRitualLoaded] = useState(false);
   const [submitting, setSubmitting] = useState(false);

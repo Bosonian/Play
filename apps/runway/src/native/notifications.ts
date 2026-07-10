@@ -6,9 +6,10 @@ import type {
   ScheduleOptions,
 } from '@capacitor/local-notifications';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import type { Departure, Milestone, Sprint } from '../db/types';
+import type { Departure, Exam, Milestone, Sprint } from '../db/types';
 import { computeAlarmTimes } from '../lib/alarmTimes';
 import { formatTime } from '../lib/format';
+import { HORIZON_DAYS, calendarDates, occurrenceDates } from '../lib/recurrence';
 
 // The ONLY file in this app that imports @capacitor/local-notifications
 // (increment-4 spec) — every screen goes through the functions exported
@@ -237,6 +238,42 @@ export function milestoneNotificationId(milestoneId: string): number {
 }
 
 /**
+ * Deterministic notification id for one study-block occurrence (Prüfung
+ * rework 2). Namespaced on `date` as well as `examId` — unlike a sprint or
+ * a milestone, which only ever gets ONE alarm for its whole lifetime, a
+ * study schedule materializes one alarm PER matching day, and each needs
+ * its own id to be individually cancellable without disturbing the rest of
+ * the week's blocks.
+ *
+ * Reuses `notificationId` with a namespaced STRING key
+ * (`study-${examId}-${date}`) rather than adding a disjoint numeric range —
+ * same reuse rationale as `sprintNotificationId`/`milestoneNotificationId`
+ * above: it's the string, not a slot number, that keeps this id
+ * distinguishable from any departure/sprint/milestone id already drawn from
+ * the same 32-bit hash space, and a hash collision between them carries the
+ * exact same already-accepted "one alarm silently overwrites another, not
+ * data corruption" risk `hashString`'s own comment documents. `date` (not a
+ * full instant) is deliberate too: it's the same stable join key
+ * `occurrenceDates`/`calendarDates` (src/lib/recurrence.ts) already produce,
+ * so `scheduleStudyBlockAlarms` (this week's real schedule) and
+ * `cancelStudyBlockAlarms` (a blunter 14-day date walk, no schedule needed)
+ * always agree on what id a given day means, even though only one of them
+ * ever computes the day's exact alarm TIME.
+ */
+export function studyBlockNotificationId(examId: string, date: string): number {
+  return notificationId(`study-${examId}-${date}`, 0);
+}
+
+/** Pure array-map wrapper around `studyBlockNotificationId`, extracted so
+ * `cancelStudyBlockAlarms`'s 14-day window and this file's own tests can
+ * both depend on one place deciding what "the ids for these dates" means,
+ * rather than each recomputing the mapping inline and risking the two
+ * drifting apart. */
+export function studyBlockNotificationIds(examId: string, dates: string[]): number[] {
+  return dates.map((date) => studyBlockNotificationId(examId, date));
+}
+
+/**
  * Cancels any of the four staged alarms currently pending for a departure.
  * Safe to call unconditionally — cancel() silently ignores ids that aren't
  * pending (never scheduled, already fired, or already cancelled), which is
@@ -422,6 +459,91 @@ export async function scheduleMilestoneAlarm(milestone: Milestone): Promise<void
 }
 
 /**
+ * How many days ahead `cancelStudyBlockAlarms` walks when clearing pending
+ * study-block ids — deliberately WIDER than `HORIZON_DAYS` (the window
+ * `scheduleStudyBlockAlarms` actually plans). A schedule that just shrank
+ * (a day removed, or Study blocks turned off) leaves no schedule object
+ * behind that could tell a fresh cancel pass which dates used to matter, so
+ * this has to over-cancel by calendar date alone rather than under-cancel
+ * by trusting whatever the CURRENT schedule says. 14, not just `HORIZON_DAYS`
+ * doubled for no reason: it covers every id any past `scheduleStudyBlockAlarms`
+ * call could have minted (that call never plans further than `HORIZON_DAYS`
+ * out) with a full week of slack for how long Runway might go unopened
+ * between materializer passes.
+ */
+const STUDY_BLOCK_CANCEL_WINDOW_DAYS = 14;
+
+/**
+ * Cancels every study-block alarm that could currently be pending for
+ * `exam` — the next `STUDY_BLOCK_CANCEL_WINDOW_DAYS` calendar dates' worth
+ * of ids (see that constant's own comment for why the window is wider than
+ * what's ever actually scheduled). Safe to call unconditionally, same
+ * "cancel() silently ignores an id that isn't pending" reasoning as
+ * `cancelDepartureAlarms` — called both standalone (Study blocks toggled
+ * off) and as the first step of `scheduleStudyBlockAlarms` below (toggled
+ * on, or edited).
+ */
+export async function cancelStudyBlockAlarms(exam: Exam): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  const dates = calendarDates(new Date(), STUDY_BLOCK_CANCEL_WINDOW_DAYS);
+  await LocalNotifications.cancel({
+    notifications: studyBlockNotificationIds(exam.id, dates).map((id) => ({ id })),
+  });
+}
+
+/**
+ * Prüfung rework 2's structural fix, made real: cancels whatever was
+ * pending for `exam`, then schedules one alarm per occurrence
+ * `exam.studySchedule` produces over the next `HORIZON_DAYS` — exactly
+ * `occurrenceDates` (src/lib/recurrence.ts), reused verbatim, the same
+ * function `materializeScheduledDepartures` already relies on for
+ * departures. No-ops (after the cancel) when `exam.studySchedule` is null —
+ * a schedule just turned off should leave nothing armed, not a stale set of
+ * alarms from before.
+ *
+ * Deliberately NOTIFICATION-ONLY: there is no `studyBlocks` table and no row
+ * created per occurrence (binding decision, db/types.ts's `Exam.studySchedule`
+ * doc comment). A study block that's never started should vanish without
+ * trace — the weekly hours bar (ExamOverview) is already the honest record
+ * of what actually happened, and a guilt ledger of skipped blocks would only
+ * fight that. A block that IS started becomes a real `Sprint` through the
+ * normal SprintSetup flow, which is the only record this app keeps of study
+ * time — this function's whole job is getting Deepak to that flow at the
+ * moment he chose, not bookkeeping the moments he didn't.
+ *
+ * Body copy is fixed and literal ("Study block. {exam.name}") — no
+ * per-occurrence detail to report, since there's no row behind the alarm to
+ * describe one. `actionTypeId` reuses `START_ACTION_TYPE_ID`, the same
+ * snooze action type a departure's "Start getting ready" alarm gets: "not
+ * yet, ten more minutes" is exactly as legitimate a response to a study
+ * block alarm as to a departure one, and a second, near-identical action
+ * type would only duplicate that one button for no behavioural difference.
+ * `extra: { studyBlock: true, examId }` is what `registerNotificationNavigation`
+ * below reads to route a tap into SprintSetup instead of a departure.
+ */
+export async function scheduleStudyBlockAlarms(exam: Exam): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  await ensureChannels();
+  await cancelStudyBlockAlarms(exam);
+  if (exam.studySchedule == null) return;
+
+  const occurrences = occurrenceDates(new Date(), exam.studySchedule, HORIZON_DAYS);
+  if (occurrences.length === 0) return;
+
+  await LocalNotifications.schedule({
+    notifications: occurrences.map((occurrence) => ({
+      id: studyBlockNotificationId(exam.id, occurrence.date),
+      title: 'Runway',
+      body: `Study block. ${exam.name}`,
+      channelId: STAGED_CHANNEL_ID,
+      schedule: { at: occurrence.at, allowWhileIdle: true },
+      extra: { studyBlock: true, examId: exam.id },
+      actionTypeId: START_ACTION_TYPE_ID,
+    })),
+  });
+}
+
+/**
  * Whether Android's per-app "use exact alarms" toggle is on. Always
  * 'granted' on web/dev (there's no such setting to check, and we don't want
  * a banner to ever show outside native). See checkExactNotificationSetting
@@ -453,6 +575,14 @@ export async function openExactAlarmSettings(): Promise<void> {
  * Returns an unsubscribe function so the caller (App.tsx, in a mount
  * effect) can clean up under React 18 StrictMode's double-invoke.
  *
+ * `onStudyBlockTap` (Prüfung rework 2) is a second, narrower callback rather
+ * than widening `handler`'s own signature: `handler` exists specifically to
+ * hand back a departure id (main.tsx's `navigateToDeparture` needs exactly
+ * that), and a study-block tap has no departure id to offer — it always
+ * means the same one destination (SprintSetup, prefilled), so a callback
+ * that takes no argument says that plainly instead of a `string | null`
+ * `handler` would have to branch on internally.
+ *
  * Cold-start caveat (increment-4 spec §4): @capacitor/local-notifications
  * has no getLaunchNotification()-style API — unlike
  * @capacitor/push-notifications, this plugin's definitions.d.ts exposes no
@@ -472,6 +602,7 @@ export async function openExactAlarmSettings(): Promise<void> {
  */
 export async function registerNotificationNavigation(
   handler: (departureId: string) => void,
+  onStudyBlockTap: () => void,
 ): Promise<() => void> {
   if (!Capacitor.isNativePlatform()) return () => {};
 
@@ -479,13 +610,32 @@ export async function registerNotificationNavigation(
     'localNotificationActionPerformed',
     (action: ActionPerformed) => {
       // F2: tapping "Snooze 10 min" reschedules instead of opening the app
-      // (see scheduleSnoozeAlarm's own doc comment). Every other actionId —
-      // in practice just 'tap', the plugin's default for tapping the
+      // (see scheduleSnoozeAlarm's own doc comment). This branch runs
+      // identically for a study-block alarm as for a departure one —
+      // scheduleSnoozeAlarm reschedules whatever `original` notification was
+      // tapped, unconditionally, using ITS OWN id/title/body/channel/
+      // actionTypeId/extra, so a snoozed study block keeps its
+      // `extra.studyBlock` flag (and therefore still routes through the
+      // `onStudyBlockTap` branch below) the next time it fires, with no
+      // study-block-specific code needed here. Every other actionId — in
+      // practice just 'tap', the plugin's default for tapping the
       // notification body itself (read the .d.ts's ActionPerformed comment)
-      // — keeps exactly the pre-F2 behaviour below: open the departure the
-      // notification was about.
+      // — falls through to the two branches below.
       if (action.actionId === SNOOZE_ACTION_ID) {
         void scheduleSnoozeAlarm(action.notification);
+        return;
+      }
+      // Prüfung rework 2: a tapped study-block alarm has no departure to
+      // open — it routes into SprintSetup's prefilled start flow instead
+      // (main.tsx wires `onStudyBlockTap` to
+      // `navigateToScreen({ name: 'sprintSetup', autoSuggest: true })`).
+      // Checked before the departure branch below since a study-block
+      // notification's `extra` has no `departureId` to fall through on
+      // anyway, but checking explicitly keeps the two kinds of alarm this
+      // file schedules clearly separated rather than relying on one
+      // silently not matching the other's shape.
+      if (action.notification.extra?.studyBlock === true) {
+        onStudyBlockTap();
         return;
       }
       const departureId = action.notification.extra?.departureId;
