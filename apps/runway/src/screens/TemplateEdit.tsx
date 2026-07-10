@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { getISODay } from 'date-fns';
 import { db } from '../db/db';
 import type { StepTemplate, Template, TemplateSchedule } from '../db/types';
 import type { Screen } from '../App';
@@ -7,13 +8,23 @@ import { Button } from '../ui/Button';
 import { NumberField } from '../ui/NumberField';
 import { TextField } from '../ui/TextField';
 import { ScreenHeader } from '../ui/ScreenHeader';
+import { RepeatEditor } from '../ui/RepeatEditor';
 import { materializeScheduledDepartures, replaceUntouchedFutureAutoRows } from '../lib/materialize';
+import { formatDateInput, formatTimeInput } from '../lib/format';
 import { learnedEstimate, naturalActualsByStepName, stepNameLibrary } from '../lib/learning';
 import type { LearnedEstimate } from '../lib/learning';
 import { StepNameAutocomplete } from '../ui/StepNameAutocomplete';
 
 interface TemplateEditProps {
   id?: string;
+  // "Make repeating" promotion path (field report #10 §3): set only by
+  // Home's "Make repeating" action on a planned, template-less departure
+  // card. Mutually exclusive with `id` in practice — Home never passes both
+  // — but each is guarded independently below (`!id`) the same way
+  // DepartureSetup guards its own `sourceTemplate` query against a
+  // simultaneous `departureId`, rather than relying on caller discipline
+  // alone.
+  fromDepartureId?: string;
   onNavigate: (screen: Screen) => void;
 }
 
@@ -29,27 +40,23 @@ const BLANK: Omit<Template, 'id' | 'createdAt' | 'updatedAt'> = {
   arrivalWifiSsid: null,
 };
 
-/** Monday-first (CLAUDE.md), ISO weekday numbers 1..7 paired with the
- * single-letter chip label TemplateEdit renders. Two Tuesdays/Saturdays in
- * a row read fine as single letters in a 7-chip row; `ariaLabel` carries
- * the full name so the chip's accessible name isn't just "T". */
-const DAY_CHIPS: { iso: number; label: string; ariaLabel: string }[] = [
-  { iso: 1, label: 'M', ariaLabel: 'Monday' },
-  { iso: 2, label: 'T', ariaLabel: 'Tuesday' },
-  { iso: 3, label: 'W', ariaLabel: 'Wednesday' },
-  { iso: 4, label: 'T', ariaLabel: 'Thursday' },
-  { iso: 5, label: 'F', ariaLabel: 'Friday' },
-  { iso: 6, label: 'S', ariaLabel: 'Saturday' },
-  { iso: 7, label: 'S', ariaLabel: 'Sunday' },
-];
-
 const DEFAULT_REPEAT_TIME = '08:00';
 
-export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
+export function TemplateEdit({ id, fromDepartureId, onNavigate }: TemplateEditProps) {
   // Loads once per `id`; existing is undefined while loading, null if the
   // id doesn't resolve to anything (shouldn't normally happen from Home's
   // own links, but guards against a stale reference).
   const existing = useLiveQuery(() => (id ? db.templates.get(id) : undefined), [id]);
+
+  // "Make repeating" promotion path (§3): the departure this template is
+  // being built FROM, when Home's "Make repeating" action opened this
+  // screen. Guarded on `!id` for the same reason DepartureSetup guards its
+  // `sourceTemplate` query — an edit-existing-template navigation should
+  // never also carry a from-departure prefill.
+  const sourceDeparture = useLiveQuery(
+    () => (fromDepartureId && !id ? db.departures.get(fromDepartureId) : undefined),
+    [fromDepartureId, id],
+  );
 
   const [name, setName] = useState(BLANK.name);
   const [destination, setDestination] = useState(BLANK.destination);
@@ -160,6 +167,44 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
     }
   }, [existing]);
 
+  // "Make repeating" promotion path (§3): populate the whole form from the
+  // source departure once it loads, mirroring DepartureSetup's own
+  // populate-from-`sourceTemplate` effect — same "fresh ids, steps copied
+  // not referenced" shape, just going the other direction (Departure ->
+  // Template instead of Template -> Departure). Runs once, when
+  // `sourceDeparture` changes identity, same "don't clobber typing"
+  // reasoning as the `existing` effect above.
+  useEffect(() => {
+    if (sourceDeparture) {
+      setName(sourceDeparture.name);
+      setDestination(sourceDeparture.destination);
+      setTravelMinutes(sourceDeparture.travelMinutes);
+      setBufferMinutes(sourceDeparture.bufferMinutes);
+      setSteps(
+        sourceDeparture.steps.map((step) => ({ id: crypto.randomUUID(), name: step.name, minutes: step.plannedMinutes })),
+      );
+      setArrivalSteps(
+        (sourceDeparture.arrivalSteps ?? []).map((step) => ({
+          id: crypto.randomUUID(),
+          name: step.name,
+          minutes: step.plannedMinutes,
+        })),
+      );
+      setArrivalWifiSsid(sourceDeparture.arrivalWifiSsid ?? '');
+
+      // Repeat pre-enabled, seeded from the departure's own appointment —
+      // time as HH:mm, days as its single weekday. This is only a starting
+      // point: the whole point of routing through TemplateEdit (rather than
+      // silently attaching a schedule) is that Deepak can widen it to more
+      // days, change the time, or leave Repeat off entirely before saving —
+      // see handleSave's own comment on why the link happens either way.
+      const appointment = new Date(sourceDeparture.appointmentAt);
+      setRepeatEnabled(true);
+      setRepeatTime(formatTimeInput(appointment));
+      setRepeatDays([getISODay(appointment)]);
+    }
+  }, [sourceDeparture]);
+
   function toggleRepeatDay(iso: number) {
     setRepeatDays((prev) => (prev.includes(iso) ? prev.filter((d) => d !== iso) : [...prev, iso].sort()));
   }
@@ -228,44 +273,91 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
     const trimmedArrivalWifiSsid = arrivalWifiSsid.trim();
     const arrivalWifiSsidToSave = trimmedArrivalWifiSsid === '' ? null : trimmedArrivalWifiSsid;
 
-    if (id && existing) {
-      await db.templates.update(id, {
-        name: name.trim(),
-        destination: destination.trim(),
-        travelMinutes,
-        bufferMinutes,
-        steps,
-        arrivalSteps,
-        arrivalWifiSsid: arrivalWifiSsidToSave,
-        updatedAt: now,
-        schedule,
-        autoLearn,
-      });
-    } else {
-      await db.templates.add({
-        id: templateId,
-        name: name.trim(),
-        destination: destination.trim(),
-        travelMinutes,
-        bufferMinutes,
-        steps,
-        arrivalSteps,
-        arrivalWifiSsid: arrivalWifiSsidToSave,
-        createdAt: now,
-        updatedAt: now,
-        schedule,
-        autoLearn,
-      });
-    }
+    // "Make repeating" promotion (§3): the template write and the source
+    // departure's link both happen in ONE Dexie transaction — if either
+    // failed partway, the alternative (a new template with no departure
+    // pointing at it, or a departure linked to a template that was never
+    // actually saved) is a worse, harder-to-notice inconsistency than the
+    // whole save just not happening. `replaceUntouchedFutureAutoRows`/
+    // `materializeScheduledDepartures` stay OUTSIDE this transaction,
+    // deliberately — they're the sweep/re-plan step that reads what this
+    // transaction just committed, not part of the atomic write itself, same
+    // separation TopicEdit's own save uses for the analogous case.
+    await db.transaction('rw', db.templates, db.departures, async () => {
+      if (id && existing) {
+        await db.templates.update(id, {
+          name: name.trim(),
+          destination: destination.trim(),
+          travelMinutes,
+          bufferMinutes,
+          steps,
+          arrivalSteps,
+          arrivalWifiSsid: arrivalWifiSsidToSave,
+          updatedAt: now,
+          schedule,
+          autoLearn,
+        });
+      } else {
+        await db.templates.add({
+          id: templateId,
+          name: name.trim(),
+          destination: destination.trim(),
+          travelMinutes,
+          bufferMinutes,
+          steps,
+          arrivalSteps,
+          arrivalWifiSsid: arrivalWifiSsidToSave,
+          createdAt: now,
+          updatedAt: now,
+          schedule,
+          autoLearn,
+        });
+      }
 
-    // Always sweep, whether the schedule changed, was newly turned on, or
-    // just got turned off — a step/travel/time edit and an off-toggle both
-    // need the already-planned future week cleared of rows that no longer
-    // reflect it. Re-materializing (which recreates whatever's still
-    // missing for the horizon) only makes sense when a schedule remains —
-    // toggling off means the sweep IS the whole story, per the spec's
-    // "toggling off: same delete sweep, no re-materialize."
-    await replaceUntouchedFutureAutoRows(templateId);
+      // `sourceDeparture` is only ever set on the create path (`!id`
+      // guards the query above) — link it to the template just created,
+      // regardless of whether Repeat ended up enabled or not. Per the
+      // spec: a template is a useful thing to have either way, and the
+      // link is harmless when there's no schedule for the materializer to
+      // read — the source departure simply never gains an auto-created
+      // sibling. `scheduledForDate` = the departure's own appointment
+      // date is what makes materialize.ts's dedup key
+      // (templateId + scheduledForDate) already cover this exact
+      // occurrence, so the materialize call below can never double-book
+      // it — same reasoning as DepartureSetup's own save-with-repeat path
+      // (§2).
+      if (sourceDeparture) {
+        await db.departures.update(sourceDeparture.id, {
+          templateId,
+          scheduledForDate: formatDateInput(new Date(sourceDeparture.appointmentAt)),
+        });
+      }
+    });
+
+    // Sweep only on an edit of an ALREADY-EXISTING template — whether the
+    // schedule changed, was newly turned on, or just got turned off, an
+    // edit needs the already-planned future week cleared of rows that no
+    // longer reflect it (re-materializing afterwards, which recreates
+    // whatever's still missing for the horizon, only makes sense when a
+    // schedule remains — toggling off means the sweep IS the whole story,
+    // per the spec's "toggling off: same delete sweep, no re-materialize").
+    //
+    // Deliberately skipped on CREATE (`id` undefined) — field report #10
+    // §3: a brand-new template has no already-materialized future rows to
+    // sweep in the ordinary case (nothing else could reference a templateId
+    // that didn't exist a moment ago), and on the "Make repeating" path
+    // specifically, running this sweep here WOULD find a match — the
+    // source departure just linked inside the transaction above, which now
+    // satisfies every one of the sweep's own criteria (planned,
+    // scheduledForDate set, untouched, still in the future). Sweeping it
+    // would delete the very departure this whole save exists to preserve,
+    // undoing the link for no reason, right before materialize recreates an
+    // equivalent-but-different row in its place. "Link, then materialize"
+    // (the promotion spec's own ordering) only means what it says if this
+    // step is skipped for that path.
+    if (id && existing) {
+      await replaceUntouchedFutureAutoRows(templateId);
+    }
     if (schedule != null) {
       await materializeScheduledDepartures();
     }
@@ -331,59 +423,15 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
         onChange={setBufferMinutes}
       />
 
-      <section className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
-        <label className="flex items-center gap-3">
-          <input
-            type="checkbox"
-            checked={repeatEnabled}
-            onChange={(e) => setRepeatEnabled(e.target.checked)}
-            className="size-6 shrink-0 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
-          />
-          <span className="flex-1 text-slate-100">Repeat this departure</span>
-        </label>
-
-        {repeatEnabled && (
-          <div className="flex flex-col gap-3 motion-safe:animate-fade-in">
-            <TextField
-              label="Time"
-              type="time"
-              value={repeatTime}
-              onChange={(e) => setRepeatTime(e.target.value)}
-              containerClassName="w-32"
-            />
-
-            <div className="flex gap-1.5">
-              {DAY_CHIPS.map((day) => {
-                const selected = repeatDays.includes(day.iso);
-                return (
-                  <button
-                    key={day.iso}
-                    type="button"
-                    onClick={() => toggleRepeatDay(day.iso)}
-                    aria-label={day.ariaLabel}
-                    aria-pressed={selected}
-                    className={`flex min-h-12 min-w-12 flex-1 items-center justify-center rounded-lg border text-sm font-medium transition-colors ${
-                      selected
-                        ? 'border-sky-500 bg-sky-500/20 text-sky-300'
-                        : 'border-slate-700 bg-raised text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    {day.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            {!repeatValid && (
-              <p className="text-sm text-red-400">Set a time and pick at least one day.</p>
-            )}
-
-            <p className="text-sm text-slate-500">
-              Planned 7 days ahead. Open Runway at least once a week to keep alarms armed.
-            </p>
-          </div>
-        )}
-      </section>
+      <RepeatEditor
+        enabled={repeatEnabled}
+        onEnabledChange={setRepeatEnabled}
+        time={repeatTime}
+        onTimeChange={setRepeatTime}
+        days={repeatDays}
+        onToggleDay={toggleRepeatDay}
+        valid={repeatValid}
+      />
 
       <section className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
         <label className="flex items-center gap-3">

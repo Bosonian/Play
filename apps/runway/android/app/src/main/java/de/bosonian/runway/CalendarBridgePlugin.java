@@ -20,6 +20,7 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
+import org.json.JSONObject;
 
 /**
  * The JS<->native bridge for reading the device's calendar. One method,
@@ -65,6 +66,13 @@ public class CalendarBridgePlugin extends Plugin {
         CalendarContract.Instances.TITLE,
         CalendarContract.Instances.EVENT_LOCATION,
         CalendarContract.Instances.ALL_DAY,
+        // Field report #10: CalendarContract.Instances is a view joined
+        // against Events under the hood, and exposes Events.RRULE under the
+        // same column name — but no Android API actually GUARANTEES that
+        // for every calendar provider (stock AOSP does it; a third-party
+        // provider app theoretically might not). Requested here defensively;
+        // see the read site below for the matching defensive read.
+        CalendarContract.Events.RRULE,
     };
 
     /**
@@ -122,6 +130,31 @@ public class CalendarBridgePlugin extends Plugin {
                     event.put("beginEpochMs", cursor.getLong(0));
                     event.put("location", location == null ? "" : location);
                     event.put("allDay", cursor.getInt(3) != 0);
+                    // Defensive RRULE read (field report #10): a genuinely
+                    // one-off event has no RRULE at all (null is the correct,
+                    // expected value there, not a failure) — but a provider
+                    // that omits or renames the joined column outright would
+                    // otherwise throw a CursorIndexOutOfBoundsException and
+                    // take the whole calendar read down with it, over one
+                    // optional field. getColumnIndex returning -1 covers
+                    // "column not present"; the try/catch is the second
+                    // backstop for a provider that includes the column but
+                    // throws reading it. JSONObject.NULL (not Java `null`,
+                    // which org.json's JSONObject#put silently treats as
+                    // "remove this key") is what makes the field arrive on
+                    // the JS side as an explicit `null`, matching
+                    // CalendarEvent's `rrule: string | null` — see
+                    // src/native/calendar.ts.
+                    String rrule = null;
+                    try {
+                        int rruleIndex = cursor.getColumnIndex(CalendarContract.Events.RRULE);
+                        if (rruleIndex >= 0) {
+                            rrule = cursor.getString(rruleIndex);
+                        }
+                    } catch (Exception e) {
+                        rrule = null;
+                    }
+                    event.put("rrule", rrule == null ? JSONObject.NULL : rrule);
                     events.put(event);
                 }
             }

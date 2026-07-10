@@ -9,6 +9,7 @@ function makeEvent(overrides: Partial<CalendarEvent> = {}): CalendarEvent {
     beginEpochMs: new Date('2026-07-09T14:30:00.000Z').getTime(),
     location: 'Klinikum Stuttgart',
     allDay: false,
+    rrule: null,
     ...overrides,
   };
 }

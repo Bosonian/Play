@@ -22,7 +22,12 @@ import { setNavigationRef } from './lib/navigationRef';
 // notification tap), revisit this.
 export type Screen =
   | { name: 'home' }
-  | { name: 'templateEdit'; id?: string }
+  // `fromDepartureId` (field report #10 §3, "Make repeating"): set only by
+  // Home's "Make repeating" TextAction on a planned departure card whose
+  // `templateId` is null — see TemplateEdit's own doc comment on the
+  // `sourceDeparture` query for how it's used. Mutually exclusive with `id`
+  // by construction (Home never passes both).
+  | { name: 'templateEdit'; id?: string; fromDepartureId?: string }
   // `prefillName`/`prefillDestination`/`prefillAppointmentIso` (calendar/
   // share-target increment, E1): applied ONCE as DepartureSetup's initial
   // form values on CREATE only, never on an edit (departureId set) — same
@@ -47,6 +52,11 @@ export type Screen =
   // explanation. Home's capture-box handler picks ONE of
   // prefillAppointmentIso or prefillDate+prefillTimeMissing depending on
   // whether Gemini returned a time — never both.
+  // `prefillRepeatDays` (field report #10 §2): Home's "Plan departure" on a
+  // calendar card whose event RRULE parsed (src/lib/rrule.ts) as a plain
+  // weekly rule — the ISO weekday numbers it parsed to, pre-enabling
+  // DepartureSetup's create-only Repeat section. See DepartureSetup's own
+  // prop doc comment for the rest.
   | {
       name: 'departureSetup';
       templateId?: string;
@@ -56,6 +66,7 @@ export type Screen =
       prefillAppointmentIso?: string;
       prefillDate?: string;
       prefillTimeMissing?: boolean;
+      prefillRepeatDays?: number[];
     }
   | { name: 'runway'; departureId: string }
   | { name: 'history' }
@@ -115,7 +126,7 @@ export default function App() {
       case 'home':
         return <Home onNavigate={setScreen} />;
       case 'templateEdit':
-        return <TemplateEdit id={screen.id} onNavigate={setScreen} />;
+        return <TemplateEdit id={screen.id} fromDepartureId={screen.fromDepartureId} onNavigate={setScreen} />;
       case 'departureSetup':
         return (
           <DepartureSetup
@@ -126,6 +137,7 @@ export default function App() {
             prefillAppointmentIso={screen.prefillAppointmentIso}
             prefillDate={screen.prefillDate}
             prefillTimeMissing={screen.prefillTimeMissing}
+            prefillRepeatDays={screen.prefillRepeatDays}
             onNavigate={setScreen}
           />
         );

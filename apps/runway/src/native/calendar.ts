@@ -8,15 +8,23 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
 // registered by MainActivity rather than auto-discovered from node_modules.
 
 /** One instance of a device calendar event, already in the app's own shape —
- * see CalendarBridgePlugin.java's PROJECTION for where these four fields
+ * see CalendarBridgePlugin.java's PROJECTION for where these five fields
  * come from. `beginEpochMs` (not an ISO string) matches what
  * android.database.Cursor.getLong() hands back for CalendarContract.Instances
- * .BEGIN with no lossy string round-trip in between. */
+ * .BEGIN with no lossy string round-trip in between.
+ *
+ * `rrule` (field report #10): the event's raw RRULE string (RFC 5545,
+ * e.g. "FREQ=WEEKLY;BYDAY=FR"), or `null` for a genuinely one-off event —
+ * see CalendarBridgePlugin.java's defensive read for the one other case that
+ * also produces `null`: a calendar provider that can't answer the question
+ * at all. Parsed by src/lib/rrule.ts's parseWeeklyRrule, never read raw
+ * anywhere else. */
 export interface CalendarEvent {
   title: string;
   beginEpochMs: number;
   location: string;
   allDay: boolean;
+  rrule: string | null;
 }
 
 interface CalendarBridgePlugin {

@@ -21,4 +21,6 @@
     <string name="widget_pruefung_description">Projected exam ready date.</string>
     <string name="widget_departure_label">Next departure</string>
     <string name="widget_departure_description">Leave-by times for your next departure.</string>
+    <string name="shortcut_arrived_short">I’ve arrived</string>
+    <string name="shortcut_arrived_long">I’ve arrived — record arrival</string>
 </resources>

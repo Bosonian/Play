@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { getISODay } from 'date-fns';
 import { db } from '../db/db';
-import type { Departure, DepartureStep } from '../db/types';
+import type { Departure, DepartureStep, Template } from '../db/types';
 import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { NumberField } from '../ui/NumberField';
 import { TextField } from '../ui/TextField';
 import { ScreenHeader } from '../ui/ScreenHeader';
+import { RepeatEditor } from '../ui/RepeatEditor';
 import { computeProjection, computeStartBy } from '../lib/projection';
 import { formatDateInput, formatTime, formatTimeInput } from '../lib/format';
 import { ensurePermissions, scheduleDepartureAlarms } from '../native/notifications';
@@ -15,7 +17,10 @@ import { fetchDriveMinutes } from '../lib/routesApi';
 import { getCurrentPosition } from '../native/geolocation';
 import { refreshWidgets } from '../native/widgets';
 import { stepNameLibrary } from '../lib/learning';
+import { materializeScheduledDepartures } from '../lib/materialize';
 import { StepNameAutocomplete } from '../ui/StepNameAutocomplete';
+
+const DEFAULT_REPEAT_TIME = '08:00';
 
 interface DepartureSetupProps {
   templateId?: string;
@@ -30,6 +35,13 @@ interface DepartureSetupProps {
   // prefillAppointmentIso with a fabricated time.
   prefillDate?: string;
   prefillTimeMissing?: boolean;
+  // Calendar-recurrence increment (field report #10 §2): set only by Home's
+  // "Plan departure" action on a calendar card whose event RRULE parsed
+  // (src/lib/rrule.ts's parseWeeklyRrule) — ISO weekday numbers, ready to
+  // drop straight into a TemplateSchedule. Same "applied once, create only"
+  // shape as every other prefill prop on this screen; see the Repeat
+  // section's own state below for how it's used.
+  prefillRepeatDays?: number[];
   onNavigate: (screen: Screen) => void;
 }
 
@@ -41,6 +53,7 @@ export function DepartureSetup({
   prefillAppointmentIso,
   prefillDate,
   prefillTimeMissing,
+  prefillRepeatDays,
   onNavigate,
 }: DepartureSetupProps) {
   const existingDeparture = useLiveQuery(
@@ -108,6 +121,26 @@ export function DepartureSetup({
   // Arrival-detection increment: same shape as TemplateEdit's own field —
   // blank form state means "not set", converted to the DB's `null` on save.
   const [arrivalWifiSsid, setArrivalWifiSsid] = useState<string>('');
+
+  // Repeat-at-creation (field report #10 §2). Create-only, same as the
+  // prefill props above — this section is never rendered in edit mode (see
+  // the JSX below), so `repeatEnabled` simply stays false for the lifetime
+  // of an edit-mode form and never affects anything. Pre-enabled, once, when
+  // `prefillRepeatDays` arrived from a parsed calendar RRULE (Home's "Plan
+  // departure" on a repeating calendar event) — same lazy-initializer,
+  // applied-once shape as `name`/`destination` above. `repeatTime` seeds
+  // from `prefillAppointmentIso` when there is one (the calendar event's own
+  // time), falling back to the same DEFAULT_REPEAT_TIME TemplateEdit uses
+  // when there's nothing yet to seed from.
+  const [repeatEnabled, setRepeatEnabled] = useState(
+    () => !departureId && (prefillRepeatDays?.length ?? 0) > 0,
+  );
+  const [repeatTime, setRepeatTime] = useState(() =>
+    !departureId && prefillAppointmentIso ? formatTimeInput(new Date(prefillAppointmentIso)) : DEFAULT_REPEAT_TIME,
+  );
+  const [repeatDays, setRepeatDays] = useState<number[]>(() =>
+    !departureId && prefillRepeatDays ? prefillRepeatDays : [],
+  );
   const [touched, setTouched] = useState(false);
 
   // Task-memory autocomplete (learning increment §5) — every step name
@@ -207,6 +240,30 @@ export function DepartureSetup({
     setArrivalSteps((prev) => prev.map((s) => (s.id === stepId ? { ...s, ...patch } : s)));
   }
 
+  function toggleRepeatDay(iso: number) {
+    setRepeatDays((prev) => (prev.includes(iso) ? prev.filter((d) => d !== iso) : [...prev, iso].sort()));
+  }
+
+  // Repeat-at-creation (§2): seeds sane defaults the moment the toggle is
+  // turned ON, from whatever's already in the appointment date/time fields
+  // right now — "time = the form's appointment time, days = [appointment
+  // weekday]" per the fix spec. Only seeds when nothing's been chosen yet
+  // (`repeatDays.length === 0`): flipping the toggle off and back on
+  // shouldn't clobber a day/time already picked, and a calendar-prefilled
+  // form arrives with `repeatDays` already non-empty, so this never
+  // overwrites that either. If the appointment date/time aren't set yet
+  // (blank Time field, the ordinary "from scratch" starting state), this
+  // simply has nothing to seed from and leaves the existing repeatTime/
+  // repeatDays state alone — RepeatEditor's own validation message then
+  // guides the fill-in from there.
+  function handleRepeatEnabledChange(nextEnabled: boolean) {
+    setRepeatEnabled(nextEnabled);
+    if (nextEnabled && repeatDays.length === 0) {
+      if (appointmentTime !== '') setRepeatTime(appointmentTime);
+      if (appointmentAtDate) setRepeatDays([getISODay(appointmentAtDate)]);
+    }
+  }
+
   // Explicit tap only — never automatic. An API call and a location prompt
   // are real side effects (a network request, possibly a first-ever
   // permission dialog), and neither should ever fire just because someone
@@ -257,13 +314,23 @@ export function DepartureSetup({
     // duration — same guard, same copy, just scoped to the other list.
     if (arrivalSteps.some((step) => step.plannedMinutes < 0)) errors.push('Step minutes cannot be negative.');
   }
+
+  // Repeat-at-creation (§2). Only ever relevant on create — `repeatEnabled`
+  // stays false for the lifetime of an edit-mode form (never toggled on,
+  // the section isn't even rendered there), so this is trivially `true` in
+  // edit mode and never blocks that save path. RepeatEditor renders its own
+  // "Set a time and pick at least one day." message inline when this is
+  // false, the same way TemplateEdit's own repeatValid does — no separate
+  // entry in the generic `errors` list above.
+  const repeatValid = !repeatEnabled || (repeatTime !== '' && repeatDays.length > 0);
   const canSave =
     appointmentInFuture &&
     travelMinutes >= 0 &&
     bufferMinutes >= 0 &&
     steps.every((step) => step.plannedMinutes >= 0) &&
     steps.length > 0 &&
-    arrivalSteps.every((step) => step.plannedMinutes >= 0);
+    arrivalSteps.every((step) => step.plannedMinutes >= 0) &&
+    repeatValid;
 
   // Live preview — same equation as the Runway screen, evaluated with
   // every step unchecked (nothing has started yet). computeStartBy answers
@@ -324,9 +391,76 @@ export function DepartureSetup({
       await db.departures.update(departureId, sharedFields);
       savedDeparture = { ...existingDeparture, ...sharedFields };
     } else {
+      // Save-with-repeat (field report #10 §2) — the careful part, worth
+      // spelling out in full. Turning Repeat on here does NOT spin up a
+      // second scheduler on this one departure — per this fix's binding
+      // design decision (ONE recurrence engine: templates), it PROMOTES
+      // this one-off form into a brand-new Template carrying the chosen
+      // schedule, then links TODAY's departure to that template instead of
+      // leaving it as an unrelated one-off row. Three things make that
+      // link safe:
+      //
+      //  1. `templateId` points at the template created just below.
+      //  2. `scheduledForDate` is stamped with THIS appointment's own
+      //     date — the exact join key materialize.ts's
+      //     createMissingOccurrences reads to decide "already planned" vs
+      //     "still missing" for a given template+date. Setting it here
+      //     means the materialize call at the end of this branch can
+      //     never create a second departure for the same date, even
+      //     though this particular row was hand-built by this form, not
+      //     by the materializer itself.
+      //  3. That holds EVEN WHEN today's weekday isn't among the chosen
+      //     repeat days — a real combination (e.g. planning today's
+      //     one-off Friday appointment while setting the recurring
+      //     schedule to Mon/Wed only). The dedup key is an exact DATE
+      //     match, not "was this date implied by the schedule", so the
+      //     two disagreeing is not a conflict the materializer would ever
+      //     need to resolve.
+      //
+      // Without Repeat, this branch behaves exactly as it did before this
+      // fix: `templateId` stays whatever was passed in (or `null` for a
+      // from-scratch departure) and `scheduledForDate` stays `null`.
+      let linkedTemplateId: string | null = templateId ?? null;
+      let repeatTemplateJustCreated = false;
+
+      if (repeatEnabled) {
+        const templateNowIso = new Date().toISOString();
+        const newTemplate: Template = {
+          id: crypto.randomUUID(),
+          name: sharedFields.name,
+          destination: sharedFields.destination,
+          travelMinutes,
+          bufferMinutes,
+          // Fresh ids, copied (not referenced) from this departure's own
+          // steps — mirrors materialize.ts's buildDeparture doing the
+          // exact reverse copy (Template -> Departure) and TemplateEdit's
+          // "Make repeating" path (§3) doing this same Departure ->
+          // Template direction for an EXISTING departure.
+          steps: steps.map((step) => ({ id: crypto.randomUUID(), name: step.name, minutes: step.plannedMinutes })),
+          arrivalSteps: arrivalSteps.map((step) => ({
+            id: crypto.randomUUID(),
+            name: step.name,
+            minutes: step.plannedMinutes,
+          })),
+          arrivalWifiSsid: sharedFields.arrivalWifiSsid,
+          createdAt: templateNowIso,
+          updatedAt: templateNowIso,
+          schedule: { time: repeatTime, days: repeatDays },
+          // Opt-in only (db/types.ts's own doc comment) — a template
+          // created from a one-off form has no run history yet for
+          // autoLearn to have anything to learn from, same "off by
+          // default" TemplateEdit's own BLANK constant uses for an
+          // ordinary new template.
+          autoLearn: false,
+        };
+        await db.templates.add(newTemplate);
+        linkedTemplateId = newTemplate.id;
+        repeatTemplateJustCreated = true;
+      }
+
       savedDeparture = {
         id: crypto.randomUUID(),
-        templateId: templateId ?? null,
+        templateId: linkedTemplateId,
         ...sharedFields,
         status: 'planned',
         startedAt: null,
@@ -334,12 +468,10 @@ export function DepartureSetup({
         arrivalResult: null,
         arrivalLateMinutes: null,
         createdAt: nowIso,
-        // A departure created here was typed in by hand (even if it started
-        // from a template) — only the materializer (src/lib/materialize.ts)
-        // stamps a non-null scheduledForDate, so its "never re-create an
-        // abandoned occurrence" dedup check never mistakes a manually-made
-        // departure for one it already materialized.
-        scheduledForDate: null,
+        // `null` exactly as before this fix, UNLESS Repeat was just turned
+        // on above — see point 2 in the comment above for why this is the
+        // field that makes the link dedup-safe.
+        scheduledForDate: repeatTemplateJustCreated ? formatDateInput(appointmentAtDate) : null,
         // A brand-new departure has never been through compressPlan - see
         // db/types.ts's own comment on wasReplanned.
         wasReplanned: false,
@@ -350,6 +482,14 @@ export function DepartureSetup({
         arrivedAt: null,
       };
       await db.departures.add(savedDeparture);
+
+      if (repeatTemplateJustCreated) {
+        // Materializes the rest of the week, minus today — today's own
+        // occurrence is already covered by the departure just saved above
+        // (point 2 above), so this can only ever fill in the remaining
+        // scheduled days, never duplicate it.
+        await materializeScheduledDepartures();
+      }
     }
 
     // Widgets increment: name/appointment/steps/travel — everything the
@@ -694,6 +834,27 @@ export function DepartureSetup({
           />
         )}
       </section>
+
+      {/* Repeat-at-creation (field report #10 §2): create-only, never shown
+          on an edit — Repeat's whole job is to promote a one-off FORM into
+          a Template with a schedule (see handleSave's own comment), and an
+          already-saved departure has nothing left to "promote" this way;
+          use TemplateEdit's own "Make repeating" action (Home) for that
+          instead. */}
+      {!departureId && (
+        <RepeatEditor
+          enabled={repeatEnabled}
+          onEnabledChange={handleRepeatEnabledChange}
+          time={repeatTime}
+          onTimeChange={setRepeatTime}
+          days={repeatDays}
+          onToggleDay={toggleRepeatDay}
+          valid={repeatValid}
+          extraCaption={
+            (prefillRepeatDays?.length ?? 0) > 0 ? 'This appointment repeats in your calendar.' : undefined
+          }
+        />
+      )}
 
       {preview && (
         <p className="tabular-nums text-slate-400">

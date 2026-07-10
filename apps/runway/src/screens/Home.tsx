@@ -17,6 +17,7 @@ import {
 import { getUpcomingCalendarEvents, requestCalendarAccess } from '../native/calendar';
 import type { CalendarEvent } from '../native/calendar';
 import { eventsWithoutDepartures } from '../lib/calendarEvents';
+import { parseWeeklyRrule } from '../lib/rrule';
 import { CALENDAR_ENABLED_SETTING } from '../lib/calendarSettings';
 import { readCaptureConfig } from '../lib/captureSettings';
 import { captureDeparture } from '../lib/geminiApi';
@@ -749,33 +750,52 @@ export function Home({ onNavigate }: HomeProps) {
             From your calendar
           </h2>
           <div className="flex flex-col gap-2">
-            {visibleCalendarEvents.map((event) => (
-              <div
-                key={`${event.beginEpochMs}-${event.title}`}
-                className="rounded-xl border border-slate-800/60 bg-surface p-4"
-              >
-                <div className="flex items-center justify-between">
-                  <p className="font-medium text-slate-100">{event.title || 'Untitled event'}</p>
-                  <p className="text-sm tabular-nums text-slate-500">
-                    {formatDateTimeShort(new Date(event.beginEpochMs), now)}
-                  </p>
+            {visibleCalendarEvents.map((event) => {
+              // Calendar-recurrence increment (field report #10 §1): a
+              // weekly-repeating calendar event ("Fortbildung", every
+              // Friday) previously looked identical to a one-off one here —
+              // the app read the event but never surfaced that it repeats,
+              // and "Plan departure" produced a plain one-off departure
+              // with no way to make it repeat too. `parsedRrule` is `null`
+              // for a genuinely one-off event AND for an RRULE shape this
+              // app doesn't project onto its own weekly TemplateSchedule
+              // model (see rrule.ts's own doc comment) — both render
+              // exactly like today, no faint line, no repeat prefill.
+              const parsedRrule = parseWeeklyRrule(event.rrule);
+              return (
+                <div
+                  key={`${event.beginEpochMs}-${event.title}`}
+                  className="rounded-xl border border-slate-800/60 bg-surface p-4"
+                >
+                  <div className="flex items-center justify-between">
+                    <p className="font-medium text-slate-100">{event.title || 'Untitled event'}</p>
+                    <p className="text-sm tabular-nums text-slate-500">
+                      {formatDateTimeShort(new Date(event.beginEpochMs), now)}
+                    </p>
+                  </div>
+                  {event.location !== '' && <p className="text-sm text-slate-400">{event.location}</p>}
+                  {parsedRrule && (
+                    <p className="text-sm text-slate-500">
+                      Repeats {formatScheduleDays(parsedRrule.days)} in your calendar.
+                    </p>
+                  )}
+                  <div className="mt-3">
+                    <TextAction
+                      onClick={() =>
+                        onNavigate({
+                          name: 'departureSetup',
+                          prefillName: event.title,
+                          prefillAppointmentIso: new Date(event.beginEpochMs).toISOString(),
+                          ...(parsedRrule ? { prefillRepeatDays: parsedRrule.days } : {}),
+                        })
+                      }
+                    >
+                      Plan departure
+                    </TextAction>
+                  </div>
                 </div>
-                {event.location !== '' && <p className="text-sm text-slate-400">{event.location}</p>}
-                <div className="mt-3">
-                  <TextAction
-                    onClick={() =>
-                      onNavigate({
-                        name: 'departureSetup',
-                        prefillName: event.title,
-                        prefillAppointmentIso: new Date(event.beginEpochMs).toISOString(),
-                      })
-                    }
-                  >
-                    Plan departure
-                  </TextAction>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       )}
@@ -933,6 +953,28 @@ export function Home({ onNavigate }: HomeProps) {
                     <TextAction onClick={() => onNavigate({ name: 'departureSetup', departureId: departure.id })}>
                       Edit
                     </TextAction>
+                    {/* Field report #10 §3: "Make repeating" promotes a
+                        one-off departure into a Template with a schedule,
+                        instead of the app ever running a second scheduler
+                        on the departure itself (this fix's binding design
+                        decision - ONE recurrence engine, templates). Only
+                        offered for a departure that ISN'T already tied to
+                        one - `templateId == null` is exactly the set of
+                        departures with nothing to promote FROM otherwise
+                        (a template-linked departure already has its
+                        template's own Edit/Repeat controls, reachable via
+                        the Templates section above). 'planned'-only, same
+                        scope as Remove just below - a 'running' departure
+                        is already under way; TemplateEdit's own
+                        `fromDepartureId` prefill isn't built to read a
+                        run's already-checked steps. */}
+                    {departure.status === 'planned' && departure.templateId == null && (
+                      <TextAction
+                        onClick={() => onNavigate({ name: 'templateEdit', fromDepartureId: departure.id })}
+                      >
+                        Make repeating
+                      </TextAction>
+                    )}
                     {departure.status === 'planned' && (
                       <TextAction onClick={() => void removeDeparture(departure)}>Remove</TextAction>
                     )}
