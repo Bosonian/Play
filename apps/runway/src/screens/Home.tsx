@@ -20,8 +20,10 @@ import { eventsWithoutDepartures } from '../lib/calendarEvents';
 import { CALENDAR_ENABLED_SETTING } from '../lib/calendarSettings';
 import { readCaptureConfig } from '../lib/captureSettings';
 import { captureDeparture } from '../lib/geminiApi';
-import { computeSuggestions } from '../lib/calibration';
-import type { Suggestion } from '../lib/calibration';
+import { computeBufferSuggestions, computeSuggestions } from '../lib/learning';
+import type { BufferSuggestion, Suggestion } from '../lib/learning';
+import { applyAutoLearn } from '../lib/autoLearn';
+import { materializeScheduledDepartures, replaceUntouchedFutureAutoRows } from '../lib/materialize';
 import { useNow } from '../hooks/useNow';
 import { refreshWidgets } from '../native/widgets';
 
@@ -84,6 +86,14 @@ const dismissedSuggestions = new Set<string>();
 
 function suggestionKey(suggestion: Suggestion): string {
   return `${suggestion.templateId}::${suggestion.stepName}`;
+}
+
+/** Same dismissal Set/pattern as step-time suggestions above, just a
+ * distinct key shape ("buffer::" prefix) so a buffer dismissal for a
+ * template can never collide with a step-time dismissal for the same
+ * template. */
+function bufferSuggestionKey(suggestion: BufferSuggestion): string {
+  return `buffer::${suggestion.templateId}`;
 }
 
 /** Key into the `settings` table (db/db.ts v2) for the first-run card's
@@ -362,12 +372,45 @@ export function Home({ onNavigate }: HomeProps) {
     const template = await db.templates.get(suggestion.templateId);
     if (!template) return;
     const steps = template.steps.map((step) =>
-      step.name === suggestion.stepName ? { ...step, minutes: suggestion.medianActualMinutes } : step,
+      step.name === suggestion.stepName ? { ...step, minutes: suggestion.learnedMinutes } : step,
     );
     await db.templates.update(suggestion.templateId, { steps, updatedAt: new Date().toISOString() });
     // No need to also add to dismissedSuggestions - once the template step's
-    // minutes match the median, computeSuggestions' own delta threshold
-    // stops proposing it, so it disappears naturally on the next render.
+    // minutes match the learned estimate, computeSuggestions' own delta
+    // threshold stops proposing it, so it disappears naturally on the next
+    // render.
+  }
+
+  // Buffer suggestion (learning increment §3): always suggest-only, for
+  // EVERY template with enough slip evidence, independent of that
+  // template's own autoLearn flag - autoLearn only ever touches step
+  // minutes, never the buffer, so this is the one place a buffer ever
+  // changes, and it always requires a tap. Capped to the same
+  // MAX_VISIBLE_SUGGESTIONS as step-time suggestions, for the same "don't
+  // dump the whole list on screen at once" reason.
+  const bufferSuggestions = useMemo(() => {
+    if (!templates || !calibrationDepartures) return [];
+    void dismissTick; // same "the Set mutation isn't visible to useMemo" reasoning as `suggestions` above
+    return computeBufferSuggestions(templates, calibrationDepartures)
+      .filter((suggestion) => !dismissedSuggestions.has(bufferSuggestionKey(suggestion)))
+      .slice(0, MAX_VISIBLE_SUGGESTIONS);
+  }, [templates, calibrationDepartures, dismissTick]);
+
+  function dismissBufferSuggestion(suggestion: BufferSuggestion) {
+    dismissedSuggestions.add(bufferSuggestionKey(suggestion));
+    setDismissTick((tick) => tick + 1);
+  }
+
+  async function applyBufferSuggestion(suggestion: BufferSuggestion) {
+    const template = await db.templates.get(suggestion.templateId);
+    if (!template) return;
+    const bufferMinutes = template.bufferMinutes + suggestion.slipMinutes;
+    await db.templates.update(suggestion.templateId, { bufferMinutes, updatedAt: new Date().toISOString() });
+    // Same "reach the already-planned week" chain TemplateEdit's own save
+    // path and autoLearn.ts's engine both run after a template edit that
+    // future auto-created departures need to inherit.
+    await replaceUntouchedFutureAutoRows(suggestion.templateId);
+    await materializeScheduledDepartures();
   }
 
   // Early/On time close the loop with no extra input. Late reveals a
@@ -382,9 +425,18 @@ export function Home({ onNavigate }: HomeProps) {
   // departure's status to 'done', which takes it out of the widget's
   // planned/running source pool — each refreshes so a captured departure
   // doesn't keep showing as "next" on the home screen.
+  //
+  // Learning increment §3: each also fires applyAutoLearn - the departure
+  // already reached 'left' when it entered "Waiting on arrival"
+  // (Runway.tsx's handleLeave already fired it once at that point), so
+  // this second fire-and-forget call is idempotent in practice (no new
+  // step actuals appear between 'left' and 'done'); it's here anyway
+  // because the spec's trigger is "reaches left/done," not just the first
+  // of the two, and a no-op recompute costs nothing.
   async function recordArrival(departure: Departure, result: 'early' | 'onTime') {
     await db.departures.update(departure.id, { status: 'done', arrivalResult: result, arrivalLateMinutes: null });
     void refreshWidgets();
+    if (departure.templateId) void applyAutoLearn(departure.templateId);
   }
 
   async function confirmLate(departure: Departure) {
@@ -394,11 +446,13 @@ export function Home({ onNavigate }: HomeProps) {
     setRevealingLateFor(null);
     setLateMinutesInput('');
     void refreshWidgets();
+    if (departure.templateId) void applyAutoLearn(departure.templateId);
   }
 
   async function skipArrival(departure: Departure) {
     await db.departures.update(departure.id, { status: 'done' });
     void refreshWidgets();
+    if (departure.templateId) void applyAutoLearn(departure.templateId);
   }
 
   // Quick-capture increment (E2). `undefined` while the settings read is
@@ -718,14 +772,42 @@ export function Home({ onNavigate }: HomeProps) {
               className="rounded-xl border border-sky-800/60 bg-sky-950/30 p-4"
             >
               <p className="text-sm text-slate-200">
-                You plan {suggestion.plannedMinutes} min for {suggestion.stepName}; your median over{' '}
-                {suggestion.runCount} runs is {suggestion.medianActualMinutes} min.
+                You plan {suggestion.plannedMinutes} min for {suggestion.stepName}. {suggestion.learnedMinutes} min
+                covers 3 of 4 of your last {suggestion.runCount} runs.
               </p>
               <div className="mt-3 flex gap-2">
                 <Button onClick={() => void applySuggestion(suggestion)} className="flex-1">
-                  Update to {suggestion.medianActualMinutes} min
+                  Update to {suggestion.learnedMinutes} min
                 </Button>
                 <Button variant="secondary" onClick={() => dismissSuggestion(suggestion)} className="flex-1">
+                  Not now
+                </Button>
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
+
+      {/* Buffer suggestion (learning increment §3) — always suggest-only,
+          same visual treatment as the step-time cards above but its own
+          section so the two never interleave confusingly under one
+          heading-less block. */}
+      {bufferSuggestions.length > 0 && (
+        <section className="flex flex-col gap-3">
+          {bufferSuggestions.map((suggestion) => (
+            <div
+              key={bufferSuggestionKey(suggestion)}
+              className="rounded-xl border border-sky-800/60 bg-sky-950/30 p-4"
+            >
+              <p className="text-sm text-slate-200">
+                You typically leave {suggestion.slipMinutes} min after your planned time. Add {suggestion.slipMinutes}{' '}
+                min to the buffer?
+              </p>
+              <div className="mt-3 flex gap-2">
+                <Button onClick={() => void applyBufferSuggestion(suggestion)} className="flex-1">
+                  Add {suggestion.slipMinutes} min
+                </Button>
+                <Button variant="secondary" onClick={() => dismissBufferSuggestion(suggestion)} className="flex-1">
                   Not now
                 </Button>
               </div>

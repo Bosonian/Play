@@ -59,6 +59,21 @@ export interface Template {
    * repeat it here.
    */
   schedule: TemplateSchedule | null;
+  /**
+   * Opt-in automation (learning increment): when true, `applyAutoLearn`
+   * (src/lib/autoLearn.ts) rewrites this template's step minutes after each
+   * completed departure, whenever the learned P75 estimate has drifted
+   * >= 2 min from the current value. This is the one place in the app where
+   * a learned value writes itself rather than waiting for a tap — sanctioned
+   * because it's opt-in (this flag), visible (TemplateEdit's "learned · N
+   * runs" label), and labeled, never a silent background rewrite of a plan
+   * the user never agreed to let the app touch.
+   *
+   * Not indexed — same undefined-as-null treatment as `schedule` above:
+   * every read must treat `undefined` (a row saved before this field
+   * existed) the same as `false`, never assume the property is present.
+   */
+  autoLearn: boolean;
 }
 
 /**
@@ -153,6 +168,30 @@ export interface Departure {
    * everywhere as `scheduledForDate == null`, never `=== null`.
    */
   scheduledForDate: string | null;
+  /**
+   * True when this departure's unchecked steps and/or buffer were squeezed
+   * by `compressPlan` (replan.ts) and the user tapped Apply — set in
+   * Runway.tsx's `applyReplan`, the ONLY writer. Deliberately NOT set by
+   * re-anchor (`applyReanchor`): re-anchoring moves the appointment target,
+   * it never touches a step's `plannedMinutes`, so a re-anchored run's
+   * step actuals are still measurements of the step's real, uncompressed
+   * pace.
+   *
+   * This is the field the two-distribution insight (learning increment)
+   * turns on: a compressed run measures how fast a step CAN go under
+   * pressure, not how long it naturally takes. Mixing the two would teach
+   * the learner that Deepak's normal shower is 6 minutes because one
+   * morning he compressed a 15-minute shower down to 6 to make a
+   * appointment — true of that morning, false of every other morning.
+   * `naturalActualsByStepName` (learning.ts) excludes runs where this is
+   * true from the "normal" pool; `rushedActualsByStepName` uses ONLY runs
+   * where this is true, to learn what a step can be squeezed to instead.
+   *
+   * Not indexed — same undefined-as-null rule as every other field on this
+   * page: `undefined` (a row saved before this field existed) reads exactly
+   * like `false`, everywhere.
+   */
+  wasReplanned: boolean;
 }
 
 /**

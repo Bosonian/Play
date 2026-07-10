@@ -119,5 +119,6 @@ db.on('populate', async () => {
     createdAt: now,
     updatedAt: now,
     schedule: null,
+    autoLearn: false,
   });
 });

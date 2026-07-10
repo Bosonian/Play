@@ -62,13 +62,26 @@ const MIN_BUFFER_MINUTES = 2;
  *     no longer exceeds `availableMinutes`. This is guaranteed to terminate
  *     without ever refusing mid-way: step 2 already proved the sum of pure
  *     floors is <= `availableMinutes`, so there's always room to give back.
+ *
+ * `floorsByStepName` (learning increment): a step's floor defaults to
+ * MIN_STEP_MINUTES, but when the caller has a learned rushed floor for that
+ * step NAME (learning.ts's `learnedRushedFloor`, over that step's own
+ * `wasReplanned` history — see learning.ts's header comment on why rushed
+ * and natural actuals are never mixed), that value is used instead. This
+ * only ever raises a step's floor above the generic 1-minute one — a step
+ * genuinely proven to need at least 5 minutes even under real pressure
+ * before now got compressed to 1 anyway, which the personalized floor
+ * fixes. The parameter is optional and keyed by name (not id) for the same
+ * reason calibration.ts's own step-name join is: a DepartureStep's id has
+ * no relationship to which template step it came from, but its name does.
  */
 export function compressPlan(args: {
   availableMinutes: number;
   steps: DepartureStep[];
   bufferMinutes: number;
+  floorsByStepName?: Map<string, number>;
 }): CompressResult {
-  const { availableMinutes, steps, bufferMinutes } = args;
+  const { availableMinutes, steps, bufferMinutes, floorsByStepName } = args;
 
   const uncheckedSteps = steps.filter((step) => step.checkedAt === null);
   const uncheckedTotal = uncheckedSteps.reduce((sum, step) => sum + step.plannedMinutes, 0);
@@ -82,11 +95,21 @@ export function compressPlan(args: {
     return { fits: true, steps, bufferMinutes };
   }
 
+  // Per-step floors (learning increment): MIN_STEP_MINUTES unless
+  // `floorsByStepName` has a learned, personalized floor for that step's
+  // name - see this function's own doc comment above. `Math.max` with
+  // MIN_STEP_MINUTES is a defensive floor-on-the-floor: learnedRushedFloor
+  // already never returns below 1, but this keeps the invariant true here
+  // too even if a caller hands in something smaller by mistake.
+  const stepFloors = uncheckedSteps.map((step) =>
+    Math.max(MIN_STEP_MINUTES, floorsByStepName?.get(step.name) ?? MIN_STEP_MINUTES),
+  );
+
   // A zero buffer stays zero - it was a deliberate "no padding" choice at
   // setup time, and compression inventing one back would misrepresent that
   // choice, not help keep it.
   const bufferFloor = bufferMinutes === 0 ? 0 : MIN_BUFFER_MINUTES;
-  const floorSum = uncheckedSteps.length * MIN_STEP_MINUTES + bufferFloor;
+  const floorSum = stepFloors.reduce((sum, floor) => sum + floor, 0) + bufferFloor;
 
   if (availableMinutes < floorSum) {
     return { fits: false, minimumMinutes: floorSum };
@@ -98,8 +121,8 @@ export function compressPlan(args: {
   // matters below for tie-breaking during overshoot correction (a stable,
   // documented rule beats an arbitrary one for something a test needs to
   // pin down).
-  const compressedStepMinutes = uncheckedSteps.map((step) =>
-    Math.max(MIN_STEP_MINUTES, Math.floor(step.plannedMinutes * factor)),
+  const compressedStepMinutes = uncheckedSteps.map((step, i) =>
+    Math.max(stepFloors[i], Math.floor(step.plannedMinutes * factor)),
   );
   let compressedBuffer = Math.max(bufferFloor, Math.floor(bufferMinutes * factor));
 
@@ -115,7 +138,7 @@ export function compressPlan(args: {
     let largestValue = compressedBuffer > bufferFloor ? compressedBuffer : -1;
 
     for (let i = 0; i < compressedStepMinutes.length; i++) {
-      if (compressedStepMinutes[i] > MIN_STEP_MINUTES && compressedStepMinutes[i] > largestValue) {
+      if (compressedStepMinutes[i] > stepFloors[i] && compressedStepMinutes[i] > largestValue) {
         largestValue = compressedStepMinutes[i];
         largestIndex = i;
       }

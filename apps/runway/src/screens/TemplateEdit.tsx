@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
 import type { StepTemplate, Template, TemplateSchedule } from '../db/types';
@@ -7,8 +7,10 @@ import { Button } from '../ui/Button';
 import { NumberField } from '../ui/NumberField';
 import { TextField } from '../ui/TextField';
 import { ScreenHeader } from '../ui/ScreenHeader';
-import { cancelDepartureAlarms } from '../native/notifications';
-import { materializeScheduledDepartures } from '../lib/materialize';
+import { materializeScheduledDepartures, replaceUntouchedFutureAutoRows } from '../lib/materialize';
+import { learnedEstimate, naturalActualsByStepName, stepNameLibrary } from '../lib/learning';
+import type { LearnedEstimate } from '../lib/learning';
+import { StepNameAutocomplete } from '../ui/StepNameAutocomplete';
 
 interface TemplateEditProps {
   id?: string;
@@ -22,6 +24,7 @@ const BLANK: Omit<Template, 'id' | 'createdAt' | 'updatedAt'> = {
   bufferMinutes: 10,
   steps: [],
   schedule: null,
+  autoLearn: false,
 };
 
 /** Monday-first (CLAUDE.md), ISO weekday numbers 1..7 paired with the
@@ -61,6 +64,42 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
   const [repeatTime, setRepeatTime] = useState(DEFAULT_REPEAT_TIME);
   const [repeatDays, setRepeatDays] = useState<number[]>([]);
 
+  // Learning increment: opt-in automation, off by default for both a
+  // brand-new template and any row saved before this field existed
+  // (BLANK.autoLearn === false covers the create path; the populate effect
+  // below covers the edit path with the same undefined-as-null treatment
+  // every other late-added Template field gets).
+  const [autoLearn, setAutoLearn] = useState(BLANK.autoLearn);
+
+  // All history + every template's steps, for the step-name autocomplete
+  // (learning increment §5) and this template's own "learned · N runs"
+  // provenance labels below. Loaded once, unfiltered - stepNameLibrary and
+  // naturalActualsByStepName do their own filtering in JS, same "load
+  // small tables whole" pattern the rest of this app already uses (see
+  // materialize.ts's own comment on why templateId isn't worth indexing).
+  const allDepartures = useLiveQuery(() => db.departures.toArray(), []);
+  const allTemplates = useLiveQuery(() => db.templates.toArray(), []);
+
+  const library = useMemo(
+    () => stepNameLibrary(allDepartures ?? [], allTemplates ?? []),
+    [allDepartures, allTemplates],
+  );
+
+  // This template's own learned-per-step-name estimates, for the "learned ·
+  // N runs" label next to a step whose minutes already equal it. Scoped to
+  // `id` (not every departure) because provenance is about THIS template's
+  // own history, unlike `library` above, which is deliberately global.
+  const learnedByStepName = useMemo(() => {
+    const map = new Map<string, LearnedEstimate>();
+    if (!id || !allDepartures) return map;
+    const templateRuns = allDepartures.filter((d) => d.templateId === id);
+    for (const [name, actuals] of naturalActualsByStepName(templateRuns)) {
+      const learned = learnedEstimate(actuals);
+      if (learned) map.set(name, learned);
+    }
+    return map;
+  }, [id, allDepartures]);
+
   // Populate the form once the existing template has loaded. Runs only
   // when `existing` changes identity (i.e. once, on load) rather than on
   // every render, so typing in the form afterwards doesn't get clobbered.
@@ -71,6 +110,10 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
       setTravelMinutes(existing.travelMinutes);
       setBufferMinutes(existing.bufferMinutes);
       setSteps(existing.steps);
+      // undefined-as-null: a row saved before this field existed carries no
+      // `autoLearn` property at all, not a `false` one — `=== true` (not a
+      // truthy check) is what makes that read correctly regardless.
+      setAutoLearn(existing.autoLearn === true);
       // undefined-as-null: a row saved before this field existed has no
       // `schedule` property at all, not a `null` one — treat both the same
       // (db/types.ts's TemplateSchedule doc comment; the v0.13.0 review
@@ -117,38 +160,6 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
   const repeatValid = !repeatEnabled || (repeatTime !== '' && repeatDays.length > 0);
   const canSave = name.trim().length > 0 && travelMinutes >= 0 && bufferMinutes >= 0 && repeatValid;
 
-  /**
-   * Deletes every FUTURE, UNTOUCHED auto-created departure for this
-   * template and cancels their alarms — the "replace" half of
-   * materializeScheduledDepartures's own dedup rule, run right before that
-   * function is called again below so a schedule/step/travel edit actually
-   * reaches the week that's already planned instead of only affecting
-   * occurrences materialized from now on.
-   *
-   * Deliberately narrow: `startedAt == null` excludes anything Deepak has
-   * already begun — a departure he's mid-prep on is HIS now, not the
-   * template's to silently rewrite out from under him, matching the same
-   * "touched rows are the user's" rule DepartureSetup's own edit path
-   * applies to individual steps. `appointmentAt` in the future excludes
-   * anything already past, which the materializer's own stale-sweep (not
-   * this function) is responsible for.
-   */
-  async function replaceUntouchedFutureAutoRows(templateId: string): Promise<void> {
-    const nowMs = Date.now();
-    // Same "load planned rows, filter the rest in JS" pattern as
-    // materialize.ts's sweep — templateId isn't an indexed field.
-    const plannedDepartures = await db.departures.where('status').equals('planned').toArray();
-    for (const departure of plannedDepartures) {
-      if (departure.templateId !== templateId) continue;
-      if (departure.scheduledForDate == null) continue; // a manual departure, not the materializer's to replace
-      if (departure.startedAt != null) continue; // touched — his now, not ours to replace
-      if (new Date(departure.appointmentAt).getTime() <= nowMs) continue; // already past
-
-      await db.departures.delete(departure.id);
-      await cancelDepartureAlarms(departure.id);
-    }
-  }
-
   async function handleSave() {
     if (!canSave) return;
     const now = new Date().toISOString();
@@ -164,6 +175,7 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
         steps,
         updatedAt: now,
         schedule,
+        autoLearn,
       });
     } else {
       await db.templates.add({
@@ -176,6 +188,7 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
         createdAt: now,
         updatedAt: now,
         schedule,
+        autoLearn,
       });
     }
 
@@ -306,61 +319,97 @@ export function TemplateEdit({ id, onNavigate }: TemplateEditProps) {
         )}
       </section>
 
+      <section className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
+        <label className="flex items-center gap-3">
+          <input
+            type="checkbox"
+            checked={autoLearn}
+            onChange={(e) => setAutoLearn(e.target.checked)}
+            className="size-6 shrink-0 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+          />
+          <span className="flex-1 text-slate-100">Learn step times automatically</span>
+        </label>
+        <p className="text-sm text-slate-500">
+          After each completed departure, step estimates update to the time that covers three of
+          four of your recent runs. Learned values are labeled; your own edits always win and
+          become the new baseline.
+        </p>
+      </section>
+
       <section className="flex flex-col gap-3">
         <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Steps</h2>
 
         <div className="flex flex-col gap-2">
-          {steps.map((step, index) => (
-            <div key={step.id} className="flex items-center gap-2 rounded-lg border border-slate-800/60 bg-surface p-2">
-              <div className="flex flex-col">
-                <button
-                  onClick={() => moveStep(step.id, -1)}
-                  disabled={index === 0}
-                  aria-label={`Move ${step.name || 'step'} up`}
-                  className="flex h-5 w-8 items-center justify-center text-slate-500 transition-colors hover:text-slate-200 disabled:opacity-30"
-                >
-                  ▲
-                </button>
-                <button
-                  onClick={() => moveStep(step.id, 1)}
-                  disabled={index === steps.length - 1}
-                  aria-label={`Move ${step.name || 'step'} down`}
-                  className="flex h-5 w-8 items-center justify-center text-slate-500 transition-colors hover:text-slate-200 disabled:opacity-30"
-                >
-                  ▼
-                </button>
+          {steps.map((step, index) => {
+            const learned = learnedByStepName.get(step.name);
+            const showsLearnedLabel = learned !== undefined && learned.minutes === step.minutes;
+            return (
+              <div key={step.id} className="flex flex-col gap-1 rounded-lg border border-slate-800/60 bg-surface p-2">
+                <div className="flex items-center gap-2">
+                  <div className="flex flex-col">
+                    <button
+                      onClick={() => moveStep(step.id, -1)}
+                      disabled={index === 0}
+                      aria-label={`Move ${step.name || 'step'} up`}
+                      className="flex h-5 w-8 items-center justify-center text-slate-500 transition-colors hover:text-slate-200 disabled:opacity-30"
+                    >
+                      ▲
+                    </button>
+                    <button
+                      onClick={() => moveStep(step.id, 1)}
+                      disabled={index === steps.length - 1}
+                      aria-label={`Move ${step.name || 'step'} down`}
+                      className="flex h-5 w-8 items-center justify-center text-slate-500 transition-colors hover:text-slate-200 disabled:opacity-30"
+                    >
+                      ▼
+                    </button>
+                  </div>
+
+                  <StepNameAutocomplete
+                    value={step.name}
+                    library={library}
+                    onNameChange={(name) => updateStep(step.id, { name })}
+                    onSelect={(entry) =>
+                      updateStep(step.id, {
+                        name: entry.name,
+                        ...(entry.learnedMinutes !== null ? { minutes: entry.learnedMinutes } : {}),
+                      })
+                    }
+                  />
+
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    value={step.minutes}
+                    aria-label={`${step.name || 'Step'} minutes`}
+                    onChange={(e) => {
+                      const parsed = Number.parseInt(e.target.value, 10);
+                      updateStep(step.id, { minutes: Number.isNaN(parsed) ? 0 : parsed });
+                    }}
+                    className="min-h-12 w-16 rounded-lg border border-slate-700 bg-raised px-2 py-2 text-slate-100 tabular-nums focus:border-sky-500 focus:outline-none"
+                  />
+
+                  <button
+                    onClick={() => removeStep(step.id)}
+                    aria-label={`Remove ${step.name || 'step'}`}
+                    className="flex min-h-12 min-w-12 items-center justify-center text-slate-500 transition-colors hover:text-red-400"
+                  >
+                    &times;
+                  </button>
+                </div>
+                {/* Provenance (learning increment §3): only shown once this
+                    step's minutes genuinely equal the learned estimate — an
+                    edit that moves it away from that value (his edit always
+                    wins, per the toggle's own caption above) makes the label
+                    disappear rather than keep claiming a provenance that's
+                    no longer true. */}
+                {showsLearnedLabel && (
+                  <p className="pl-10 text-xs text-slate-600">learned · {learned.runCount} runs</p>
+                )}
               </div>
-
-              <input
-                value={step.name}
-                onChange={(e) => updateStep(step.id, { name: e.target.value })}
-                placeholder="Step name"
-                aria-label="Step name"
-                className="min-h-12 flex-1 rounded-lg border border-slate-700 bg-raised px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none"
-              />
-
-              <input
-                type="number"
-                inputMode="numeric"
-                min={0}
-                value={step.minutes}
-                aria-label={`${step.name || 'Step'} minutes`}
-                onChange={(e) => {
-                  const parsed = Number.parseInt(e.target.value, 10);
-                  updateStep(step.id, { minutes: Number.isNaN(parsed) ? 0 : parsed });
-                }}
-                className="min-h-12 w-16 rounded-lg border border-slate-700 bg-raised px-2 py-2 text-slate-100 tabular-nums focus:border-sky-500 focus:outline-none"
-              />
-
-              <button
-                onClick={() => removeStep(step.id)}
-                aria-label={`Remove ${step.name || 'step'}`}
-                className="flex min-h-12 min-w-12 items-center justify-center text-slate-500 transition-colors hover:text-red-400"
-              >
-                &times;
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         <Button variant="secondary" onClick={addStep}>

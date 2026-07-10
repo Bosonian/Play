@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
 import type { Departure, DepartureStep } from '../db/types';
@@ -14,6 +14,8 @@ import { readLiveTravelConfig } from '../lib/liveTravelSettings';
 import { fetchDriveMinutes } from '../lib/routesApi';
 import { getCurrentPosition } from '../native/geolocation';
 import { refreshWidgets } from '../native/widgets';
+import { stepNameLibrary } from '../lib/learning';
+import { StepNameAutocomplete } from '../ui/StepNameAutocomplete';
 
 interface DepartureSetupProps {
   templateId?: string;
@@ -99,6 +101,18 @@ export function DepartureSetup({
   const [bufferMinutes, setBufferMinutes] = useState(10);
   const [steps, setSteps] = useState<DepartureStep[]>([]);
   const [touched, setTouched] = useState(false);
+
+  // Task-memory autocomplete (learning increment §5) — every step name
+  // that's ever appeared, across all history and all templates, not just
+  // whatever template (if any) this departure started from. Loaded once,
+  // unfiltered; stepNameLibrary does its own name-collection and learned-
+  // estimate lookup.
+  const allDepartures = useLiveQuery(() => db.departures.toArray(), []);
+  const allTemplates = useLiveQuery(() => db.templates.toArray(), []);
+  const stepLibrary = useMemo(
+    () => stepNameLibrary(allDepartures ?? [], allTemplates ?? []),
+    [allDepartures, allTemplates],
+  );
 
   // Live-travel increment (RUNWAY_PLAN.md §5.1+§5.6). `undefined` while the
   // settings read is still in flight is treated the same as "disabled" —
@@ -275,6 +289,9 @@ export function DepartureSetup({
         // abandoned occurrence" dedup check never mistakes a manually-made
         // departure for one it already materialized.
         scheduledForDate: null,
+        // A brand-new departure has never been through compressPlan - see
+        // db/types.ts's own comment on wasReplanned.
+        wasReplanned: false,
       };
       await db.departures.add(savedDeparture);
     }
@@ -492,12 +509,16 @@ export function DepartureSetup({
             }
             return (
               <div key={step.id} className="flex items-center gap-2 rounded-lg border border-slate-800/60 bg-surface p-2">
-                <input
+                <StepNameAutocomplete
                   value={step.name}
-                  onChange={(e) => updateStep(step.id, { name: e.target.value })}
-                  placeholder="Step name"
-                  aria-label="Step name"
-                  className="min-h-12 flex-1 rounded-lg border border-slate-700 bg-raised px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none"
+                  library={stepLibrary}
+                  onNameChange={(name) => updateStep(step.id, { name })}
+                  onSelect={(entry) =>
+                    updateStep(step.id, {
+                      name: entry.name,
+                      ...(entry.learnedMinutes !== null ? { plannedMinutes: entry.learnedMinutes } : {}),
+                    })
+                  }
                 />
                 <input
                   type="number"

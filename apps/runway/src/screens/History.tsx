@@ -3,8 +3,7 @@ import { db } from '../db/db';
 import type { Departure } from '../db/types';
 import type { Screen } from '../App';
 import { ScreenHeader } from '../ui/ScreenHeader';
-import { computeProjection } from '../lib/projection';
-import { medianMinutes } from '../lib/calibration';
+import { medianMinutes, slipMinutes } from '../lib/calibration';
 import { formatDateDisplay, formatTime } from '../lib/format';
 
 interface HistoryProps {
@@ -12,37 +11,6 @@ interface HistoryProps {
 }
 
 const HISTORY_LIMIT = 10;
-
-/** leaveBy (appointment minus travel) doesn't depend on the `now` argument
- * - see projection.ts - so any Date works. appointmentAt is used rather
- * than the live clock so a departure's history entry is a fixed fact,
- * not something that would read differently depending on when this
- * screen happens to be opened.
- *
- * originalAppointmentAt ?? appointmentAt, not appointmentAt alone: History
- * is exactly the slip/lateness record db/types.ts's originalAppointmentAt
- * comment describes - it must measure against the ORIGINAL commitment, not
- * whatever appointmentAt a re-anchor may have since moved it to, or a
- * departure rescued minutes before it would have blown its real target
- * could read as "on time" here. travelMinutes is still the departure's
- * CURRENT value (it may have been live-updated since the original
- * commitment) - an accepted imprecision, since re-anchoring changes the
- * appointment, not travel time. */
-function plannedLeaveBy(departure: Departure): Date {
-  const anchor = departure.originalAppointmentAt ?? departure.appointmentAt;
-  return computeProjection(new Date(anchor), { ...departure, appointmentAt: anchor }).leaveBy;
-}
-
-/** leftAt minus planned leaveBy, in whole minutes. Positive = left later
- * than planned (late); negative = left earlier (early). Undefined when
- * leftAt is missing - shouldn't happen for a 'left'/'done' departure in
- * practice, but the Runway 'I'm out the door' write and this history read
- * are two different code paths and nothing enforces that invariant at the
- * type level, so this stays defensive rather than assuming it. */
-function slipMinutes(departure: Departure): number | undefined {
-  if (!departure.leftAt) return undefined;
-  return Math.round((new Date(departure.leftAt).getTime() - plannedLeaveBy(departure).getTime()) / 60_000);
-}
 
 function arrivalResultLabel(departure: Departure): string {
   switch (departure.arrivalResult) {

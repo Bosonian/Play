@@ -1,4 +1,5 @@
-import type { Departure, Template } from '../db/types';
+import type { Departure } from '../db/types';
+import { computeProjection } from './projection';
 
 export interface StepActual {
   stepId: string;
@@ -72,94 +73,42 @@ export function medianMinutes(values: number[]): number | null {
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
-export interface Suggestion {
-  templateId: string;
-  templateName: string;
-  stepName: string;
-  plannedMinutes: number;
-  medianActualMinutes: number;
-  runCount: number;
+/**
+ * leaveBy (appointment minus travel) doesn't depend on `now` — see
+ * projection.ts — so any Date works as the evaluation anchor; `appointmentAt`
+ * is passed for both so the result is a fixed fact about the appointment,
+ * not something that would read differently depending on when it's
+ * computed.
+ *
+ * `originalAppointmentAt ?? appointmentAt`, not `appointmentAt` alone: this
+ * is exactly the slip/lateness anchor db/types.ts's `originalAppointmentAt`
+ * comment describes — measuring against whatever `appointmentAt` happens to
+ * be NOW would let a re-anchored departure launder its lateness against the
+ * rescued target instead of the one it actually missed. `travelMinutes` is
+ * still the departure's CURRENT value (it may have been live-updated since
+ * the original commitment) — an accepted imprecision, since re-anchoring
+ * changes the appointment, not travel time, and there is no separate
+ * "travel time as of the original commitment" to fall back on.
+ *
+ * Lifted out of History.tsx (learning increment) so `learnedBufferSuggestion`
+ * (learning.ts) can measure the exact same "out the door" slip History
+ * already shows on screen, rather than a second, subtly different
+ * definition of "slip" living in two files.
+ */
+export function plannedLeaveBy(
+  departure: Pick<Departure, 'appointmentAt' | 'originalAppointmentAt' | 'travelMinutes' | 'bufferMinutes' | 'steps'>,
+): Date {
+  const anchor = departure.originalAppointmentAt ?? departure.appointmentAt;
+  return computeProjection(new Date(anchor), { ...departure, appointmentAt: anchor }).leaveBy;
 }
 
-// RUNWAY_PLAN.md §5.4: "After 3+ runs of a template: ... suggestion, never
-// silent adjustment." Both thresholds are inclusive (>=), not strict (>) —
-// exactly 3 runs and exactly a 3-minute delta both qualify.
-const MIN_RUNS = 3;
-const MIN_DELTA_MINUTES = 3;
-
-/**
- * For each current template step, looks at real-world history and proposes
- * an update when the lived median has drifted meaningfully from the plan.
- *
- * Steps are joined across a Template and its historical Departures **by
- * name**, not by id. That's forced by the data model: DepartureStep is
- * copied from StepTemplate at departure-creation time (db/types.ts), so a
- * step checked off six months ago carries the id it was given back then,
- * which has no relationship to the current template's step ids. Name is
- * the only field both sides still share. The limitation this creates is
- * real and worth stating plainly: renaming a template step orphans that
- * step's entire history — old departures still say "Shower", the
- * renamed-to "Wash up" step in the template starts from zero data. That's
- * an acceptable v1 tradeoff (renames are rare; silently mis-joining on a
- * coincidental id would be worse), not an oversight.
- *
- * Only departures that actually happened (`status` 'left' or 'done') and
- * were actually started (`startedAt` set) count as runs — a departure that
- * was merely planned and never begun has no per-step actuals to learn
- * from. `plannedMinutes` on the returned Suggestion is always the
- * template's *current* value for that step name, so a suggestion reflects
- * "here's what's true now", not a stale snapshot from whenever the
- * matching departures were created.
- */
-export function computeSuggestions(templates: Template[], departures: Departure[]): Suggestion[] {
-  const suggestions: Suggestion[] = [];
-
-  for (const template of templates) {
-    const templateRuns = departures.filter(
-      (departure) =>
-        departure.templateId === template.id &&
-        (departure.status === 'left' || departure.status === 'done') &&
-        departure.startedAt !== null,
-    );
-
-    const actualsByStepName = new Map<string, number[]>();
-    for (const run of templateRuns) {
-      for (const actual of deriveStepActuals(run)) {
-        const existing = actualsByStepName.get(actual.name);
-        if (existing) {
-          existing.push(actual.actualMinutes);
-        } else {
-          actualsByStepName.set(actual.name, [actual.actualMinutes]);
-        }
-      }
-    }
-
-    for (const step of template.steps) {
-      const actuals = actualsByStepName.get(step.name);
-      if (!actuals || actuals.length < MIN_RUNS) continue;
-
-      const rawMedian = medianMinutes(actuals);
-      if (rawMedian === null) continue;
-
-      // Rounded once, here, and reused for both the delta check and the
-      // suggestion's displayed/applied value — template step minutes are
-      // whole numbers (db/types.ts), so the value offered by "Update to N
-      // min" has to be a whole number too, and it should be the same N
-      // that was compared against the threshold.
-      const median = Math.round(rawMedian);
-      const delta = Math.abs(median - step.minutes);
-      if (delta < MIN_DELTA_MINUTES) continue;
-
-      suggestions.push({
-        templateId: template.id,
-        templateName: template.name,
-        stepName: step.name,
-        plannedMinutes: step.minutes,
-        medianActualMinutes: median,
-        runCount: actuals.length,
-      });
-    }
-  }
-
-  return suggestions;
+/** `leftAt` minus planned leaveBy, in whole minutes. Positive = left later
+ * than planned (late); negative = left earlier (early). `undefined` when
+ * `leftAt` is missing — shouldn't happen for a 'left'/'done' departure in
+ * practice, but the write (Runway.tsx's handleLeave) and this read are two
+ * different code paths and nothing enforces that invariant at the type
+ * level, so this stays defensive rather than assuming it. */
+export function slipMinutes(departure: Departure): number | undefined {
+  if (!departure.leftAt) return undefined;
+  return Math.round((new Date(departure.leftAt).getTime() - plannedLeaveBy(departure).getTime()) / 60_000);
 }

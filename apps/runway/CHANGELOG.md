@@ -5,6 +5,71 @@ via the `runway-latest.apk` asset at
 https://github.com/Bosonian/Play/releases/tag/runway-latest — it carries
 whichever version built last.
 
+## 0.20.0
+- **Learning**: Runway now learns realistic per-step and buffer times from
+  lived data, instead of only flagging drift against a fixed median. The
+  design turns on one insight from a real field morning: a "Replan from
+  now" run (0.12.0's compressPlan) squeezes the remaining steps down to
+  whatever time is left before the door — a step compressed from 15 minutes
+  to 6 and checked off in roughly 6 minutes did NOT become a 6-minute step,
+  it got squeezed once, under pressure, because the appointment demanded
+  it. Folding that into the same pool as every normal run would teach the
+  learner a false "normal" pace. So there are now two distributions, never
+  mixed: **natural** actuals (uncompressed, genuinely lived runs) feed
+  estimates; **rushed** actuals (compressed runs only) feed compression
+  floors. A new `Departure.wasReplanned` flag, stamped only by "Replan from
+  now"'s Apply (never by re-anchor, which moves the appointment target but
+  never touches step time), is what keeps the two apart.
+  - New `src/lib/learning.ts`: `naturalActualsByStepName`/
+    `rushedActualsByStepName` build the two pools (excluding batched
+    check-off runs — 3+ steps ticked within the same minute is someone
+    catching the app up after the fact, not a timed measurement — and
+    capped to the most recent 14 occurrences per step, since habits drift).
+    `learnedEstimate` plans at the 75th percentile, not the median — the
+    median is, by construction, late half the time; P75 covers three of
+    every four real runs. `learnedRushedFloor` (P25 of the rushed pool,
+    minimum 1) is what a step has proven it can actually be squeezed to.
+    `learnedBufferSuggestion` surfaces a persistent out-the-door slip
+    (median over the last 10 left/done runs, ≥5 required, only above a
+    2-minute threshold).
+  - **Auto-learn** (opt-in, per template — TemplateEdit's "Learn step times
+    automatically" toggle): after a departure of an autoLearn template
+    reaches left/done, `src/lib/autoLearn.ts`'s `applyAutoLearn` rewrites
+    any step whose learned estimate has drifted ≥2 min from what's saved,
+    then runs the same replace-untouched-future-rows + re-materialize chain
+    a manual template edit does, so the planned week follows. The one place
+    in the app a learned value writes itself without a tap — sanctioned
+    because it's chosen (the toggle), visible, and labeled: a step whose
+    minutes equal its learned value shows a faint "learned · N runs" line.
+  - **Personalized compression floors**: `compressPlan` (replan.ts) now
+    accepts an optional `floorsByStepName` map: instead of every step
+    flooring at a generic 1 minute when squeezed hard, a step with rushed
+    history floors at what it's actually proven to compress to. Runway's
+    replan panel computes this lazily, only while open, from the
+    departure's own template history — no copy change, the numbers
+    offered just get smarter.
+  - **Home's suggestion cards** now read from `learnedEstimate` (P75)
+    instead of the raw median, and only from the natural pool — a
+    compressed run can no longer contaminate a suggested step time. A new
+    buffer-suggestion card variant ("You typically leave N min after your
+    planned time. Add N min to the buffer?") is always suggest-only,
+    independent of a template's autoLearn flag.
+  - **Task-memory autocomplete**: typing 2+ characters into a step-name
+    field (TemplateEdit, DepartureSetup) shows up to 4 matches from every
+    step name ever used, with learned minutes attached where available —
+    selecting one fills the name and (when learned) the minutes. A small
+    custom dropdown (`src/ui/StepNameAutocomplete.tsx`), not a native
+    `<datalist>`, because a `<datalist>` option can't carry the minutes
+    value along with the label.
+  - All of this stays on-device — the two distributions, every learned
+    estimate, and the autocomplete library are all computed from Dexie data
+    already local to this phone; nothing new is sent anywhere.
+  - `Departure.wasReplanned` and `Template.autoLearn` are both new,
+    non-indexed fields (undefined reads as `false` everywhere, same
+    treatment as every other late-added field in this schema) — no Dexie
+    version bump needed.
+  - versionCode 26.
+
 ## 0.19.0
 - Quick capture (ecosystem increment E2): a dictation-first way to start a
   departure. Home gains a single-line input — "Dictate a departure — name,

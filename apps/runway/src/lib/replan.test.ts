@@ -151,6 +151,88 @@ describe('compressPlan', () => {
     expect(result.steps).toEqual([checkedStep]);
     expect(result.bufferMinutes).toBe(0);
   });
+
+  it('learning increment: a personalized floor is respected even when it exceeds MIN_STEP_MINUTES', () => {
+    // "Shower" has a learned rushed floor of 5 - even squeezed hard, it
+    // never compresses below that, unlike the generic 1-minute floor every
+    // other step still gets.
+    const result = compressPlan({
+      // floorSum = shower's learned floor (5) + dress's generic floor (1) +
+      // buffer floor (0, since bufferMinutes starts at 0) = 6; 7 min leaves
+      // exactly one minute of slack above that to distribute.
+      availableMinutes: 7,
+      steps: [step('shower', 100), step('dress', 100)],
+      bufferMinutes: 0,
+      floorsByStepName: new Map([['shower', 5]]),
+    });
+
+    expect(result.fits).toBe(true);
+    if (!result.fits) throw new Error('expected fits');
+    const showerResult = result.steps.find((s) => s.id === 'shower')!;
+    const dressResult = result.steps.find((s) => s.id === 'dress')!;
+    expect(showerResult.plannedMinutes).toBeGreaterThanOrEqual(5);
+    expect(dressResult.plannedMinutes).toBeGreaterThanOrEqual(1);
+  });
+
+  it('mixed floors: each step respects its own learned floor, not a shared one', () => {
+    // Available minutes forces heavy compression; "shower" (floor 8) and
+    // "shoes" (floor 3) each clamp to their OWN floor, "dress" (no learned
+    // floor) clamps to the generic 1.
+    const result = compressPlan({
+      availableMinutes: 12,
+      steps: [step('shower', 100), step('dress', 100), step('shoes', 100)],
+      bufferMinutes: 0,
+      floorsByStepName: new Map([
+        ['shower', 8],
+        ['shoes', 3],
+      ]),
+    });
+
+    expect(result.fits).toBe(true);
+    if (!result.fits) throw new Error('expected fits');
+    const byId = new Map(result.steps.map((s) => [s.id, s.plannedMinutes]));
+    expect(byId.get('shower')).toBe(8);
+    expect(byId.get('dress')).toBe(1);
+    expect(byId.get('shoes')).toBe(3);
+    const total = result.steps.reduce((sum, s) => sum + s.plannedMinutes, 0);
+    expect(total).toBe(12);
+  });
+
+  it('refusal boundary shifts to reflect personalized floors (not the generic 1-minute one)', () => {
+    // floorSum = shower(8) + dress(1) + buffer floor(2) = 11 - one minute
+    // below that must refuse, reporting the PERSONALIZED minimum.
+    const result = compressPlan({
+      availableMinutes: 10,
+      steps: [step('shower', 100), step('dress', 100)],
+      bufferMinutes: 50,
+      floorsByStepName: new Map([['shower', 8]]),
+    });
+
+    expect(result.fits).toBe(false);
+    if (result.fits) throw new Error('expected refusal');
+    expect(result.minimumMinutes).toBe(11);
+  });
+
+  it('a learned floor larger than the proportionally-scaled value still wins', () => {
+    // factor = 20/220 ~= 0.0909; floor(100*factor) = 9 for both steps
+    // before floors are applied. "shower"'s learned floor (12) exceeds that
+    // scaled value, so it must clamp UP to 12, not settle for the smaller
+    // scaled number the way "dress" (no learned floor, scaled value 9 well
+    // above its floor of 1) does.
+    const result = compressPlan({
+      availableMinutes: 20,
+      steps: [step('shower', 100), step('dress', 100)],
+      bufferMinutes: 20,
+      floorsByStepName: new Map([['shower', 12]]),
+    });
+
+    expect(result.fits).toBe(true);
+    if (!result.fits) throw new Error('expected fits');
+    const showerResult = result.steps.find((s) => s.id === 'shower')!;
+    expect(showerResult.plannedMinutes).toBe(12);
+    const total = result.steps.reduce((sum, s) => sum + s.plannedMinutes, 0) + result.bufferMinutes;
+    expect(total).toBeLessThanOrEqual(20);
+  });
 });
 
 describe('suggestNewTarget', () => {

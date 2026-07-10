@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
@@ -20,6 +20,8 @@ import { useLiveTravel } from '../hooks/useLiveTravel';
 import { refreshWidgets } from '../native/widgets';
 import { compressPlan, suggestNewTarget } from '../lib/replan';
 import type { CompressResult } from '../lib/replan';
+import { learnedRushedFloor, rushedActualsByStepName } from '../lib/learning';
+import { applyAutoLearn } from '../lib/autoLearn';
 import { TextField } from '../ui/TextField';
 import { TextAction } from '../ui/TextAction';
 
@@ -130,6 +132,31 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
       setReanchorTouched(false);
     }
   }, [replanOpen]);
+
+  // Personalized compression floors (learning increment §4): this
+  // departure's template's OWN history of compressed (wasReplanned) runs,
+  // read lazily - only while the replan panel is actually open, per the
+  // spec's "lazy, on panel open" - rather than on every render of a screen
+  // that already re-renders every second (useNow above). templateId isn't
+  // an indexed field (same tradeoff as materialize.ts/autoLearn.ts), so
+  // this loads the whole table and filters in JS; acceptable here because
+  // it only runs while the panel is open, not on every tick.
+  const replanFloorsSource = useLiveQuery(async () => {
+    if (!replanOpen || departure?.templateId == null) return undefined;
+    const all = await db.departures.toArray();
+    return all.filter((d) => d.templateId === departure.templateId);
+  }, [replanOpen, departure?.templateId]);
+
+  const replanFloorsByStepName = useMemo(() => {
+    if (!replanFloorsSource) return undefined;
+    const rushedByName = rushedActualsByStepName(replanFloorsSource);
+    const floors = new Map<string, number>();
+    for (const [name, actuals] of rushedByName) {
+      const floor = learnedRushedFloor(actuals);
+      if (floor !== null) floors.set(name, floor);
+    }
+    return floors;
+  }, [replanFloorsSource]);
 
   // Step-focus increment: which step (if any) the full-screen countdown
   // overlay is showing. Deliberately plain component state, not a routed
@@ -263,6 +290,13 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     // departure drops out of the widget's source pool — refresh so it
     // doesn't keep showing "Leave now" after you already have.
     void refreshWidgets();
+    // Learning increment §3: this is one of the two "a departure of an
+    // autoLearn template reached left/done" triggers (the other is Home's
+    // arrival-capture actions, which move an already-'left' departure on to
+    // 'done'). Fire-and-forget, same as every other post-write side effect
+    // on this line — applyAutoLearn itself never throws (see its own doc
+    // comment) and is a no-op for a template that hasn't opted in.
+    if (departure.templateId) void applyAutoLearn(departure.templateId);
     setJustLeft(true);
   };
 
@@ -315,6 +349,16 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
         if (compressed !== undefined) step.plannedMinutes = compressed;
       }
       d.bufferMinutes = result.bufferMinutes;
+      // Two-distribution insight (learning increment): compression measures
+      // how fast a step CAN go under pressure, not how long it naturally
+      // takes - see learning.ts's own header comment. Stamping this is what
+      // lets naturalActualsByStepName keep this run's actuals OUT of the
+      // "normal" pool while rushedActualsByStepName learns a smarter floor
+      // from them instead. applyReanchor below deliberately does NOT set
+      // this: re-anchoring moves the appointment TARGET, it never touches a
+      // step's plannedMinutes, so there is nothing about it to mark as
+      // "measured under compression."
+      d.wasReplanned = true;
     });
     // wrapUp shifts because the buffer changed (alarmTimes.ts) - reschedule
     // rather than leave the four staged alarms pointing at the old plan.
@@ -497,7 +541,12 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   const replanNeededMinutes =
     uncheckedSteps.reduce((sum, step) => sum + step.plannedMinutes, 0) + departure.bufferMinutes;
   const replanResult: CompressResult | null = replanOpen
-    ? compressPlan({ availableMinutes: replanAvailableMinutes, steps: departure.steps, bufferMinutes: departure.bufferMinutes })
+    ? compressPlan({
+        availableMinutes: replanAvailableMinutes,
+        steps: departure.steps,
+        bufferMinutes: departure.bufferMinutes,
+        floorsByStepName: replanFloorsByStepName,
+      })
     : null;
 
   // Re-anchor spec: once leaveBy itself is behind us, there is no time left

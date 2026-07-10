@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { computeSuggestions, deriveStepActuals, medianMinutes } from './calibration';
-import type { Departure, Template } from '../db/types';
+import { deriveStepActuals, medianMinutes, plannedLeaveBy, slipMinutes } from './calibration';
+import type { Departure } from '../db/types';
 
 function makeDeparture(overrides: Partial<Departure> = {}): Departure {
   return {
@@ -24,6 +24,7 @@ function makeDeparture(overrides: Partial<Departure> = {}): Departure {
     createdAt: '2026-07-09T07:00:00.000Z',
     originalAppointmentAt: '2026-07-09T09:00:00.000Z',
     scheduledForDate: null,
+    wasReplanned: false,
     ...overrides,
   };
 }
@@ -130,91 +131,46 @@ describe('medianMinutes', () => {
   });
 });
 
-describe('computeSuggestions', () => {
-  const template: Template = {
-    id: 'tpl1',
-    name: 'Klinik',
-    destination: 'Klinikum',
-    travelMinutes: 20,
-    bufferMinutes: 10,
-    steps: [
-      { id: 'st1', name: 'Shower', minutes: 15 },
-      { id: 'st2', name: 'Dress', minutes: 10 },
-    ],
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-    schedule: null,
-  };
-
-  function showeredRun(id: string, showerMinutes: number): Departure {
-    return makeDeparture({
-      id,
-      startedAt: '2026-07-09T08:00:00.000Z',
-      steps: [
-        {
-          id: 's1',
-          name: 'Shower',
-          plannedMinutes: 15,
-          checkedAt: new Date(new Date('2026-07-09T08:00:00.000Z').getTime() + showerMinutes * 60_000).toISOString(),
-        },
-      ],
+describe('plannedLeaveBy / slipMinutes', () => {
+  it('measures against originalAppointmentAt, not a re-anchored appointmentAt', () => {
+    // Re-anchored: appointmentAt moved to 10:00, but originalAppointmentAt
+    // (09:00) is what the slip must still be measured against — otherwise a
+    // rescued departure could launder its lateness against the new target.
+    const departure = makeDeparture({
+      appointmentAt: '2026-07-09T10:00:00.000Z',
+      originalAppointmentAt: '2026-07-09T09:00:00.000Z',
+      travelMinutes: 20,
+      leftAt: '2026-07-09T08:45:00.000Z', // 5 min after the ORIGINAL leaveBy of 08:40
     });
-  }
 
-  it('suggests at exactly 3 runs and exactly a 3-minute delta (both thresholds inclusive)', () => {
-    const departures = [showeredRun('d1', 18), showeredRun('d2', 18), showeredRun('d3', 18)];
-    const suggestions = computeSuggestions([template], departures);
-
-    expect(suggestions).toEqual([
-      {
-        templateId: 'tpl1',
-        templateName: 'Klinik',
-        stepName: 'Shower',
-        plannedMinutes: 15,
-        medianActualMinutes: 18,
-        runCount: 3,
-      },
-    ]);
+    expect(plannedLeaveBy(departure).toISOString()).toBe('2026-07-09T08:40:00.000Z');
+    expect(slipMinutes(departure)).toBe(5);
   });
 
-  it('does not suggest with only 2 runs, even with a large delta', () => {
-    const departures = [showeredRun('d1', 25), showeredRun('d2', 25)];
-    expect(computeSuggestions([template], departures)).toEqual([]);
+  it('falls back to appointmentAt when originalAppointmentAt is null (never re-anchored)', () => {
+    const departure = makeDeparture({
+      appointmentAt: '2026-07-09T09:00:00.000Z',
+      originalAppointmentAt: null,
+      travelMinutes: 20,
+      leftAt: '2026-07-09T08:35:00.000Z', // 5 min BEFORE leaveBy of 08:40
+    });
+
+    expect(slipMinutes(departure)).toBe(-5);
   });
 
-  it('does not suggest with 3 runs but only a 2-minute delta', () => {
-    const departures = [showeredRun('d1', 17), showeredRun('d2', 17), showeredRun('d3', 17)];
-    expect(computeSuggestions([template], departures)).toEqual([]);
+  it('is undefined when leftAt is missing', () => {
+    const departure = makeDeparture({ leftAt: null });
+    expect(slipMinutes(departure)).toBeUndefined();
   });
 
-  it('skips a step name no longer present in the template (renamed step orphans old history)', () => {
-    const renamedTemplate: Template = {
-      ...template,
-      steps: [{ id: 'st1', name: 'Wash up', minutes: 15 }], // was "Shower"
-    };
-    const departures = [showeredRun('d1', 25), showeredRun('d2', 25), showeredRun('d3', 25)];
-
-    expect(computeSuggestions([renamedTemplate], departures)).toEqual([]);
-  });
-
-  it('ignores departures that never started, and those not left/done', () => {
-    const departures = [
-      showeredRun('d1', 25),
-      showeredRun('d2', 25),
-      makeDeparture({ id: 'd3', status: 'planned', startedAt: null }),
-      { ...showeredRun('d4', 25), status: 'running' as const },
-    ];
-
-    expect(computeSuggestions([template], departures)).toEqual([]);
-  });
-
-  it('ignores departures belonging to a different template', () => {
-    const departures = [
-      showeredRun('d1', 25),
-      showeredRun('d2', 25),
-      { ...showeredRun('d3', 25), templateId: 'other-template' },
-    ];
-
-    expect(computeSuggestions([template], departures)).toEqual([]);
+  it('is exactly 0 for a departure that left exactly on its planned leaveBy', () => {
+    const departure = makeDeparture({
+      appointmentAt: '2026-07-09T09:00:00.000Z',
+      originalAppointmentAt: '2026-07-09T09:00:00.000Z',
+      travelMinutes: 20,
+      leftAt: '2026-07-09T08:40:00.000Z',
+    });
+    expect(slipMinutes(departure)).toBe(0);
   });
 });
+

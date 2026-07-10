@@ -158,7 +158,46 @@ function buildDeparture(template: Template, occurrence: Occurrence): Departure {
     arrivalLateMinutes: null,
     createdAt: nowIso,
     scheduledForDate: occurrence.date,
+    // A freshly materialized occurrence has never been touched by
+    // compressPlan - see db/types.ts's own comment on wasReplanned.
+    wasReplanned: false,
   };
+}
+
+/**
+ * Deletes every FUTURE, UNTOUCHED auto-created departure for `templateId`
+ * and cancels their alarms — the "replace" half of
+ * materializeScheduledDepartures's own dedup rule, meant to be called right
+ * before materializeScheduledDepartures so a schedule/step/travel edit (or,
+ * from the learning increment, an auto-learn rewrite of step minutes)
+ * actually reaches the week that's already planned instead of only
+ * affecting occurrences materialized from now on.
+ *
+ * Deliberately narrow: `startedAt == null` excludes anything Deepak has
+ * already begun — a departure he's mid-prep on is HIS now, not the
+ * template's to silently rewrite out from under him. `appointmentAt` in the
+ * future excludes anything already past, which the materializer's own
+ * stale-sweep (not this function) is responsible for.
+ *
+ * Originally lived only in TemplateEdit.tsx (its own save/delete paths);
+ * exported here (learning increment) so src/lib/autoLearn.ts's
+ * `applyAutoLearn` can reuse the exact same sweep instead of a second,
+ * drifting copy of this logic.
+ */
+export async function replaceUntouchedFutureAutoRows(templateId: string): Promise<void> {
+  const nowMs = Date.now();
+  // Same "load planned rows, filter the rest in JS" pattern as this file's
+  // own sweep below — templateId isn't an indexed field.
+  const plannedDepartures = await db.departures.where('status').equals('planned').toArray();
+  for (const departure of plannedDepartures) {
+    if (departure.templateId !== templateId) continue;
+    if (departure.scheduledForDate == null) continue; // a manual departure, not the materializer's to replace
+    if (departure.startedAt != null) continue; // touched — his now, not ours to replace
+    if (new Date(departure.appointmentAt).getTime() <= nowMs) continue; // already past
+
+    await db.departures.delete(departure.id);
+    await cancelDepartureAlarms(departure.id);
+  }
 }
 
 /**
