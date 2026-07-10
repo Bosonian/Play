@@ -694,22 +694,34 @@ export function Home({ onNavigate }: HomeProps) {
         </div>
       )}
 
-      <Button onClick={() => onNavigate({ name: 'departureSetup' })} className="w-full">
-        New departure
-      </Button>
+      {/* Departure and task creation are peer entry points (a field request:
+          "the task should get a button as prominent as the departure
+          button") — both PRIMARY, side by side. Button.tsx's own comment
+          calls primary "the one action per screen that matters"; this row
+          deliberately breaks that rule. The tradeoff: two primary buttons
+          dilute the "one action" signal the design system otherwise relies
+          on, but the alternative — one primary, one secondary — is exactly
+          the second-class visual this change exists to remove. */}
+      <div className="flex gap-3">
+        <Button onClick={() => onNavigate({ name: 'departureSetup' })} className="flex-1">
+          New departure
+        </Button>
+        <Button onClick={() => onNavigate({ name: 'taskSetup' })} className="flex-1">
+          New task
+        </Button>
+      </div>
 
       {/* Tasks increment: timed work without travel, run on the same live-
-          projection/check-off machinery as a departure. Always shows its
-          header + "New task" action, same as Templates below (a genuine
-          affordance to discover, not a guilt list) — unlike Waiting on
-          arrival just below, which deliberately has no empty state at all
-          (see that section's own comment) because an empty task list is
-          honestly nothing, not a thing this app is nagging about. */}
+          projection/check-off machinery as a departure. Creation now lives
+          in the two-up button row above, so this header is just the
+          section label — no duplicate "New task" action a few lines below
+          the one that already exists (CLAUDE.md: defaults lean smaller).
+          The header and the quiet "No tasks in progress." line still render
+          when empty (a genuine affordance to discover, not a guilt list) —
+          unlike Waiting on arrival just below, which deliberately has no
+          empty state at all (see that section's own comment). */}
       <section className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Tasks</h2>
-          <TextAction onClick={() => onNavigate({ name: 'taskSetup' })}>New task</TextAction>
-        </div>
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Tasks</h2>
 
         {tasksInProgress?.length === 0 && <p className="text-sm text-slate-500">No tasks in progress.</p>}
 
