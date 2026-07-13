@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
 import type { Screen } from '../App';
@@ -15,6 +15,10 @@ import { DAY_GAUGE_ENABLED_SETTING } from '../lib/dayGaugeSettings';
 import { refreshDayGauge } from '../lib/dayGaugeRefresh';
 import { hideDayGauge } from '../native/dayGauge';
 import { ensurePermissions } from '../native/notifications';
+import { backupFilename, buildBackup, LAST_BACKUP_AT_SETTING, validateBackup } from '../lib/backup';
+import { restoreBackup } from '../lib/restoreBackup';
+import { exportBackupFile } from '../native/backupFile';
+import { formatDateLong, formatTime } from '../lib/format';
 
 interface SettingsProps {
   onNavigate: (screen: Screen) => void;
@@ -176,6 +180,109 @@ export function Settings({ onNavigate }: SettingsProps) {
     setGeminiApiKeyDraft('');
   }
 
+  // Backup increment: manual export/import of the whole database as one
+  // JSON file — see src/lib/backup.ts (what a backup IS), restoreBackup.ts
+  // (the replace-everything import), and native/backupFile.ts (the
+  // file/share-sheet plumbing) for the rest of this feature.
+  const lastBackupAtSetting = useLiveQuery(() => db.settings.get(LAST_BACKUP_AT_SETTING), []);
+  const lastBackupAt = lastBackupAtSetting ? new Date(lastBackupAtSetting.value) : null;
+
+  const [backupError, setBackupError] = useState<string | null>(null);
+  const [backupRestored, setBackupRestored] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function handleExportBackup() {
+    setBackupError(null);
+    setBackupRestored(false);
+    const [departures, templates, settings, exams, topics, sprints, milestones, fieldReports, tasks] =
+      await Promise.all([
+        db.departures.toArray(),
+        db.templates.toArray(),
+        db.settings.toArray(),
+        db.exams.toArray(),
+        db.topics.toArray(),
+        db.sprints.toArray(),
+        db.milestones.toArray(),
+        db.fieldReports.toArray(),
+        db.tasks.toArray(),
+      ]);
+    const now = new Date();
+    const backup = buildBackup(
+      { departures, templates, settings, exams, topics, sprints, milestones, fieldReports, tasks },
+      db.verno,
+      now,
+    );
+    // Pretty-printed: this is a personal-scale backup (one phone's worth of
+    // data), not a payload where a couple of KB of whitespace matters, and a
+    // readable file is worth it the one time Deepak opens it in a text
+    // editor to sanity-check what's actually in there.
+    try {
+      await exportBackupFile(JSON.stringify(backup, null, 2), backupFilename(now));
+    } catch (err) {
+      // On Android, @capacitor/share REJECTS when the share sheet is
+      // dismissed without picking a target ("Share canceled") — that's a
+      // decision, not a failure: nothing was saved anywhere, so
+      // lastBackupAt must NOT advance (a backup that went nowhere isn't a
+      // backup). Anything else is a real error worth a visible line.
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/cancel/i.test(message)) setBackupError('Could not export the backup.');
+      return;
+    }
+    // Written only AFTER exportBackupFile resolves: on native, after Deepak
+    // picked a share target (dismissal rejects — see the catch above); on
+    // web, after the download was triggered (the browser doesn't report
+    // what happened past the click, so triggering is the best truth
+    // available there).
+    await db.settings.put({ key: LAST_BACKUP_AT_SETTING, value: now.toISOString() });
+  }
+
+  function handleImportClick() {
+    setBackupError(null);
+    setBackupRestored(false);
+    fileInputRef.current?.click();
+  }
+
+  async function handleBackupFileSelected(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    // Clears the input's value so picking the SAME file again later (e.g.
+    // after fixing whatever made an earlier attempt fail) still fires this
+    // handler — a browser file input doesn't fire 'change' a second time for
+    // an unchanged selection otherwise.
+    event.target.value = '';
+    if (!file) return;
+
+    setBackupError(null);
+    setBackupRestored(false);
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await file.text());
+    } catch {
+      setBackupError('That file is not a Runway backup.');
+      return;
+    }
+
+    const result = validateBackup(parsed, db.verno);
+    if (!result.ok) {
+      setBackupError(result.reason);
+      return;
+    }
+
+    // Native confirm(), same shortcut this app already uses for every other
+    // "this cannot be undone" moment (Home's removeDeparture, TemplateEdit's
+    // handleDelete, ...) — see this function's own comment there for why a
+    // custom dialog component isn't worth building for a single confirmation
+    // step.
+    const exportedAtLabel = formatDateLong(new Date(result.backup.exportedAt));
+    const confirmed = window.confirm(
+      `Replace everything in Runway with this backup from ${exportedAtLabel}? Current data on this phone is erased.`,
+    );
+    if (!confirmed) return;
+
+    await restoreBackup(result.backup);
+    setBackupRestored(true);
+  }
+
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-6 px-4 pb-12 pt-safe-top">
       <div className="pt-8">
@@ -326,6 +433,39 @@ export function Settings({ onNavigate }: SettingsProps) {
             Clear
           </Button>
         </div>
+      </section>
+
+      <section className="flex flex-col gap-3 border-t border-slate-800 pt-6">
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Backup</h2>
+
+        <p className="text-sm text-slate-500">
+          {lastBackupAt ? `Last backup: ${formatDateLong(lastBackupAt)} ${formatTime(lastBackupAt)}` : 'Never backed up.'}
+        </p>
+
+        <div className="flex gap-2">
+          <Button onClick={() => void handleExportBackup()} className="flex-1">
+            Export backup
+          </Button>
+          <Button variant="secondary" onClick={handleImportClick} className="flex-1">
+            Import backup
+          </Button>
+        </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/json"
+          className="hidden"
+          onChange={(e) => void handleBackupFileSelected(e)}
+        />
+
+        {backupError && <p className="text-sm text-red-400">{backupError}</p>}
+        {backupRestored && <p className="text-sm text-emerald-300">Backup restored.</p>}
+
+        <p className="text-sm text-slate-500">
+          Everything Runway has learned, as one file. API keys are not included — they stay on this
+          device.
+        </p>
       </section>
     </div>
   );

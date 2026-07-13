@@ -243,6 +243,14 @@ Runway's origin story is a live countdown notification while getting ready, ambi
 
 The countdown itself is rendered entirely by Android — no foreground service, no background timer keeping the app alive. Runway only re-posts the notification when the TARGET changes (a new next-commitment, or the same one moving); between those moments, Android's own chronometer view ticks the mm:ss down with zero further app involvement. The honest tradeoff that buys: if the target passes while the app stays fully closed, the chronometer doesn't know — it counts down to zero and then either keeps counting up or shows a negative duration, stale until Runway is next opened and re-points it at whatever's actually next. Needs notification permission (the same one every other Runway alert already asks for); if it's denied, the gauge just doesn't render — no separate prompt.
 
+## Backup
+
+Everything Runway has learned — departure and task actuals, estimate provenance, exam sprints and milestones — lives in one IndexedDB on one phone. A lost phone or a cleared browser storage means all of it is gone. Settings → Backup (0.32.0) exports the full database as one JSON file (**Export backup**) and lets a phone start over from one (**Import backup**).
+
+**API keys are never included in a backup.** The Google Routes key, the Gemini key, and the GitHub field-report token stay on the device they're configured on — a backup file's purpose is to travel (Drive, email, a second phone), and a leaked key costs a lot more to fix than a re-typed one costs to make.
+
+**Import replaces, it does not merge.** Restoring a backup erases everything currently on the phone and puts the backup's data in its place — Import shows the backup's export date and asks for confirmation first. This is deliberate: merge semantics (what happens to a colliding id, or a learned pool that's half from each source) are unpredictable in exactly the moment — disaster recovery, under time pressure — where Deepak is least able to check the result. Replace is the only outcome that's fully predictable before confirming it.
+
 ## Field reports
 
 A quiet "Report a problem" link on Home and on Settings opens a small form: a description (no character limit — dictate it, no need to be terse) and an optional screenshot. Saving is instant and always succeeds, whether or not you've set up syncing and whether or not the device is online — the report is written to this device's own storage first, full stop. From there it's a queue: **filed to GitHub Issues automatically once a token is configured and the device has connectivity**, retried on every app open until that happens.
