@@ -6,6 +6,7 @@ import { ScreenHeader } from '../ui/ScreenHeader';
 import { medianMinutes, slipMinutes } from '../lib/calibration';
 import { formatDateDisplay, formatTime } from '../lib/format';
 import { deriveTaskUnitActuals, taskDeadlineResult, taskFinishedAt } from '../lib/taskProjection';
+import { TextAction } from '../ui/TextAction';
 
 interface HistoryProps {
   onNavigate: (screen: Screen) => void;
@@ -176,6 +177,16 @@ export function History({ onNavigate }: HistoryProps) {
           })}
         </div>
       )}
+
+      {/* Learning-transparency screen's entry point. Placed at the bottom of
+          History rather than as a peer link from Home: History is the raw
+          record of what happened; Learning is that record's distillation
+          into "what the app now believes" — one level down from the log
+          it's summarizing, not a separate destination competing for
+          attention on Home. */}
+      <TextAction onClick={() => onNavigate({ name: 'learning' })} className="self-start">
+        What Runway has learned
+      </TextAction>
     </div>
   );
 }

@@ -10,4 +10,4 @@
 // file via a Vite define, or the reverse) would remove the duplication, but
 // that's a v1.5 candidate, not this increment's problem to solve (see
 // README.md's v1.5 list).
-export const APP_VERSION = '0.28.3';
+export const APP_VERSION = '0.29.0';

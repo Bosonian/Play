@@ -4,6 +4,7 @@ import { TemplateEdit } from './screens/TemplateEdit';
 import { DepartureSetup } from './screens/DepartureSetup';
 import { Runway } from './screens/Runway';
 import { History } from './screens/History';
+import { Learning } from './screens/Learning';
 import { Settings } from './screens/Settings';
 import { ExamOverview } from './screens/ExamOverview';
 import { ExamSetup } from './screens/ExamSetup';
@@ -73,6 +74,12 @@ export type Screen =
     }
   | { name: 'runway'; departureId: string }
   | { name: 'history' }
+  // Learning-transparency screen: what Runway has learned from real runs —
+  // per-name step/task estimates, rushed-compression floors, the out-the-
+  // door slip median, the measured Prüfung pace. Reached only from
+  // History's own foot (see History.tsx's comment on that placement), so it
+  // has no create/prefill props of its own — it's a pure read-only view.
+  | { name: 'learning' }
   // Live-travel increment (RUNWAY_PLAN.md §5.1+§5.6): the Routes API key and
   // the "use live travel" toggle, reached from Home's quiet "Settings" link
   // beside History/Prüfung.
@@ -207,6 +214,8 @@ export default function App() {
         return <Runway departureId={screen.departureId} onNavigate={setScreen} />;
       case 'history':
         return <History onNavigate={setScreen} />;
+      case 'learning':
+        return <Learning onNavigate={setScreen} />;
       case 'settings':
         return <Settings onNavigate={setScreen} />;
       case 'exam':

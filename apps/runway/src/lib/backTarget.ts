@@ -38,6 +38,12 @@ export function backTarget(screen: Screen): Screen | null {
     case 'task':
       return { name: 'home' };
 
+    // Learning.tsx's own ScreenHeader onBack: always history, since that's
+    // the only place this screen is ever reached from (see App.tsx's doc
+    // comment on the `learning` Screen variant).
+    case 'learning':
+      return { name: 'history' };
+
     // exam itself backs to home (ExamOverview.tsx) — everything reached
     // FROM the exam overview backs to it in turn.
     case 'exam':

@@ -35,6 +35,10 @@ describe('backTarget', () => {
     expect(backTarget({ name: 'settings' })).toEqual({ name: 'home' });
   });
 
+  it('learning backs to history', () => {
+    expect(backTarget({ name: 'learning' })).toEqual({ name: 'history' });
+  });
+
   it('exam backs to home', () => {
     expect(backTarget({ name: 'exam' })).toEqual({ name: 'home' });
   });

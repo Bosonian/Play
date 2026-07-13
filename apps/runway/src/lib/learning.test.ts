@@ -6,6 +6,7 @@ import {
   learnedBufferSuggestion,
   learnedEstimate,
   learnedRushedFloor,
+  learningReport,
   naturalActualsByStepName,
   quantile,
   rushedActualsByStepName,
@@ -615,5 +616,127 @@ describe('stepNameLibrary', () => {
     expect(eegEntry?.runCount).toBe(3);
     expect(eegEntry?.learnedMinutes).not.toBeNull();
     expect(library.map((entry) => entry.name)).toContain('Sign discharge letters');
+  });
+});
+
+describe('learningReport', () => {
+  it('returns [] for empty inputs', () => {
+    expect(learningReport([], [])).toEqual([]);
+  });
+
+  it('a name that only ever ran rushed still gets a row, with runCount 0 and estimate null', () => {
+    // Two compressed (wasReplanned) runs of "Squeeze prep" — enough to clear
+    // learnedRushedFloor's 2-sample floor, but there is no natural run of
+    // this name at all, so it must not be silently dropped: it earns a row
+    // via the rushed-pool side of the union, not the natural side.
+    const departures = [
+      makeDeparture({
+        id: 'r1',
+        wasReplanned: true,
+        startedAt: '2026-07-01T08:00:00.000Z',
+        steps: [checkedStep('Squeeze prep', '2026-07-01T08:04:00.000Z')],
+      }),
+      makeDeparture({
+        id: 'r2',
+        wasReplanned: true,
+        startedAt: '2026-07-02T08:00:00.000Z',
+        steps: [checkedStep('Squeeze prep', '2026-07-02T08:06:00.000Z')],
+      }),
+    ];
+
+    const report = learningReport(departures, []);
+    // Rushed actuals [4, 6] -> learnedRushedFloor's P25: index 0.25*(2-1)=0.25,
+    // 4 + (6-4)*0.25 = 4.5 -> rounds to 5.
+    expect(report).toEqual([{ name: 'Squeeze prep', runCount: 0, estimate: null, rushedFloor: 5 }]);
+  });
+
+  it('a name under learnedEstimate\'s 3-sample floor still gets a row, with estimate null', () => {
+    const departures = [
+      makeDeparture({
+        id: 'd1',
+        startedAt: '2026-07-01T08:00:00.000Z',
+        steps: [checkedStep('Dress', '2026-07-01T08:10:00.000Z')],
+      }),
+      makeDeparture({
+        id: 'd2',
+        startedAt: '2026-07-02T08:00:00.000Z',
+        steps: [checkedStep('Dress', '2026-07-02T08:10:00.000Z')],
+      }),
+    ];
+
+    const report = learningReport(departures, []);
+    expect(report).toEqual([{ name: 'Dress', runCount: 2, estimate: null, rushedFloor: null }]);
+  });
+
+  it('a name with >=3 natural runs gets a full estimate and no rushed floor when never compressed', () => {
+    const departures = [10, 12, 14].map((minutes, i) =>
+      makeDeparture({
+        id: `d${i}`,
+        startedAt: '2026-07-0' + (i + 1) + 'T08:00:00.000Z',
+        steps: [checkedStep('Shower', `2026-07-0${i + 1}T08:${String(minutes).padStart(2, '0')}:00.000Z`)],
+      }),
+    );
+
+    const report = learningReport(departures, []);
+    expect(report).toEqual([
+      { name: 'Shower', runCount: 3, estimate: learnedEstimate([10, 12, 14]), rushedFloor: null },
+    ]);
+  });
+
+  it('sorts by runCount descending, then name ascending as a deterministic tiebreak', () => {
+    const departures = [
+      // "Zzz" and "Ants" both get exactly 1 natural run — tied on runCount,
+      // must land in alphabetical order regardless of insertion order.
+      makeDeparture({
+        id: 'd1',
+        startedAt: '2026-07-01T08:00:00.000Z',
+        steps: [checkedStep('Zzz', '2026-07-01T08:05:00.000Z')],
+      }),
+      makeDeparture({
+        id: 'd2',
+        startedAt: '2026-07-02T08:00:00.000Z',
+        steps: [checkedStep('Ants', '2026-07-02T08:05:00.000Z')],
+      }),
+      // "Shower" gets 3 natural runs — strictly more evidence, must sort first
+      // despite alphabetically following "Ants".
+      makeDeparture({
+        id: 'd3',
+        startedAt: '2026-07-03T08:00:00.000Z',
+        steps: [checkedStep('Shower', '2026-07-03T08:10:00.000Z')],
+      }),
+      makeDeparture({
+        id: 'd4',
+        startedAt: '2026-07-04T08:00:00.000Z',
+        steps: [checkedStep('Shower', '2026-07-04T08:10:00.000Z')],
+      }),
+      makeDeparture({
+        id: 'd5',
+        startedAt: '2026-07-05T08:00:00.000Z',
+        steps: [checkedStep('Shower', '2026-07-05T08:10:00.000Z')],
+      }),
+    ];
+
+    const report = learningReport(departures, []);
+    expect(report.map((entry) => entry.name)).toEqual(['Shower', 'Ants', 'Zzz']);
+  });
+
+  it('folds in task-unit actuals via the shared naturalActualsByStepName join (tasks increment)', () => {
+    const tasks = [
+      makeTask({
+        id: 't1',
+        startedAt: '2026-07-01T08:00:00.000Z',
+        units: [
+          { id: 'u1', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-01T08:12:00.000Z' },
+          { id: 'u2', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-01T08:26:00.000Z' },
+          { id: 'u3', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-01T08:40:00.000Z' },
+        ],
+      }),
+    ];
+
+    const report = learningReport([], tasks);
+    expect(report).toHaveLength(1);
+    expect(report[0].name).toBe('Befunden EEG');
+    expect(report[0].runCount).toBe(3);
+    expect(report[0].estimate).not.toBeNull();
   });
 });

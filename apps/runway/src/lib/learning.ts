@@ -460,6 +460,59 @@ export function computeBufferSuggestions(templates: Template[], departures: Depa
   return suggestions;
 }
 
+// --- Learning-transparency screen (src/screens/Learning.tsx) ---
+
+export interface LearningReportEntry {
+  name: string;
+  runCount: number;
+  estimate: LearnedEstimate | null;
+  rushedFloor: number | null;
+}
+
+/**
+ * One row per step/task name that the app has learned SOMETHING about, from
+ * either distribution this file keeps (see the header comment above): a
+ * natural-run estimate, a rushed-run compression floor, or both. This is
+ * deliberately narrower than stepNameLibrary — that function also lists
+ * template-only names with zero runs, because its job is autocomplete
+ * ("you've called this before"); this one is a report of what's actually
+ * been LEARNED, so a name that's only ever sat in a template unused earns no
+ * row here at all.
+ *
+ * Union of both pools' keys, not just naturalActualsByStepName's: a step
+ * that has only ever been run compressed (e.g. always squeezed under a
+ * replan, never once run naturally) still taught the app its rushed floor,
+ * and that's real, worth-showing evidence — dropping it because
+ * runCount is 0 would hide the one thing this screen exists to surface.
+ *
+ * Sorted by runCount descending (most-evidenced first), then name ascending
+ * as a deterministic tiebreak — same shape as stepNameLibrary's own sort,
+ * mirrored rather than reused since that one only sorts on runCount (ties
+ * broken by Set insertion order, which isn't reproducible input-to-input the
+ * way a name-ascending tiebreak is, and this screen's row order needs to be
+ * stable for testing and for a calm, unsurprising re-render).
+ */
+export function learningReport(departures: Departure[], tasks: WorkTask[]): LearningReportEntry[] {
+  const naturalByName = naturalActualsByStepName(departures, tasks);
+  const rushedByName = rushedActualsByStepName(departures);
+
+  const names = new Set<string>([...naturalByName.keys(), ...rushedByName.keys()]);
+
+  const entries: LearningReportEntry[] = [...names].map((name) => {
+    const naturalActuals = naturalByName.get(name) ?? [];
+    const rushedActuals = rushedByName.get(name);
+    return {
+      name,
+      runCount: naturalActuals.length,
+      estimate: learnedEstimate(naturalActuals),
+      rushedFloor: rushedActuals ? learnedRushedFloor(rushedActuals) : null,
+    };
+  });
+
+  entries.sort((a, b) => b.runCount - a.runCount || a.name.localeCompare(b.name));
+  return entries;
+}
+
 // --- Task-memory autocomplete (TemplateEdit + DepartureSetup, learning
 // increment §5) ---
 
