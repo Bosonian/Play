@@ -120,6 +120,37 @@ export function taskFinishedAt(task: Pick<WorkTask, 'units'>): string | null {
 }
 
 /**
+ * The id of the unit that was checked off LAST — same lexicographic-max-is-
+ * chronological-max fact `taskFinishedAt` above already leans on (ISO 8601
+ * timestamps sort correctly as plain strings), mirrored here rather than
+ * built ON TOP of `taskFinishedAt` because that function deliberately
+ * returns only the timestamp, not which unit produced it — this is the
+ * missing half TaskRun.tsx's Reopen action (field bug fix, 0.34.1) needs: a
+ * unit *id* to clear `checkedAt` on, not just the instant to display.
+ *
+ * On a tie (two units share the identical `checkedAt` — e.g. a batched
+ * check-off written with millisecond-identical timestamps), this returns
+ * the FIRST one encountered in list order. That's an arbitrary but
+ * deterministic pick, not a principled "which one was really last" answer —
+ * there isn't one when two stored clocks read the same instant — and
+ * Reopen's own semantics (undo exactly one check-off) only need A unit
+ * cleared, not necessarily THE metaphysically correct one.
+ *
+ * `null` when no unit has been checked at all, same as `taskFinishedAt`.
+ */
+export function lastCheckedUnitId(task: Pick<WorkTask, 'units'>): string | null {
+  let latestId: string | null = null;
+  let latestAt: string | null = null;
+  for (const unit of task.units) {
+    if (unit.checkedAt !== null && (latestAt === null || unit.checkedAt > latestAt)) {
+      latestAt = unit.checkedAt;
+      latestId = unit.id;
+    }
+  }
+  return latestId;
+}
+
+/**
  * Did a finished task make its deadline, and by how much? `null` covers two
  * genuinely different "nothing to report" cases, collapsed into one because
  * every caller (History.tsx's Tasks section, TaskRun.tsx's done summary)

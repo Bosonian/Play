@@ -8,7 +8,7 @@ import { ScreenHeader } from '../ui/ScreenHeader';
 import { Button } from '../ui/Button';
 import { TextAction } from '../ui/TextAction';
 import { BackdateDialog } from '../ui/BackdateDialog';
-import { taskProjection, deriveTaskUnitActuals, taskDeadlineResult } from '../lib/taskProjection';
+import { taskProjection, deriveTaskUnitActuals, taskDeadlineResult, lastCheckedUnitId } from '../lib/taskProjection';
 import type { TaskProjection } from '../lib/taskProjection';
 import { currentStepAnchor, currentStepElapsed } from '../lib/currentStepElapsed';
 import { useNow } from '../hooks/useNow';
@@ -21,6 +21,8 @@ import { FOCUS_SOUND_ON_SETTING, readFocusSoundConfig } from '../lib/focusSoundS
 import { startFocusSound, stopFocusSound } from '../audio/focusSound';
 import { taskDoneMessage, taskStartMessage } from '../lib/witness';
 import { shareWitnessText } from '../native/shareText';
+import { refreshWidgets } from '../native/widgets';
+import { refreshDayGauge } from '../lib/dayGaugeRefresh';
 
 /** Distinct from Runway's departure-abandon copy — a task has no alarms to
  * cancel (tasks increment: no scheduled notifications in v1, see README's
@@ -174,6 +176,14 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
   // to 'done' — unlike a departure, a task has no separate "I'm out the
   // door" confirmation step; once every unit is checked, the work is
   // simply finished.
+  //
+  // Already two-way (field bug fix, 0.34.1 — verified while adding Reopen
+  // below, not new code here): `u.checkedAt = checking ? nowIso : null`
+  // clears it right back to null when the SAME unit is tapped again while
+  // checked, which is exactly what the checked-units list's row further
+  // down already wires its checkbox `onChange` to. `checking` is false on
+  // that second tap, so the last-unit auto-resolve above never fires from
+  // an uncheck — only from checking the final remaining unit.
   const toggleUnit = async (unit: TaskUnit) => {
     void hapticImpact('light');
     const nowIso = new Date().toISOString();
@@ -304,6 +314,7 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
     // `actualTotalMinutes` above, the exact figure already shown on screen,
     // reused rather than re-derived a second way.
     const taskName = task.name;
+    const taskId = task.id;
     const unitCount = task.units.length;
     async function handleTellThem() {
       setWitnessDoneUnavailable(false);
@@ -311,6 +322,53 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
       const message = taskDoneMessage(taskName, unitCount, actualTotalMinutes);
       const result = await shareWitnessText(message);
       if (result === 'unavailable') setWitnessDoneUnavailable(true);
+    }
+
+    // Field bug fix (0.34.1), real user report verbatim: "accidental touch
+    // caused a task ... to be taken as completed ... i cant go into history
+    // and continue that task." Checking a task's final unit auto-resolves
+    // it to 'done' with no confirmation (toggleUnit above) — a stray tap
+    // does it just as easily as a deliberate one, and until now there was
+    // no way back from here at all.
+    //
+    // Semantics: Reopen undoes exactly ONE check-off — the last one,
+    // found via `lastCheckedUnitId` (taskProjection.ts), which mirrors
+    // `taskFinishedAt`'s own max-checkedAt logic to answer "which unit"
+    // instead of "when" — because that's the specific misfire this exists
+    // to correct (the final, accidental tap), not an open-ended "undo
+    // history" tool. A task that was wrongly finished several units back
+    // isn't left stuck, though: once this puts the task back to 'running',
+    // the checked-units list below already lets a checked unit be tapped
+    // to uncheck it directly (toggleUnit is already two-way — see its own
+    // comment above), so Reopen can effectively be invoked again from
+    // there, one unit at a time.
+    //
+    // Deliberately NOT offered from the abandoned state below — abandoning
+    // is an explicit chosen action ("Abandon this task", with its own
+    // confirm dialog), not an accidental tap, so it isn't the misfire this
+    // fix addresses. A possible extension if a real need shows up later.
+    async function handleReopen() {
+      void hapticImpact('light');
+      await db.tasks.where('id').equals(taskId).modify((t) => {
+        const unitId = lastCheckedUnitId(t);
+        if (unitId === null) return; // nothing checked — shouldn't happen for a 'done' task, guarded anyway
+        const u = t.units.find((x) => x.id === unitId);
+        if (!u) return;
+        u.checkedAt = null;
+        t.status = 'running';
+      });
+      // Learning integrity: clearing the accidental checkedAt also removes
+      // the poisoned actual from the learning pools — deriveTaskUnitActuals
+      // only pairs CHECKED units (this file's own import, above), so
+      // nothing else needs cleaning up.
+      //
+      // Pairing rule (dayGaugeRefresh.ts's own header comment): "anything
+      // that moves the widgets moves the gauge" — a reopened task's
+      // deadline re-enters both the widget snapshot's and the day gauge's
+      // candidate pools, the same way any other planned/running task's
+      // deadline already does.
+      void refreshWidgets();
+      void refreshDayGauge();
     }
 
     return (
@@ -339,6 +397,10 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
           Tell them
         </TextAction>
         {witnessDoneUnavailable && <p className="text-sm text-slate-500">Sharing is not available here.</p>}
+        {/* Quiet on purpose (TextAction, never Button) — same weight as
+            "Tell them" above, deliberately smaller than "Back to home"
+            below. See handleReopen's own comment for the semantics. */}
+        <TextAction onClick={() => void handleReopen()}>Reopen — undo the last check-off.</TextAction>
         <Button onClick={() => onNavigate({ name: 'home' })} className="mt-8 w-full">
           Back to home
         </Button>
@@ -353,6 +415,13 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
     // all to carry one). A witness ritual is start and finish, never
     // confession — CLAUDE.md's anti-shame rule — so abandoning offers no
     // share, full stop.
+    //
+    // Field bug fix (0.34.1): deliberately no Reopen here either, unlike
+    // the 'done' state above. Abandoning is an explicit chosen action
+    // (handleAbandon's own confirm dialog), not an accidental tap — it
+    // isn't the misfire Reopen exists to correct. Worth revisiting as a
+    // possible extension (CHANGELOG 0.34.1) if a real need for it shows up
+    // during use.
     return (
       <div className="mx-auto flex min-h-screen max-w-lg flex-col items-center justify-center gap-2 px-4 pb-12 pt-safe-top text-center">
         <p className="text-lg text-slate-100">{task.name}</p>

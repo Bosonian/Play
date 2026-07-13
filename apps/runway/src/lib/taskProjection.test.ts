@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { deriveTaskUnitActuals, taskDeadlineResult, taskFinishedAt, taskProjection } from './taskProjection';
+import {
+  deriveTaskUnitActuals,
+  lastCheckedUnitId,
+  taskDeadlineResult,
+  taskFinishedAt,
+  taskProjection,
+} from './taskProjection';
 import type { WorkTask } from '../db/types';
 
 // Fixed "now" for every test, same reasoning as projection.test.ts's own
@@ -230,6 +236,43 @@ describe('taskFinishedAt', () => {
     const task = makeTask(); // default makeTask units are all unchecked
 
     expect(taskFinishedAt(task)).toBeNull();
+  });
+});
+
+describe('lastCheckedUnitId', () => {
+  it('returns the id of the unit with the MAX checkedAt, regardless of list order', () => {
+    const task = makeTask({
+      units: [
+        { id: 'u1', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-09T08:10:00.000Z' },
+        { id: 'u2', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-09T08:25:00.000Z' },
+        { id: 'u3', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-09T08:05:00.000Z' },
+      ],
+    });
+
+    expect(lastCheckedUnitId(task)).toBe('u2');
+  });
+
+  it('on a tied checkedAt, returns the first one encountered in list order', () => {
+    const task = makeTask({
+      units: [
+        { id: 'u1', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-09T08:10:00.000Z' },
+        { id: 'u2', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-09T08:10:00.000Z' },
+      ],
+    });
+
+    expect(lastCheckedUnitId(task)).toBe('u1');
+  });
+
+  it('returns null when no unit has been checked', () => {
+    const task = makeTask(); // default makeTask units are all unchecked
+
+    expect(lastCheckedUnitId(task)).toBeNull();
+  });
+
+  it('returns null for an empty unit list', () => {
+    const task = makeTask({ units: [] });
+
+    expect(lastCheckedUnitId(task)).toBeNull();
   });
 });
 

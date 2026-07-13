@@ -7,6 +7,7 @@ import { medianMinutes, slipMinutes } from '../lib/calibration';
 import { formatDateDisplay, formatTime } from '../lib/format';
 import { deriveTaskUnitActuals, taskDeadlineResult, taskFinishedAt } from '../lib/taskProjection';
 import { TextAction } from '../ui/TextAction';
+import { Card } from '../ui/Card';
 
 interface HistoryProps {
   onNavigate: (screen: Screen) => void;
@@ -155,11 +156,25 @@ export function History({ onNavigate }: HistoryProps) {
       {finishedTasks !== undefined && finishedTasks.length > 0 && (
         <div className="flex flex-col gap-2">
           <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Tasks</h2>
+          {/* Field bug fix (0.34.1): these rows used to be plain, non-tappable
+              divs — the real user report this fixes ("i cant go into history
+              and continue that task") landed here specifically, because a
+              task stuck 'done' by an accidental last-unit check-off had
+              nowhere to go FROM History even once you found it. `Card` (a
+              real <button>, same component Home's own task/template/
+              departure rows already use) makes the row tappable, landing on
+              TaskRun's done summary — where "Reopen" now lives.
+              Deliberately asymmetric: the departure rows just above this
+              section are still plain, non-tappable divs. They're left that
+              way this increment rather than made tappable for consistency —
+              a finished/abandoned departure has no equivalent "reopen"
+              destination to land on, so tapping one here would just be a
+              dead end dressed up as an affordance. */}
           {finishedTasks.map((task) => {
             const finishedAt = taskFinishedAt(task);
             const totalMinutes = deriveTaskUnitActuals(task).reduce((sum, actual) => sum + actual.actualMinutes, 0);
             return (
-              <div key={task.id} className="rounded-xl border border-slate-800/60 bg-surface p-4">
+              <Card key={task.id} onClick={() => onNavigate({ name: 'task', taskId: task.id })}>
                 <div className="flex items-center justify-between">
                   <p className="text-xl font-medium text-slate-100">{task.name}</p>
                   <p className="text-sm text-slate-500">{finishedAt ? formatDateDisplay(new Date(finishedAt)) : '—'}</p>
@@ -172,7 +187,7 @@ export function History({ onNavigate }: HistoryProps) {
                     {taskResultLabel(task)}
                   </p>
                 </div>
-              </div>
+              </Card>
             );
           })}
         </div>
