@@ -14,6 +14,8 @@ import { requestCalendarAccess } from '../native/calendar';
 import { DAY_GAUGE_ENABLED_SETTING } from '../lib/dayGaugeSettings';
 import { refreshDayGauge } from '../lib/dayGaugeRefresh';
 import { hideDayGauge } from '../native/dayGauge';
+import { FOCUS_SOUND_KIND_SETTING, FOCUS_SOUND_VOLUME_SETTING } from '../lib/focusSoundSettings';
+import { isFocusSoundPlaying, startFocusSound, type FocusSoundKind } from '../audio/focusSound';
 import { ensurePermissions } from '../native/notifications';
 import { backupFilename, buildBackup, LAST_BACKUP_AT_SETTING, validateBackup } from '../lib/backup';
 import { restoreBackup } from '../lib/restoreBackup';
@@ -23,6 +25,15 @@ import { formatDateLong, formatTime } from '../lib/format';
 interface SettingsProps {
   onNavigate: (screen: Screen) => void;
 }
+
+// Focus sound increment (0.33.0) chip options — same three-fixed-choices
+// chip shape as ExamSetup's STUDY_BLOCK_LENGTHS, just strings instead of
+// minute counts.
+const FOCUS_SOUND_KIND_OPTIONS: { value: FocusSoundKind; label: string }[] = [
+  { value: 'brown', label: 'Brown' },
+  { value: 'pink', label: 'Pink' },
+  { value: 'white', label: 'White' },
+];
 
 /**
  * Two settings, both for the live-travel increment (RUNWAY_PLAN.md
@@ -121,6 +132,35 @@ export function Settings({ onNavigate }: SettingsProps) {
     await ensurePermissions();
     await db.settings.put({ key: DAY_GAUGE_ENABLED_SETTING, value: 'true' });
     void refreshDayGauge();
+  }
+
+  // Focus sound increment (0.33.0). Kind and volume live here; the on/off
+  // decision deliberately does NOT — see the "Focus sound" section's own
+  // JSX comment below for why that split exists. Both settings default via
+  // plain `??`/fallback checks rather than readFocusSoundConfig (that
+  // helper is async and Dexie-shaped for the live screens' mount effects;
+  // this component already has the two rows loaded through useLiveQuery,
+  // so re-deriving the same two defaults inline avoids an extra query).
+  const focusSoundKindSetting = useLiveQuery(() => db.settings.get(FOCUS_SOUND_KIND_SETTING), []);
+  const focusSoundVolumeSetting = useLiveQuery(() => db.settings.get(FOCUS_SOUND_VOLUME_SETTING), []);
+  const focusSoundKind: FocusSoundKind =
+    focusSoundKindSetting?.value === 'pink' || focusSoundKindSetting?.value === 'white'
+      ? focusSoundKindSetting.value
+      : 'brown';
+  const focusSoundVolumePercent = Number(focusSoundVolumeSetting?.value ?? '40');
+
+  async function setFocusSoundKind(kind: FocusSoundKind) {
+    await db.settings.put({ key: FOCUS_SOUND_KIND_SETTING, value: kind });
+    // Retune in place ONLY if a sprint or task left running elsewhere is
+    // actually making sound right now — isFocusSoundPlaying is the guard
+    // that keeps this from being a backdoor way to START the engine from a
+    // screen that has no enable toggle of its own.
+    if (isFocusSoundPlaying()) startFocusSound(kind, focusSoundVolumePercent / 100);
+  }
+
+  async function setFocusSoundVolume(percent: number) {
+    await db.settings.put({ key: FOCUS_SOUND_VOLUME_SETTING, value: String(percent) });
+    if (isFocusSoundPlaying()) startFocusSound(focusSoundKind, percent / 100);
   }
 
   // Field-reports increment: same two-rows-in-`settings` shape as the
@@ -357,6 +397,51 @@ export function Settings({ onNavigate }: SettingsProps) {
         <p className="text-sm text-slate-500">
           A silent, persistent notification counting down to your next commitment. Updates when you
           open Runway or anything changes.
+        </p>
+      </section>
+
+      <section className="flex flex-col gap-3 border-t border-slate-800 pt-6">
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Focus sound</h2>
+        <div className="flex gap-3">
+          {FOCUS_SOUND_KIND_OPTIONS.map(({ value, label }) => {
+            const selected = focusSoundKind === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                onClick={() => void setFocusSoundKind(value)}
+                className={`flex min-h-12 flex-1 items-center justify-center rounded-xl border py-3 text-base font-medium transition-colors ${
+                  selected
+                    ? 'border-sky-500 bg-sky-500 text-slate-950'
+                    : 'border-slate-800/60 bg-surface text-slate-100 hover:border-slate-700'
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <label className="flex flex-col gap-2">
+          <span className="text-sm text-slate-300">Volume</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={focusSoundVolumePercent}
+            onChange={(e) => void setFocusSoundVolume(Number(e.target.value))}
+            className="accent-sky-500"
+          />
+        </label>
+        {/* No enable toggle in this section, unlike Day gauge above — a
+            deliberate split. Settings configures WHAT the sound is (kind,
+            volume); it is never where Deepak decides whether to make noise
+            right now — that decision belongs on the live screen, at the
+            moment work actually starts (Sprint.tsx's and TaskRun.tsx's own
+            "Focus sound: on/off" row), the same way the unwatched video was
+            never something he pre-armed from a settings menu. */}
+        <p className="text-sm text-slate-500">
+          Steady noise under sprints and tasks. Moderate background stimulation makes boring work
+          easier to hold — the job the unwatched video was doing, without the feed.
         </p>
       </section>
 

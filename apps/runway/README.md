@@ -243,6 +243,12 @@ Runway's origin story is a live countdown notification while getting ready, ambi
 
 The countdown itself is rendered entirely by Android — no foreground service, no background timer keeping the app alive. Runway only re-posts the notification when the TARGET changes (a new next-commitment, or the same one moving); between those moments, Android's own chronometer view ticks the mm:ss down with zero further app involvement. The honest tradeoff that buys: if the target passes while the app stays fully closed, the chronometer doesn't know — it counts down to zero and then either keeps counting up or shows a negative duration, stale until Runway is next opened and re-points it at whatever's actually next. Needs notification permission (the same one every other Runway alert already asks for); if it's denied, the gauge just doesn't render — no separate prompt.
 
+## Focus sound
+
+Deepak's own self-discovered ADHD hack for unpalatable work is an unwatched YouTube video running in the background — non-contingent auditory stimulation, moderate brain arousal, and no feed on the other side competing for his attention. Focus sound (0.33.0) gives him that mechanism natively: turn it on from the "Focus sound: on/off" row on a live Sprint or task screen, and steady generated noise (brown, pink, or white — pick the kind and volume in Settings) plays for exactly as long as the sprint or task is running, stopping the instant it finishes, is abandoned, or the screen is left. The preference is remembered, not reset — turn it on once and every later sprint or task starts with the sound already going, until you turn it off again. Settings has no on/off switch of its own on purpose: it configures what the sound is, never whether it's playing right now — that decision belongs at the moment the work actually starts.
+
+Two things are genuinely unverified outside a real device: whether the sound keeps playing with the screen off (outside the keep-awake window a running sprint or task already holds), and how it behaves alongside other audio already playing on the phone — a Capacitor WebView doesn't request Android audio focus the way a native music app does, so nothing here ducks or pauses for anything else making sound.
+
 ## Backup
 
 Everything Runway has learned — departure and task actuals, estimate provenance, exam sprints and milestones — lives in one IndexedDB on one phone. A lost phone or a cleared browser storage means all of it is gone. Settings → Backup (0.32.0) exports the full database as one JSON file (**Export backup**) and lets a phone start over from one (**Import backup**).
@@ -285,6 +291,7 @@ Cut from v1 deliberately, not forgotten:
 - **Exam archive / start-new-exam flow** — v1 supports exactly one exam with no delete path (see "Prüfung mode" above); needed before a second Facharzt-scale exam could ever be prepped for in this app.
 - **Topic estimate suggestions (≥3 sprints per topic, ≥25% drift — suggest, never apply)** — the calibration pattern departure mode already has (`src/lib/calibration.ts`'s `computeSuggestions`) applied to topic `estimatedHours`. Cut from v1 because it needs real logged-sprint history to have any signal at all — building it before there's data to test it against would be guessing at what "meaningfully drifted" looks like in practice.
 - **Two-way calendar sync** (field report #10) — Runway copies an appointment at the moment you plan it; if the calendar event later moves or is cancelled, the departure does not follow today. Detecting that drift (and either re-prompting or auto-updating) would need a background calendar-change listener this version doesn't have.
+- **Focus sound on departures** (Runway.tsx) — 0.33.0 wired the toggle into Sprint.tsx and TaskRun.tsx only. A departure's getting-ready window is arguably the same kind of unpalatable-task stretch a sprint or task run is; extending the same toggle there is a small, deliberate follow-up, not built this increment.
 
 ## Re-triggering a build
 

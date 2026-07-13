@@ -17,6 +17,8 @@ import { formatSlackLine, formatTime } from '../lib/format';
 import { allowSleep, keepAwake } from '../native/keepAwake';
 import { hapticImpact } from '../native/haptics';
 import { pushBackOverride } from '../lib/backOverride';
+import { FOCUS_SOUND_ON_SETTING, readFocusSoundConfig } from '../lib/focusSoundSettings';
+import { startFocusSound, stopFocusSound } from '../audio/focusSound';
 
 /** Distinct from Runway's departure-abandon copy — a task has no alarms to
  * cancel (tasks increment: no scheduled notifications in v1, see README's
@@ -102,6 +104,47 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
     };
   }, [task?.status]);
 
+  // Focus sound (0.33.0): reads the remembered 'focusSoundOn' preference
+  // fresh here, same reasoning as Sprint.tsx's own equivalent read -
+  // Settings.tsx writes the same row, and this needs the current value
+  // each time this screen mounts, not just at first paint.
+  const focusSoundConfig = useLiveQuery(() => readFocusSoundConfig(), []);
+
+  // Same live window as keep-awake above ('running' only, never 'planned' -
+  // a task Deepak hasn't pressed Start on yet has nothing to hold
+  // attention on background noise FOR). "Remembered, not reset" is the
+  // point of reading `focusSoundConfig.on` fresh here: turn it on once and
+  // every SUBSEQUENT task run starts with the sound already going, nothing
+  // to re-arm. The cleanup below is the single reliable net UNDER every
+  // other stop path (toggleUnit's and handleUnitBackdateConfirm's own
+  // explicit calls when a task finishes, handleAbandon's own explicit
+  // call, the toggle row's own explicit call) - whatever else changed or
+  // however this screen stopped being mounted in the running state, this
+  // always runs and always stops the sound. stopFocusSound is idempotent,
+  // so calling it here on top of an explicit call elsewhere costs nothing.
+  useEffect(() => {
+    if (task?.status !== 'running') return;
+    if (!focusSoundConfig) return; // still loading the settings rows
+    if (focusSoundConfig.on) startFocusSound(focusSoundConfig.kind, focusSoundConfig.volume0to1);
+    return () => {
+      stopFocusSound();
+    };
+  }, [task?.status, focusSoundConfig]);
+
+  const toggleFocusSound = async () => {
+    void hapticImpact('light');
+    const next = !(focusSoundConfig?.on ?? false);
+    await db.settings.put({ key: FOCUS_SOUND_ON_SETTING, value: next ? 'true' : 'false' });
+    // Immediate, on top of the effect above (which will also notice the
+    // settings row changed once Dexie's live query re-emits) - a tap on
+    // this row should be heard right away, not after a query round-trip.
+    if (next) {
+      startFocusSound(focusSoundConfig?.kind ?? 'brown', focusSoundConfig?.volume0to1 ?? 0.4);
+    } else {
+      stopFocusSound();
+    }
+  };
+
   if (!task) {
     return (
       <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-6 px-4 pb-12 pt-safe-top">
@@ -122,6 +165,10 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
   const toggleUnit = async (unit: TaskUnit) => {
     void hapticImpact('light');
     const nowIso = new Date().toISOString();
+    // Focus sound (0.33.0): captured from inside the modify() callback
+    // below, since that's the only place that knows whether THIS check-off
+    // is the one that resolves the task to 'done'.
+    let becameDone = false;
     await db.tasks.where('id').equals(task.id).modify((t) => {
       if (t.status === 'planned') {
         t.status = 'running';
@@ -133,8 +180,13 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
       u.checkedAt = checking ? nowIso : null;
       if (checking && t.units.every((x) => x.checkedAt !== null)) {
         t.status = 'done';
+        becameDone = true;
       }
     });
+    // Explicit and immediate, on top of the mount-effect's own cleanup
+    // (which will also notice `task.status` changed once the live query
+    // re-emits) - see that effect's own comment for why both exist.
+    if (becameDone) stopFocusSound();
   };
 
   const handleStart = async () => {
@@ -161,19 +213,27 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
   const handleUnitBackdateConfirm = async (at: Date) => {
     void hapticImpact('light');
     const atIso = at.toISOString();
+    // Focus sound (0.33.0): same capture-inside-modify() shape as
+    // toggleUnit's own becameDone flag, and the same reasoning.
+    let becameDone = false;
     await db.tasks.where('id').equals(task.id).modify((t) => {
       const u = t.units.find((x) => x.checkedAt === null);
       if (!u) return;
       u.checkedAt = atIso;
       if (t.units.every((x) => x.checkedAt !== null)) {
         t.status = 'done';
+        becameDone = true;
       }
     });
+    if (becameDone) stopFocusSound();
     setUnitBackdateOpen(false);
   };
 
   const handleAbandon = async () => {
     if (!window.confirm(ABANDON_CONFIRM)) return;
+    // Focus sound (0.33.0): explicit and immediate, same reasoning as the
+    // finish paths above - don't wait on the mount-effect's cleanup.
+    stopFocusSound();
     await db.tasks.update(task.id, { status: 'abandoned' });
     onNavigate({ name: 'home' });
   };
@@ -448,6 +508,15 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
         )}
 
         <div className="flex items-center justify-center gap-6">
+          {/* Focus sound (0.33.0), 'running' only - same scoping as the
+              keep-awake effect above, and the same "no enable toggle on
+              Settings" reasoning as Sprint.tsx's own row: this is the one
+              place the on/off decision actually gets made. */}
+          {task.status === 'running' && (
+            <TextAction onClick={() => void toggleFocusSound()}>
+              Focus sound: {focusSoundConfig?.on ? 'on' : 'off'}
+            </TextAction>
+          )}
           <TextAction onClick={() => void handleAbandon()}>Abandon this task</TextAction>
         </div>
       </div>

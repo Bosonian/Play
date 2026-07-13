@@ -6,6 +6,7 @@ import type { Sprint as SprintRow } from '../db/types';
 import type { Screen } from '../App';
 import { ScreenHeader } from '../ui/ScreenHeader';
 import { Button } from '../ui/Button';
+import { TextAction } from '../ui/TextAction';
 import { useNow } from '../hooks/useNow';
 import { remainingHours, sprintMinutes } from '../lib/examProjection';
 import { formatCountdown } from '../lib/format';
@@ -14,6 +15,8 @@ import { hapticImpact } from '../native/haptics';
 import { cancelSprintEndAlarm } from '../native/notifications';
 import { refreshWidgets } from '../native/widgets';
 import { refreshDayGauge } from '../lib/dayGaugeRefresh';
+import { FOCUS_SOUND_ON_SETTING, readFocusSoundConfig } from '../lib/focusSoundSettings';
+import { startFocusSound, stopFocusSound } from '../audio/focusSound';
 
 interface SprintProps {
   sprintId: string;
@@ -129,6 +132,45 @@ export function Sprint({ sprintId, onNavigate }: SprintProps) {
     };
   }, [sprint?.endedAt]);
 
+  // Focus sound (0.33.0): reads the remembered 'focusSoundOn' preference
+  // fresh here rather than once at the top of the module - Settings.tsx
+  // writes the same row, and this needs the current value every time a
+  // sprint becomes live, not just the value at first paint.
+  const focusSoundConfig = useLiveQuery(() => readFocusSoundConfig(), []);
+
+  // Same live window as keep-awake above ('endedAt === null'). "Remembered,
+  // not reset" is the point: Deepak turns this on once, and every
+  // SUBSEQUENT sprint starts with the sound already going, with nothing to
+  // re-arm - that's what reading `focusSoundConfig.on` fresh on every
+  // mount/transition into this effect buys. The cleanup here is the single
+  // reliable net UNDER every other stop path (finishSprint's own explicit
+  // call below, the toggle row's own explicit call) - no matter what else
+  // changed or how this screen stopped being mounted, this always runs and
+  // always stops the sound. stopFocusSound is idempotent, so calling it
+  // here on top of an explicit call elsewhere costs nothing.
+  useEffect(() => {
+    if (!sprint || sprint.endedAt !== null) return;
+    if (!focusSoundConfig) return; // still loading the settings rows
+    if (focusSoundConfig.on) startFocusSound(focusSoundConfig.kind, focusSoundConfig.volume0to1);
+    return () => {
+      stopFocusSound();
+    };
+  }, [sprint?.endedAt, focusSoundConfig]);
+
+  const toggleFocusSound = async () => {
+    void hapticImpact('light');
+    const next = !(focusSoundConfig?.on ?? false);
+    await db.settings.put({ key: FOCUS_SOUND_ON_SETTING, value: next ? 'true' : 'false' });
+    // Immediate, on top of the effect above (which will also notice the
+    // settings row changed once Dexie's live query re-emits) - a tap on
+    // this row should be heard right away, not after a query round-trip.
+    if (next) {
+      startFocusSound(focusSoundConfig?.kind ?? 'brown', focusSoundConfig?.volume0to1 ?? 0.4);
+    } else {
+      stopFocusSound();
+    }
+  };
+
   if (!sprint) {
     // Still loading from Dexie (or a stale id) - nothing to show yet.
     return (
@@ -152,6 +194,12 @@ export function Sprint({ sprintId, onNavigate }: SprintProps) {
   // actual" choice.
   const finishSprint = async (endedAtIso: string) => {
     void hapticImpact('medium');
+    // Focus sound (0.33.0): stop the instant a sprint ends, rather than
+    // waiting for the mount-effect's cleanup to notice `endedAt` changed -
+    // see that effect's own comment for why both this explicit call and
+    // the cleanup exist. Unconditional and idempotent: harmless even if
+    // nothing was playing.
+    stopFocusSound();
     await db.sprints.where('id').equals(sprint.id).modify((s) => {
       if (s.endedAt === null) s.endedAt = endedAtIso;
     });
@@ -273,6 +321,15 @@ export function Sprint({ sprintId, onNavigate }: SprintProps) {
       {Capacitor.isNativePlatform() && (
         <p className="text-center text-sm text-slate-600">Screen stays on while this is open.</p>
       )}
+
+      {/* Focus sound (0.33.0). Deliberately no enable toggle on
+          Settings.tsx - this row is the one place that decision gets made,
+          at the moment work is actually live. */}
+      <div className="flex items-center justify-center">
+        <TextAction onClick={() => void toggleFocusSound()}>
+          Focus sound: {focusSoundConfig?.on ? 'on' : 'off'}
+        </TextAction>
+      </div>
 
       <Button variant="secondary" onClick={() => void handleEnd()} className="w-full">
         End sprint
