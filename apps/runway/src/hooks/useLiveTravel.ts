@@ -6,6 +6,7 @@ import { shouldUpdateTravelMinutes } from '../lib/liveTravelUpdate';
 import { getCurrentPosition } from '../native/geolocation';
 import { scheduleDepartureAlarms } from '../native/notifications';
 import { refreshWidgets } from '../native/widgets';
+import { refreshDayGauge } from '../lib/dayGaugeRefresh';
 
 const REFRESH_INTERVAL_MS = 3 * 60_000; // 3 min
 const MIN_INTERVAL_MS = 150_000; // 150 s — see refresh() below for why this is checked separately from the interval itself.
@@ -148,6 +149,7 @@ export function useLiveTravel(
             // refresh a widget snapshot for a departure that's no longer
             // 'running'.
             void refreshWidgets();
+            void refreshDayGauge();
           }
         }
         // <3 min drift: intentionally no write, no reschedule — the state

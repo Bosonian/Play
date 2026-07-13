@@ -13,6 +13,7 @@ import { allowSleep, keepAwake } from '../native/keepAwake';
 import { hapticImpact } from '../native/haptics';
 import { cancelSprintEndAlarm } from '../native/notifications';
 import { refreshWidgets } from '../native/widgets';
+import { refreshDayGauge } from '../lib/dayGaugeRefresh';
 
 interface SprintProps {
   sprintId: string;
@@ -160,6 +161,7 @@ export function Sprint({ sprintId, onNavigate }: SprintProps) {
     // Widgets increment: logged hours just changed - the widget's ready
     // date, week line, and colour band all depend on them.
     await refreshWidgets();
+    await refreshDayGauge();
     setFinishedEndedAt(endedAtIso); // F13 - see its declaration above
     setJustEnded(true);
   };

@@ -11,7 +11,8 @@ import com.getcapacitor.BridgeActivity;
  * increment (0.17.0) adds CalendarBridgePlugin the same way, plus the
  * ACTION_SEND rewrite trick documented on rewriteShareTargetIntent below.
  * Arrival-detection increment (0.23.0) adds WifiBridgePlugin the same way
- * again.
+ * again. Day-gauge increment (0.31.0) adds DayGaugePlugin the same way once
+ * more.
  *
  * The registerPlugin() call has to happen BEFORE super.onCreate() runs, not
  * after: BridgeActivity.onCreate() (see
@@ -77,6 +78,8 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(CalendarBridgePlugin.class);
         // Arrival-detection increment (0.23.0): WifiBridgePlugin.java.
         registerPlugin(WifiBridgePlugin.class);
+        // Day-gauge increment (0.31.0): DayGaugePlugin.java.
+        registerPlugin(DayGaugePlugin.class);
         super.onCreate(savedInstanceState);
     }
 

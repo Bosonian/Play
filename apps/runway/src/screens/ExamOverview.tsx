@@ -31,6 +31,7 @@ import {
 } from '../lib/format';
 import { cancelSprintEndAlarm } from '../native/notifications';
 import { refreshWidgets } from '../native/widgets';
+import { refreshDayGauge } from '../lib/dayGaugeRefresh';
 
 interface ExamOverviewProps {
   onNavigate: (screen: Screen) => void;
@@ -217,6 +218,7 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
     // never real in the first place — either way the widget's numbers are
     // now stale until this runs).
     await refreshWidgets();
+    await refreshDayGauge();
   }
 
   /** The endedAt the card's "Log planned N min" button writes — startedAt

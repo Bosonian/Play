@@ -10,6 +10,7 @@ import { TextAction } from '../ui/TextAction';
 import { formatDateInput, formatDateLong, formatTime, formatTimeInput } from '../lib/format';
 import { cancelMilestoneAlarm, ensurePermissions, scheduleMilestoneAlarm } from '../native/notifications';
 import { refreshWidgets } from '../native/widgets';
+import { refreshDayGauge } from '../lib/dayGaugeRefresh';
 
 interface MilestoneEditProps {
   examId: string;
@@ -139,6 +140,7 @@ export function MilestoneEdit({ examId, onNavigate }: MilestoneEditProps) {
     // does show them doesn't need to rediscover it (see refreshWidgets' own
     // doc comment).
     await refreshWidgets();
+    await refreshDayGauge();
 
     resetForm();
     setSubmitting(false);

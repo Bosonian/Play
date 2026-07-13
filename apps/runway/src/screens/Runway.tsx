@@ -18,6 +18,7 @@ import { cancelDepartureAlarms, scheduleDepartureAlarms } from '../native/notifi
 import { readLiveTravelConfig } from '../lib/liveTravelSettings';
 import { useLiveTravel } from '../hooks/useLiveTravel';
 import { refreshWidgets } from '../native/widgets';
+import { refreshDayGauge } from '../lib/dayGaugeRefresh';
 import { compressPlan, suggestNewTarget } from '../lib/replan';
 import type { CompressResult } from '../lib/replan';
 import { learnedRushedFloor, rushedActualsByStepName } from '../lib/learning';
@@ -353,6 +354,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     // provider redraw (see WidgetBridgePlugin's own comment on why poking
     // both providers unconditionally is simpler than diffing first).
     void refreshWidgets();
+    void refreshDayGauge();
   };
 
   // Backdating increment ("Done earlier"): the same write toggleStep does
@@ -374,6 +376,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
       if (s) s.checkedAt = atIso;
     });
     void refreshWidgets();
+    void refreshDayGauge();
     setStepBackdateOpen(false);
   };
 
@@ -400,6 +403,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     // departure drops out of the widget's source pool — refresh so it
     // doesn't keep showing "Leave now" after you already have.
     void refreshWidgets();
+    void refreshDayGauge();
     // Learning increment §3: this is one of the two "a departure of an
     // autoLearn template reached left/done" triggers (the other is Home's
     // arrival-capture actions, which move an already-'left' departure on to
@@ -426,6 +430,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     await db.departures.update(departure.id, { status: 'left', leftAt: at.toISOString() });
     await cancelDepartureAlarms(departure.id);
     void refreshWidgets();
+    void refreshDayGauge();
     if (departure.templateId) void applyAutoLearn(departure.templateId);
     setJustLeft(true);
     setLeaveBackdateOpen(false);
@@ -443,6 +448,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     // Widgets increment: same reasoning as handleLeave above — 'abandoned'
     // takes this departure out of the widget's source pool.
     void refreshWidgets();
+    void refreshDayGauge();
     onNavigate({ name: 'home' });
   };
 
@@ -507,6 +513,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
       }
     });
     void refreshWidgets();
+    void refreshDayGauge();
     // Same trigger rule as handleLeave above ("a departure of an autoLearn
     // template reached left/done") — checking the last arrival step is the
     // OTHER place a departure reaches 'done' now, alongside Home's manual
@@ -547,6 +554,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
       }
     });
     void refreshWidgets();
+    void refreshDayGauge();
     if (departure.templateId) void applyAutoLearn(departure.templateId);
     setStepBackdateOpen(false);
   };
@@ -603,6 +611,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     // doesn't get rescheduled - nothing to reimplement here.
     await scheduleDepartureAlarms({ ...departure, steps: result.steps, bufferMinutes: result.bufferMinutes });
     void refreshWidgets();
+    void refreshDayGauge();
     setReplanOpen(false);
   };
 
@@ -639,6 +648,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     // move with it.
     await scheduleDepartureAlarms({ ...departure, appointmentAt: chosenIso, originalAppointmentAt: originalToKeep });
     void refreshWidgets();
+    void refreshDayGauge();
     setReplanOpen(false);
   };
 

@@ -9,6 +9,7 @@ import { ScreenHeader } from '../ui/ScreenHeader';
 import { RepeatEditor } from '../ui/RepeatEditor';
 import { PRUEFUNG_GUIDED_DONE_KEY, isGuidedPassActive } from '../lib/guidedPass';
 import { refreshWidgets } from '../native/widgets';
+import { refreshDayGauge } from '../lib/dayGaugeRefresh';
 import { ensurePermissions, scheduleStudyBlockAlarms } from '../native/notifications';
 
 interface ExamSetupProps {
@@ -166,6 +167,7 @@ export function ExamSetup({ examId, onNavigate }: ExamSetupProps) {
     // changed, which is exactly what the widget's "Ready by" colour band
     // and anchorLabel are computed from.
     await refreshWidgets();
+    await refreshDayGauge();
 
     // Prüfung rework 2: lazy permission request on save — never at app
     // launch (CLAUDE.md: no permission ambush) — same shape as

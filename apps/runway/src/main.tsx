@@ -6,6 +6,7 @@ import './index.css';
 import { registerNotificationNavigation } from './native/notifications';
 import { registerDeepLinkNavigation } from './native/deepLinks';
 import { refreshWidgets } from './native/widgets';
+import { refreshDayGauge } from './lib/dayGaugeRefresh';
 import { navigateToDeparture, navigateToScreen } from './lib/navigationRef';
 import { materializeScheduledDepartures, materializeStudyBlockAlarms } from './lib/materialize';
 import { syncPendingReports } from './lib/reportSync';
@@ -39,6 +40,21 @@ void registerDeepLinkNavigation(navigateToScreen);
 // comment for the full list of call sites and why an explicit list beats a
 // generic Dexie hook.
 void refreshWidgets();
+
+// Day-gauge increment (0.31.0): the pairing rule for this whole increment —
+// "anything that moves the widgets moves the gauge." Every candidate
+// refreshDayGauge picks from (a departure's leaveBy, a task's deadline, the
+// exam's next study block) is already exactly what buildWidgetSnapshot's own
+// queries already read, so there is no Dexie write that changes one but not
+// the other — every refreshWidgets() call site in this codebase gets a
+// refreshDayGauge() call beside it for that reason (see refreshDayGauge's own
+// doc comment for the one call site it needs that refreshWidgets doesn't: a
+// visibilitychange resume hook in App.tsx, since a widget self-heals on the
+// OS's own ~6-hourly redraw tick and a chronometer notification does not).
+// This is the only one of those paired call sites carrying this comment —
+// the rest are left uncommented so the pairing reads as a rule, not N
+// separate one-off justifications.
+void refreshDayGauge();
 
 // Recurring-departures increment: plans the next HORIZON_DAYS of scheduled
 // departures (and sweeps stale auto-created ones) on every app open — see

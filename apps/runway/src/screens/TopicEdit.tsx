@@ -8,6 +8,7 @@ import { ScreenHeader } from '../ui/ScreenHeader';
 import { PRUEFUNG_GUIDED_DONE_KEY, isGuidedPassActive } from '../lib/guidedPass';
 import { FACHARZT_NEUROLOGIE_TEMPLATE } from '../content/facharztNeurologieTemplate';
 import { refreshWidgets } from '../native/widgets';
+import { refreshDayGauge } from '../lib/dayGaugeRefresh';
 
 interface TopicEditProps {
   examId: string;
@@ -169,6 +170,7 @@ export function TopicEdit({ examId, onNavigate }: TopicEditProps) {
     // have just changed - both feed straight into remainingHours, and
     // therefore the widget's ready-date projection.
     await refreshWidgets();
+    await refreshDayGauge();
 
     onNavigate({ name: 'exam' });
   }

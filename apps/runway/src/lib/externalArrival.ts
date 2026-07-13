@@ -3,6 +3,7 @@ import type { Departure } from '../db/types';
 import type { Screen } from '../App';
 import { hapticImpact } from '../native/haptics';
 import { refreshWidgets } from '../native/widgets';
+import { refreshDayGauge } from './dayGaugeRefresh';
 
 // Arrival-detection increment (deep-link path, 0.23.0): `runway://arrived`
 // is what Deepak's own Samsung Modes & Routines automation opens on
@@ -110,6 +111,7 @@ export async function recordExternalArrival(): Promise<Screen> {
     void hapticImpact('light');
     await db.departures.update(candidate.id, { arrivedAt: now.toISOString() });
     void refreshWidgets();
+    void refreshDayGauge();
     return { name: 'runway', departureId: candidate.id };
   } catch (err) {
     console.warn('Runway: recordExternalArrival failed', err);

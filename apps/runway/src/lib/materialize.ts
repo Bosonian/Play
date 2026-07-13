@@ -7,6 +7,7 @@ import {
   scheduleStudyBlockAlarms,
 } from '../native/notifications';
 import { refreshWidgets } from '../native/widgets';
+import { refreshDayGauge } from './dayGaugeRefresh';
 import { HORIZON_DAYS, occurrenceDates, type Occurrence } from './recurrence';
 
 /**
@@ -48,6 +49,7 @@ export async function materializeScheduledDepartures(): Promise<void> {
 
     if (changed) {
       await refreshWidgets();
+      await refreshDayGauge();
     }
   } catch (err) {
     // Never throws — see the doc comment above for why both call sites

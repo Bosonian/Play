@@ -237,6 +237,12 @@ Two 3×1 widgets, both fed from the same snapshot mechanism (see below).
 
 **Static shortcuts** ("New departure", "Prüfung") are also available by long-pressing the app icon — no widget placement required for those.
 
+## Day gauge
+
+Runway's origin story is a live countdown notification while getting ready, ambient enough that you never had to open the app to know how much runway was left. The day gauge (0.31.0) generalizes that to the rest of the day: turn it on in Settings and a silent, ongoing notification sits in the shade and on the lockscreen, counting down to whatever's next — a departure's leave-by time, a task's deadline, or the exam's next study block, whichever is soonest across all of them. Off by default (**opt-in**, Settings → Day gauge) — a permanent notification is a bigger footprint than anything else Runway posts, so it's a deliberate choice, not a default.
+
+The countdown itself is rendered entirely by Android — no foreground service, no background timer keeping the app alive. Runway only re-posts the notification when the TARGET changes (a new next-commitment, or the same one moving); between those moments, Android's own chronometer view ticks the mm:ss down with zero further app involvement. The honest tradeoff that buys: if the target passes while the app stays fully closed, the chronometer doesn't know — it counts down to zero and then either keeps counting up or shows a negative duration, stale until Runway is next opened and re-points it at whatever's actually next. Needs notification permission (the same one every other Runway alert already asks for); if it's denied, the gauge just doesn't render — no separate prompt.
+
 ## Field reports
 
 A quiet "Report a problem" link on Home and on Settings opens a small form: a description (no character limit — dictate it, no need to be terse) and an optional screenshot. Saving is instant and always succeeds, whether or not you've set up syncing and whether or not the device is online — the report is written to this device's own storage first, full stop. From there it's a queue: **filed to GitHub Issues automatically once a token is configured and the device has connectivity**, retried on every app open until that happens.

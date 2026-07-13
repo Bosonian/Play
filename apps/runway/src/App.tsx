@@ -17,6 +17,7 @@ import { TaskSetup } from './screens/TaskSetup';
 import { TaskRun } from './screens/TaskRun';
 import { setNavigationRef } from './lib/navigationRef';
 import { registerBackGesture } from './native/backGesture';
+import { refreshDayGauge } from './lib/dayGaugeRefresh';
 
 // Navigation as plain React state, not a router library. There's no
 // deep-linkable URL requirement in increment 1 (no shareable departure
@@ -188,6 +189,33 @@ export default function App() {
       cancelled = true;
       cleanup?.();
     };
+  }, []);
+
+  // Day-gauge increment (0.31.0): the one refreshDayGauge() trigger that
+  // has no refreshWidgets() equivalent (see main.tsx's own comment on the
+  // pairing rule for why every OTHER trigger is just "wherever refreshWidgets
+  // already is"). A home-screen widget self-heals on its own even with the
+  // app fully closed — Android redraws it roughly every 6 hours regardless
+  // (see widgetSnapshot.ts's own "widget expiry rules are evaluated at
+  // redraw" note) — but the day gauge's native chronometer has no such
+  // built-in tick: once posted, it counts down (and then up, or negative)
+  // with zero further OS-side awareness of whether the target it's counting
+  // toward is still the right one. "The app was reopened" has to be an
+  // explicit trigger for that reason, even on a resume where nothing was
+  // necessarily written to Dexie in between. This is App.tsx's own mount
+  // effect (there's no other central "app resumed" hook — Home.tsx's and
+  // Runway.tsx's own visibilitychange listeners are both scoped to their
+  // own screen-local concerns, calendar reads and live travel, not a
+  // whole-app resume signal) rather than folded into the back-gesture
+  // effect above, for the same "different direction, different concern"
+  // reasoning that effect's own comment gives for staying separate from the
+  // navigationRef effect.
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible') void refreshDayGauge();
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
   function renderScreen() {

@@ -11,6 +11,10 @@ import { DEFAULT_FEEDBACK_REPO, FEEDBACK_REPO_SETTING, FEEDBACK_TOKEN_SETTING } 
 import { GEMINI_API_KEY_SETTING } from '../lib/captureSettings';
 import { CALENDAR_ENABLED_SETTING } from '../lib/calendarSettings';
 import { requestCalendarAccess } from '../native/calendar';
+import { DAY_GAUGE_ENABLED_SETTING } from '../lib/dayGaugeSettings';
+import { refreshDayGauge } from '../lib/dayGaugeRefresh';
+import { hideDayGauge } from '../native/dayGauge';
+import { ensurePermissions } from '../native/notifications';
 
 interface SettingsProps {
   onNavigate: (screen: Screen) => void;
@@ -81,6 +85,38 @@ export function Settings({ onNavigate }: SettingsProps) {
     }
     const granted = await requestCalendarAccess();
     await db.settings.put({ key: CALENDAR_ENABLED_SETTING, value: granted ? 'true' : 'false' });
+  }
+
+  // Day-gauge increment (0.31.0). Same settings-row shape as
+  // CALENDAR_ENABLED_SETTING above, but deliberately does NOT gate the
+  // stored value on whether the permission prompt was actually granted the
+  // way toggleCalendar does above: a denied calendar permission leaves
+  // literally nothing for that feature to show, so falling back to 'false'
+  // is the only honest state. A denied notification permission is
+  // different — DayGaugePlugin.java's own comment on this — the gauge just
+  // silently doesn't render; the toggle still means "Deepak wants this on",
+  // and if he grants the permission later (Android Settings), the very next
+  // refreshDayGauge() call (next app open, or any write-site trigger) picks
+  // it back up with no need to revisit this screen and flip the toggle
+  // again.
+  const dayGaugeEnabledSetting = useLiveQuery(() => db.settings.get(DAY_GAUGE_ENABLED_SETTING), []);
+  const dayGaugeEnabled = dayGaugeEnabledSetting?.value === 'true';
+
+  async function toggleDayGauge() {
+    if (dayGaugeEnabled) {
+      await db.settings.put({ key: DAY_GAUGE_ENABLED_SETTING, value: 'false' });
+      // Turning off must take effect immediately, not just on the next
+      // refresh trigger — an ongoing notification left on the shade after
+      // its own toggle is switched off would read as broken, not silent.
+      await hideDayGauge();
+      return;
+    }
+    // Reuses the app's one existing notification-permission flow
+    // (notifications.ts's ensurePermissions) rather than a second path —
+    // best-effort; its result isn't checked here, see the comment above.
+    await ensurePermissions();
+    await db.settings.put({ key: DAY_GAUGE_ENABLED_SETTING, value: 'true' });
+    void refreshDayGauge();
   }
 
   // Field-reports increment: same two-rows-in-`settings` shape as the
@@ -197,6 +233,23 @@ export function Settings({ onNavigate }: SettingsProps) {
         <p className="text-sm text-slate-500">
           Reads your device calendar to suggest departures for upcoming appointments. Runway never
           writes to your calendar.
+        </p>
+      </section>
+
+      <section className="flex flex-col gap-3 border-t border-slate-800 pt-6">
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Day gauge</h2>
+        <label className="flex items-center gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
+          <input
+            type="checkbox"
+            checked={dayGaugeEnabled}
+            onChange={() => void toggleDayGauge()}
+            className="size-6 shrink-0 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+          />
+          <span className="flex-1 text-slate-100">Show a live countdown to your next commitment</span>
+        </label>
+        <p className="text-sm text-slate-500">
+          A silent, persistent notification counting down to your next commitment. Updates when you
+          open Runway or anything changes.
         </p>
       </section>
 

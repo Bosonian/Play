@@ -16,6 +16,7 @@ import { readLiveTravelConfig } from '../lib/liveTravelSettings';
 import { fetchDriveMinutes } from '../lib/routesApi';
 import { getCurrentPosition } from '../native/geolocation';
 import { refreshWidgets } from '../native/widgets';
+import { refreshDayGauge } from '../lib/dayGaugeRefresh';
 import { stepNameLibrary } from '../lib/learning';
 import { materializeScheduledDepartures } from '../lib/materialize';
 import { StepNameAutocomplete } from '../ui/StepNameAutocomplete';
@@ -535,6 +536,7 @@ export function DepartureSetup({
     // departure widget's three lines read — may have just changed, or a
     // brand-new departure may now be the soonest planned one.
     void refreshWidgets();
+    void refreshDayGauge();
 
     // Alarms only make sense for a departure that's still ahead of you — a
     // terminal departure ('left'/'done'/'abandoned') has nothing left to

@@ -35,6 +35,7 @@ import { applyAutoLearn } from '../lib/autoLearn';
 import { materializeScheduledDepartures, replaceUntouchedFutureAutoRows } from '../lib/materialize';
 import { useNow } from '../hooks/useNow';
 import { refreshWidgets } from '../native/widgets';
+import { refreshDayGauge } from '../lib/dayGaugeRefresh';
 
 /** Cap on "From your calendar" cards shown at once (E1; CLAUDE.md's
  * "defaults lean toward less, not more") — same shape as
@@ -369,6 +370,7 @@ export function Home({ onNavigate }: HomeProps) {
     // the widget's source departure — refresh so a removed "Klinik 14:30"
     // doesn't linger on the home screen.
     void refreshWidgets();
+    void refreshDayGauge();
   }
 
   // Departures that have left but have no recorded arrival result yet -
@@ -498,6 +500,7 @@ export function Home({ onNavigate }: HomeProps) {
   async function recordArrival(departure: Departure, result: 'early' | 'onTime') {
     await db.departures.update(departure.id, { status: 'done', arrivalResult: result, arrivalLateMinutes: null });
     void refreshWidgets();
+    void refreshDayGauge();
     if (departure.templateId) void applyAutoLearn(departure.templateId);
   }
 
@@ -508,12 +511,14 @@ export function Home({ onNavigate }: HomeProps) {
     setRevealingLateFor(null);
     setLateMinutesInput('');
     void refreshWidgets();
+    void refreshDayGauge();
     if (departure.templateId) void applyAutoLearn(departure.templateId);
   }
 
   async function skipArrival(departure: Departure) {
     await db.departures.update(departure.id, { status: 'done' });
     void refreshWidgets();
+    void refreshDayGauge();
     if (departure.templateId) void applyAutoLearn(departure.templateId);
   }
 
