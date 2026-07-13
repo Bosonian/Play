@@ -16,6 +16,7 @@ import { StepFocus } from './StepFocus';
 import { formatSlackLine, formatTime } from '../lib/format';
 import { allowSleep, keepAwake } from '../native/keepAwake';
 import { hapticImpact } from '../native/haptics';
+import { pushBackOverride } from '../lib/backOverride';
 
 /** Distinct from Runway's departure-abandon copy — a task has no alarms to
  * cancel (tasks increment: no scheduled notifications in v1, see README's
@@ -81,6 +82,14 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
     }
     if (!task.units.some((u) => u.id === focusUnitId)) setFocusUnitId(null);
   }, [task, focusUnitId]);
+
+  // Back-gesture support: same reasoning as Runway.tsx's own equivalent
+  // effect on `focusStepId` — while StepFocus is open, a back gesture
+  // closes the overlay instead of navigating the screen underneath it.
+  useEffect(() => {
+    if (focusUnitId === null) return;
+    return pushBackOverride(() => setFocusUnitId(null));
+  }, [focusUnitId]);
 
   // Keep the screen on for exactly as long as work is live — 'running'
   // only, same as Runway.tsx's own keep-awake effect scoped to its

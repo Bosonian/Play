@@ -5,7 +5,12 @@ import type { Screen } from '../App';
 import { parseSharedDestination } from '../lib/shareTarget';
 import { recordExternalArrival } from '../lib/externalArrival';
 
-// The ONLY file that imports @capacitor/app. Routes this app defines:
+// One of two files that import @capacitor/app — the other is
+// src/native/backGesture.ts (Android back-gesture support), which uses the
+// plugin's `backButton`/`minimizeApp` surface, disjoint from this file's
+// `appUrlOpen`/`getLaunchUrl` deep-link surface; the two were never coupled
+// beyond sharing a plugin, so there was nothing to factor out when
+// backGesture.ts was added. Routes this app defines:
 // `runway://exam` (Prüfung overview) and `runway://new-departure` (a blank
 // DepartureSetup) from W1 — reached from the Prüfung widget's tap target
 // (PruefungWidgetProvider.java) and the static home-screen shortcuts

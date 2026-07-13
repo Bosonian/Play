@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { TextField } from './TextField';
 import { TextAction } from './TextAction';
 import { clampBackdate, hhmmToDateNear } from '../lib/backdate';
 import { formatTime, formatTimeInput } from '../lib/format';
+import { pushBackOverride } from '../lib/backOverride';
 
 interface BackdateDialogProps {
   /** What's being asked, exact and specific per call site (CLAUDE.md: exact
@@ -45,6 +46,26 @@ export function BackdateDialog({ caption, lowerBound, now, onConfirm, onCancel }
   // and re-deriving this on each of those ticks would silently reset
   // whatever the user has already typed.
   const [value, setValue] = useState(() => formatTimeInput(now));
+
+  // Back-gesture support: every call site only ever mounts this component
+  // while its own "xBackdateOpen" flag is true (Runway.tsx/TaskRun.tsx's
+  // own comments on those flags) — mounted IS open here, there's no
+  // separate open/closed prop to key off, so a plain mount/unmount effect
+  // covers every usage in one place, per CLAUDE.md's "one component, not a
+  // duplicated wiring point per call site". `onCancel` is read through a
+  // ref rather than depended on directly: the caller hands this component a
+  // fresh `onCancel` closure every render (`now` ticks once a second on
+  // Runway.tsx/TaskRun.tsx, re-rendering their inline `() => setXOpen(false)`
+  // arrows), and depending on it directly would re-run this effect — an
+  // unregister immediately followed by a re-register — every single tick.
+  // Still correct either way (the override stack dedupes by identity, and
+  // nothing observes the brief gap), just pointless churn; the ref avoids
+  // it while keeping "always call the LATEST onCancel" true.
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
+  useEffect(() => {
+    return pushBackOverride(() => onCancelRef.current());
+  }, []);
 
   // hhmmToDateNear rolls backward across midnight for a time-of-day that's
   // still ahead of `now` (see its own doc comment - the mirror of

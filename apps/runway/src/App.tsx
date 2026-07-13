@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Home } from './screens/Home';
 import { TemplateEdit } from './screens/TemplateEdit';
 import { DepartureSetup } from './screens/DepartureSetup';
@@ -15,6 +15,7 @@ import { ReportProblem } from './screens/ReportProblem';
 import { TaskSetup } from './screens/TaskSetup';
 import { TaskRun } from './screens/TaskRun';
 import { setNavigationRef } from './lib/navigationRef';
+import { registerBackGesture } from './native/backGesture';
 
 // Navigation as plain React state, not a router library. There's no
 // deep-linkable URL requirement in increment 1 (no shareable departure
@@ -136,6 +137,50 @@ export default function App() {
   useEffect(() => {
     setNavigationRef(setScreen);
     return () => setNavigationRef(null);
+  }, []);
+
+  // Android back-gesture support (field bug: "navigating with swipe doesn't
+  // work" — see src/native/backGesture.ts for the full mechanism). Kept
+  // separate from the navigationRef effect above rather than folded into
+  // it: that one hands App's setter to code OUTSIDE the component tree that
+  // needs to push navigations in (notification taps, deep links);
+  // registerBackGesture needs the OPPOSITE direction — live read access to
+  // whichever screen is current — so it needs its own effect regardless of
+  // whether the two ever run at the same time.
+  //
+  // `screenRef` exists because the native listener is registered once (an
+  // async `App.addListener` call, not re-run on every navigation) but must
+  // always see the CURRENT screen when a back gesture actually fires —
+  // capturing `screen` directly in the closure below would freeze it at
+  // whatever screen was active the instant this effect first ran. Updated
+  // on every render (no dependency array of its own, deliberately: a ref
+  // write is not a state update, so this line does not cause a re-render
+  // itself) rather than only inside the registration effect, so the ref is
+  // always fresh regardless of render timing relative to registration.
+  const screenRef = useRef(screen);
+  screenRef.current = screen;
+
+  useEffect(() => {
+    let cleanup: (() => void) | undefined;
+    let cancelled = false;
+    void registerBackGesture(() => screenRef.current, setScreen).then((unregister) => {
+      // StrictMode double-invoke safe: if this effect instance was already
+      // cleaned up (React unmounted it before the async `addListener` call
+      // resolved) by the time the promise settles, undo the registration
+      // immediately instead of leaking a listener this instance no longer
+      // owns — same guard shape registerNotificationNavigation's own caller
+      // pattern relies on in main.tsx, just inlined here since this is a
+      // mount effect rather than a top-level module call.
+      if (cancelled) {
+        unregister();
+      } else {
+        cleanup = unregister;
+      }
+    });
+    return () => {
+      cancelled = true;
+      cleanup?.();
+    };
   }, []);
 
   function renderScreen() {

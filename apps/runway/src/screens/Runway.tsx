@@ -27,6 +27,7 @@ import { TextAction } from '../ui/TextAction';
 import { BackdateDialog } from '../ui/BackdateDialog';
 import { getCurrentSsid } from '../native/wifi';
 import { nextOccurrenceOf } from '../lib/nextOccurrence';
+import { pushBackOverride } from '../lib/backOverride';
 
 /** Same confirm copy as Home's "Remove" action on a planned departure (M1) —
  * abandoning from either screen is the same operation with the same
@@ -202,6 +203,22 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     }
     setFocusStepId(null);
   }, [departure, focusStepId, arrivalPhaseActive]);
+
+  // Back-gesture support: while StepFocus is open (either the prep or the
+  // arrival-phase variant — both share this one `focusStepId` flag), a
+  // back gesture must close the overlay, not navigate the screen underneath
+  // it — same "lens over the live departure, not a place of its own"
+  // reasoning as focusStepId's own comment above, now also true for
+  // Android's back gesture (src/native/backGesture.ts), not just the
+  // overlay's own visible back chevron. Registered/unregistered in an
+  // effect keyed on `focusStepId !== null` rather than on mount/unmount of
+  // this whole screen: the override must exist ONLY while the overlay is
+  // actually on screen, and this component stays mounted well past any
+  // single overlay open/close.
+  useEffect(() => {
+    if (focusStepId === null) return;
+    return pushBackOverride(() => setFocusStepId(null));
+  }, [focusStepId]);
 
   // Keep the screen on for exactly as long as a run is live - 'running'
   // (prep), unchanged from before this increment, OR (arrival-steps
