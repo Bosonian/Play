@@ -17,6 +17,8 @@ import { refreshWidgets } from '../native/widgets';
 import { refreshDayGauge } from '../lib/dayGaugeRefresh';
 import { FOCUS_SOUND_ON_SETTING, readFocusSoundConfig } from '../lib/focusSoundSettings';
 import { startFocusSound, stopFocusSound } from '../audio/focusSound';
+import { sprintDoneMessage, sprintStartMessage } from '../lib/witness';
+import { shareWitnessText } from '../native/shareText';
 
 interface SprintProps {
   sprintId: string;
@@ -45,6 +47,29 @@ function PostSprintView({ sprint, topicName, onNavigate }: PostSprintViewProps) 
 
   const remaining = topics && sprints ? remainingHours(topics, sprints) : null;
 
+  // Witness increment (0.34.0): whether the last "Tell them" tap had
+  // nowhere to go (no share sheet, no clipboard — see shareWitnessText's
+  // own doc comment for how rare that actually is). Cleared on every new
+  // attempt so a stale warning from one tap never survives to mislead the
+  // next. Nothing else about a share is tracked: no persisted "did he tell
+  // someone" flag — see this file's handleTellSomeone below for why that
+  // statelessness is deliberate.
+  const [shareUnavailable, setShareUnavailable] = useState(false);
+
+  async function handleTellThem() {
+    setShareUnavailable(false);
+    void hapticImpact('light');
+    // sprintMinutes(sprint) is the exact figure already shown above — reuse
+    // it rather than re-deriving actual minutes a second way.
+    const message = sprintDoneMessage(topicName, sprintMinutes(sprint));
+    const result = await shareWitnessText(message);
+    // 'shared' and 'dismissed' both leave the UI exactly as it was — the
+    // share sheet itself WAS the feedback for 'shared', and a dismissal is
+    // Deepak's own decision not to send it, not something to flag. Only
+    // 'unavailable' (no share sheet, no clipboard) earns a line on screen.
+    if (result === 'unavailable') setShareUnavailable(true);
+  }
+
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col items-center justify-center gap-2 px-4 pb-12 pt-safe-top text-center">
       {/* Moments (UI-polish increment): the acknowledgment-tone line for
@@ -61,6 +86,13 @@ function PostSprintView({ sprint, topicName, onNavigate }: PostSprintViewProps) 
       {remaining !== null && (
         <p className="tabular-nums text-slate-400">{remaining.toFixed(1)} h remaining across all topics.</p>
       )}
+      {/* Witness increment (0.34.0): the done half of the ritual — quiet on
+          purpose (TextAction, never Button), so it stays smaller than "Back
+          to overview" and never reads as a required step. */}
+      <TextAction className="mt-4" onClick={() => void handleTellThem()}>
+        Tell them
+      </TextAction>
+      {shareUnavailable && <p className="text-sm text-slate-500">Sharing is not available here.</p>}
       <Button onClick={() => onNavigate({ name: 'exam' })} className="mt-8 w-full">
         Back to overview
       </Button>
@@ -119,6 +151,13 @@ export function Sprint({ sprintId, onNavigate }: SprintProps) {
   // ending should ask which duration to log, rather than silently logging
   // whatever elapsed. Cleared once resolved either way.
   const [pendingEndChoice, setPendingEndChoice] = useState<PendingEndChoice | null>(null);
+
+  // Witness increment (0.34.0): same "no share sheet, no clipboard" flag as
+  // PostSprintView's own `shareUnavailable` above — see that state's
+  // comment for the full reasoning. A separate flag because this is a
+  // different tap on a different screen state (the running box, not the
+  // post-sprint summary), not because the meaning differs.
+  const [startShareUnavailable, setStartShareUnavailable] = useState(false);
 
   // Keep the screen on for exactly as long as this sprint is live
   // (endedAt === null) - same cleanup-on-status-change shape as Runway's
@@ -227,6 +266,22 @@ export function Sprint({ sprintId, onNavigate }: SprintProps) {
     await finishSprint(new Date().toISOString());
   };
 
+  // Witness increment (0.34.0): composes the start-of-sprint message and
+  // hands it to the OS share sheet — nothing is sent automatically, this
+  // only fires on the tap itself. `reportAt` is computed here (now +
+  // plannedMinutes), matching sprintStartMessage's own doc comment on why
+  // that's the CALLER's job rather than the message builder's.
+  const handleTellSomeone = async () => {
+    setStartShareUnavailable(false);
+    void hapticImpact('light');
+    const reportAt = new Date(Date.now() + sprint.plannedMinutes * 60_000);
+    const message = sprintStartMessage(topic?.name ?? '', sprint.plannedMinutes, reportAt);
+    const result = await shareWitnessText(message);
+    // Same 'shared'/'dismissed' silence as PostSprintView's handleTellThem
+    // above — only 'unavailable' needs a line on screen.
+    if (result === 'unavailable') setStartShareUnavailable(true);
+  };
+
   if (justEnded) {
     // F13: prefer the locally-captured endedAt over `sprint.endedAt` so
     // this renders correctly even before the liveQuery above has re-fetched
@@ -325,11 +380,19 @@ export function Sprint({ sprintId, onNavigate }: SprintProps) {
       {/* Focus sound (0.33.0). Deliberately no enable toggle on
           Settings.tsx - this row is the one place that decision gets made,
           at the moment work is actually live. */}
-      <div className="flex items-center justify-center">
+      <div className="flex items-center justify-center gap-6">
         <TextAction onClick={() => void toggleFocusSound()}>
           Focus sound: {focusSoundConfig?.on ? 'on' : 'off'}
         </TextAction>
+        {/* Witness increment (0.34.0): the start half of the ritual —
+            precommitment with a real person, one tap, nothing sent
+            automatically. Quiet on purpose (TextAction, never Button), so
+            it stays smaller than "End sprint" below. */}
+        <TextAction onClick={() => void handleTellSomeone()}>Tell someone</TextAction>
       </div>
+      {startShareUnavailable && (
+        <p className="-mt-4 text-center text-sm text-slate-500">Sharing is not available here.</p>
+      )}
 
       <Button variant="secondary" onClick={() => void handleEnd()} className="w-full">
         End sprint

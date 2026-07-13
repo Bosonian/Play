@@ -19,6 +19,8 @@ import { hapticImpact } from '../native/haptics';
 import { pushBackOverride } from '../lib/backOverride';
 import { FOCUS_SOUND_ON_SETTING, readFocusSoundConfig } from '../lib/focusSoundSettings';
 import { startFocusSound, stopFocusSound } from '../audio/focusSound';
+import { taskDoneMessage, taskStartMessage } from '../lib/witness';
+import { shareWitnessText } from '../native/shareText';
 
 /** Distinct from Runway's departure-abandon copy — a task has no alarms to
  * cancel (tasks increment: no scheduled notifications in v1, see README's
@@ -70,6 +72,16 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
   // stepBackdateOpen — see that state's own comment for why this is plain,
   // unpersisted component state.
   const [unitBackdateOpen, setUnitBackdateOpen] = useState(false);
+
+  // Witness increment (0.34.0): whether the last share tap had nowhere to
+  // go (no share sheet, no clipboard — shareWitnessText's own doc comment
+  // covers how rare that actually is). Two separate flags, one per site
+  // (the running view's "Tell someone", the done summary's "Tell them") —
+  // cleared on every new attempt at that site, never persisted: recording
+  // "did he tell someone" would build exactly the surveillance ledger this
+  // feature must not be.
+  const [witnessStartUnavailable, setWitnessStartUnavailable] = useState(false);
+  const [witnessDoneUnavailable, setWitnessDoneUnavailable] = useState(false);
 
   // Defensive clear — same reasoning as Runway.tsx's own focusStepId effect:
   // if the task stops being 'running' (finishes, is abandoned) while this
@@ -199,6 +211,24 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
     });
   };
 
+  // Witness increment (0.34.0): composes the start-of-task message and
+  // hands it to the OS share sheet — one tap, nothing sent automatically.
+  // Only rendered for 'running' (see the TextAction below), so `task.units`
+  // reflects the plan Deepak is actually about to work, not a still-being-
+  // edited draft.
+  const handleTellSomeone = async () => {
+    setWitnessStartUnavailable(false);
+    void hapticImpact('light');
+    const plannedTotalMinutes = task.units.reduce((sum, unit) => sum + unit.plannedMinutes, 0);
+    const deadline = task.deadlineAt !== null ? new Date(task.deadlineAt) : null;
+    const message = taskStartMessage(task.name, task.units.length, deadline, plannedTotalMinutes);
+    const result = await shareWitnessText(message);
+    // 'shared' and 'dismissed' both leave the UI untouched — the share
+    // sheet itself is the feedback for 'shared', and a dismissal is
+    // Deepak's own call not to send it. Only 'unavailable' earns a line.
+    if (result === 'unavailable') setWitnessStartUnavailable(true);
+  };
+
   // Backdating increment ("Done earlier"): the task twin of Runway.tsx's
   // handleStepBackdateConfirm — same write toggleUnit does when checking
   // the current unit (including the last-unit auto-resolve to 'done'), but
@@ -265,6 +295,24 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
     // went; CLAUDE.md's no-shame rule is binding here.
     const allUnitsManual = task.units.length > 0 && task.units.every((unit) => unit.estimateSource === 'manual');
     const guessedTotalMinutes = task.units.reduce((sum, unit) => sum + unit.plannedMinutes, 0);
+
+    // Witness increment (0.34.0): the done half of the ritual. `taskName`/
+    // `unitCount` are captured as plain locals (not read off `task` inside
+    // the closure below) because TS can't carry the `if (!task) return`
+    // narrowing above into a nested function declaration — `task`'s
+    // declared type there is still `WorkTask | undefined`. Also closes over
+    // `actualTotalMinutes` above, the exact figure already shown on screen,
+    // reused rather than re-derived a second way.
+    const taskName = task.name;
+    const unitCount = task.units.length;
+    async function handleTellThem() {
+      setWitnessDoneUnavailable(false);
+      void hapticImpact('light');
+      const message = taskDoneMessage(taskName, unitCount, actualTotalMinutes);
+      const result = await shareWitnessText(message);
+      if (result === 'unavailable') setWitnessDoneUnavailable(true);
+    }
+
     return (
       <div className="mx-auto flex min-h-screen max-w-lg flex-col items-center justify-center gap-2 px-4 pb-12 pt-safe-top text-center">
         <p className="text-lg text-slate-100">{task.name}</p>
@@ -285,6 +333,12 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
                 : `Finished ${deadlineResult.minutes} min before the deadline.`}
           </p>
         )}
+        {/* Quiet on purpose (TextAction, never Button) — stays smaller than
+            "Back to home" below. */}
+        <TextAction className="mt-4" onClick={() => void handleTellThem()}>
+          Tell them
+        </TextAction>
+        {witnessDoneUnavailable && <p className="text-sm text-slate-500">Sharing is not available here.</p>}
         <Button onClick={() => onNavigate({ name: 'home' })} className="mt-8 w-full">
           Back to home
         </Button>
@@ -293,6 +347,12 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
   }
 
   if (task.status === 'abandoned') {
+    // Witness increment (0.34.0): deliberately no "Tell them" here, and
+    // none anywhere else on an abandon path (see handleAbandon above and
+    // the equivalent comment on Sprint.tsx, which has no abandon state at
+    // all to carry one). A witness ritual is start and finish, never
+    // confession — CLAUDE.md's anti-shame rule — so abandoning offers no
+    // share, full stop.
     return (
       <div className="mx-auto flex min-h-screen max-w-lg flex-col items-center justify-center gap-2 px-4 pb-12 pt-safe-top text-center">
         <p className="text-lg text-slate-100">{task.name}</p>
@@ -517,8 +577,17 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
               Focus sound: {focusSoundConfig?.on ? 'on' : 'off'}
             </TextAction>
           )}
+          {/* Witness increment (0.34.0), 'running' only — same scoping as
+              Focus sound above: a task not yet started has nothing to
+              report the start OF yet. */}
+          {task.status === 'running' && (
+            <TextAction onClick={() => void handleTellSomeone()}>Tell someone</TextAction>
+          )}
           <TextAction onClick={() => void handleAbandon()}>Abandon this task</TextAction>
         </div>
+        {witnessStartUnavailable && (
+          <p className="text-center text-sm text-slate-500">Sharing is not available here.</p>
+        )}
       </div>
       {focusedUnit && (
         <StepFocus

@@ -249,6 +249,12 @@ Deepak's own self-discovered ADHD hack for unpalatable work is an unwatched YouT
 
 Two things are genuinely unverified outside a real device: whether the sound keeps playing with the screen off (outside the keep-awake window a running sprint or task already holds), and how it behaves alongside other audio already playing on the phone — a Capacitor WebView doesn't request Android audio focus the way a native music app does, so nothing here ducks or pauses for anything else making sound.
 
+## Witness
+
+Focus sound (above) is the ambient half of body doubling — company that asks nothing back. Witness (0.34.0) is the other half: precommitment with a real person. "Tell someone" on a live Sprint or task screen composes a message — what you're starting, how long, when you'll report back — and hands it to your phone's own share sheet (WhatsApp, a text, whatever you pick); "Tell them" on the finish screen does the same for what actually got done. Runway never sends anything itself — every message is one tap away from a share sheet you still have to act on, and nothing about whether you shared, or with whom, is recorded anywhere in the app.
+
+**No share on abandon, ever.** Abandoning a task offers nothing to send — a witness ritual is a promise made and a promise kept, never a confession of one broken.
+
 ## Backup
 
 Everything Runway has learned — departure and task actuals, estimate provenance, exam sprints and milestones — lives in one IndexedDB on one phone. A lost phone or a cleared browser storage means all of it is gone. Settings → Backup (0.32.0) exports the full database as one JSON file (**Export backup**) and lets a phone start over from one (**Import backup**).
