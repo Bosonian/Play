@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveStepActuals, medianMinutes, plannedLeaveBy, slipMinutes } from './calibration';
+import { deriveStepActuals, medianMinutes, plannedLeaveBy, slipMinutes, slipTrend } from './calibration';
 import type { Departure } from '../db/types';
 
 function makeDeparture(overrides: Partial<Departure> = {}): Departure {
@@ -259,6 +259,38 @@ describe('plannedLeaveBy / slipMinutes', () => {
       leftAt: '2026-07-09T08:40:00.000Z',
     });
     expect(slipMinutes(departure)).toBe(0);
+  });
+});
+
+describe('slipTrend', () => {
+  it('is null under 6 total slips (window would fall below the floor of 3)', () => {
+    expect(slipTrend([1, 2, 3, 4, 5])).toBeNull();
+  });
+
+  it('is non-null at exactly 6 slips (window = 3, the floor)', () => {
+    // early = median(1,2,3) = 2; late = median(4,5,6) = 5.
+    expect(slipTrend([1, 2, 3, 4, 5, 6])).toEqual({ early: 2, late: 5, window: 3 });
+  });
+
+  it('caps the window at 10 even with a much longer history', () => {
+    // 30 slips, all in ascending order 1..30. window = min(10, 15) = 10.
+    // early = median of 1..10 = 5.5; late = median of 21..30 = 25.5.
+    const slips = Array.from({ length: 30 }, (_, i) => i + 1);
+    expect(slipTrend(slips)).toEqual({ early: 5.5, late: 25.5, window: 10 });
+  });
+
+  it('drops the middle element for an odd total, keeping the two windows non-overlapping', () => {
+    // 7 slips: window = floor(7/2) = 3. early = median(1,2,3) = 2;
+    // late = median(5,6,7) = 6; the middle value (4) counts in neither.
+    expect(slipTrend([1, 2, 3, 4, 5, 6, 7])).toEqual({ early: 2, late: 6, window: 3 });
+  });
+
+  it('reflects a genuine improving trend: late slips smaller than early slips', () => {
+    // Early departures ran ~20 min late; latest departures are on time.
+    const slips = [18, 20, 22, 21, 19, 0, -1, 1, 0, 0, -1, 1];
+    const result = slipTrend(slips);
+    expect(result).not.toBeNull();
+    expect(result!.late).toBeLessThan(result!.early);
   });
 });
 

@@ -181,13 +181,22 @@ export function TemplateEdit({ id, fromDepartureId, onNavigate }: TemplateEditPr
       setTravelMinutes(sourceDeparture.travelMinutes);
       setBufferMinutes(sourceDeparture.bufferMinutes);
       setSteps(
-        sourceDeparture.steps.map((step) => ({ id: crypto.randomUUID(), name: step.name, minutes: step.plannedMinutes })),
+        sourceDeparture.steps.map((step) => ({
+          id: crypto.randomUUID(),
+          name: step.name,
+          minutes: step.plannedMinutes,
+          // Estimation-bias increment: a copy has the same provenance as
+          // its source — see db/types.ts's StepTemplate.estimateSource
+          // comment.
+          estimateSource: step.estimateSource,
+        })),
       );
       setArrivalSteps(
         (sourceDeparture.arrivalSteps ?? []).map((step) => ({
           id: crypto.randomUUID(),
           name: step.name,
           minutes: step.plannedMinutes,
+          estimateSource: step.estimateSource,
         })),
       );
       setArrivalWifiSsid(sourceDeparture.arrivalWifiSsid ?? '');
@@ -210,7 +219,10 @@ export function TemplateEdit({ id, fromDepartureId, onNavigate }: TemplateEditPr
   }
 
   function addStep() {
-    setSteps((prev) => [...prev, { id: crypto.randomUUID(), name: '', minutes: 5 }]);
+    // Estimation-bias increment: a freshly added row's default 5 min is
+    // Deepak's own baseline until an autocomplete pick or a hand-edit says
+    // otherwise — see db/types.ts's StepTemplate.estimateSource comment.
+    setSteps((prev) => [...prev, { id: crypto.randomUUID(), name: '', minutes: 5, estimateSource: 'manual' }]);
   }
 
   function removeStep(stepId: string) {
@@ -219,6 +231,16 @@ export function TemplateEdit({ id, fromDepartureId, onNavigate }: TemplateEditPr
 
   function updateStep(stepId: string, patch: Partial<StepTemplate>) {
     setSteps((prev) => prev.map((s) => (s.id === stepId ? { ...s, ...patch } : s)));
+  }
+
+  // Estimation-bias increment: any direct edit of a step's minutes is, by
+  // definition, Deepak's own hand — flips provenance back to 'manual' even
+  // if this step's minutes previously came from a learned prefill. Kept
+  // separate from `updateStep` (also used for the autocomplete's name+
+  // minutes patch, where 'learned' is the correct outcome) so the two call
+  // sites can't be confused for each other.
+  function updateStepMinutes(stepId: string, minutes: number) {
+    updateStep(stepId, { minutes, estimateSource: 'manual' });
   }
 
   function moveStep(stepId: string, direction: -1 | 1) {
@@ -238,7 +260,7 @@ export function TemplateEdit({ id, fromDepartureId, onNavigate }: TemplateEditPr
   // that parameterization would only save a few lines here at the cost of
   // every call site needing to say which list it means anyway.
   function addArrivalStep() {
-    setArrivalSteps((prev) => [...prev, { id: crypto.randomUUID(), name: '', minutes: 5 }]);
+    setArrivalSteps((prev) => [...prev, { id: crypto.randomUUID(), name: '', minutes: 5, estimateSource: 'manual' }]);
   }
 
   function removeArrivalStep(stepId: string) {
@@ -247,6 +269,11 @@ export function TemplateEdit({ id, fromDepartureId, onNavigate }: TemplateEditPr
 
   function updateArrivalStep(stepId: string, patch: Partial<StepTemplate>) {
     setArrivalSteps((prev) => prev.map((s) => (s.id === stepId ? { ...s, ...patch } : s)));
+  }
+
+  // Same "a hand-edit is always manual" reasoning as updateStepMinutes above.
+  function updateArrivalStepMinutes(stepId: string, minutes: number) {
+    updateArrivalStep(stepId, { minutes, estimateSource: 'manual' });
   }
 
   function moveArrivalStep(stepId: string, direction: -1 | 1) {
@@ -486,7 +513,9 @@ export function TemplateEdit({ id, fromDepartureId, onNavigate }: TemplateEditPr
                     onSelect={(entry) =>
                       updateStep(step.id, {
                         name: entry.name,
-                        ...(entry.learnedMinutes !== null ? { minutes: entry.learnedMinutes } : {}),
+                        ...(entry.learnedMinutes !== null
+                          ? { minutes: entry.learnedMinutes, estimateSource: 'learned' }
+                          : {}),
                       })
                     }
                   />
@@ -499,7 +528,7 @@ export function TemplateEdit({ id, fromDepartureId, onNavigate }: TemplateEditPr
                     aria-label={`${step.name || 'Step'} minutes`}
                     onChange={(e) => {
                       const parsed = Number.parseInt(e.target.value, 10);
-                      updateStep(step.id, { minutes: Number.isNaN(parsed) ? 0 : parsed });
+                      updateStepMinutes(step.id, Number.isNaN(parsed) ? 0 : parsed);
                     }}
                     className="min-h-12 w-16 rounded-lg border border-slate-700 bg-raised px-2 py-2 text-slate-100 tabular-nums focus:border-sky-500 focus:outline-none"
                   />
@@ -576,7 +605,9 @@ export function TemplateEdit({ id, fromDepartureId, onNavigate }: TemplateEditPr
                     onSelect={(entry) =>
                       updateArrivalStep(step.id, {
                         name: entry.name,
-                        ...(entry.learnedMinutes !== null ? { minutes: entry.learnedMinutes } : {}),
+                        ...(entry.learnedMinutes !== null
+                          ? { minutes: entry.learnedMinutes, estimateSource: 'learned' }
+                          : {}),
                       })
                     }
                   />
@@ -589,7 +620,7 @@ export function TemplateEdit({ id, fromDepartureId, onNavigate }: TemplateEditPr
                     aria-label={`${step.name || 'Step'} minutes`}
                     onChange={(e) => {
                       const parsed = Number.parseInt(e.target.value, 10);
-                      updateArrivalStep(step.id, { minutes: Number.isNaN(parsed) ? 0 : parsed });
+                      updateArrivalStepMinutes(step.id, Number.isNaN(parsed) ? 0 : parsed);
                     }}
                     className="min-h-12 w-16 rounded-lg border border-slate-700 bg-raised px-2 py-2 text-slate-100 tabular-nums focus:border-sky-500 focus:outline-none"
                   />

@@ -12,6 +12,32 @@ export interface StepTemplate {
   id: string;
   name: string;
   minutes: number;
+  /**
+   * Estimation-bias increment (0.30.0): whether `minutes` is Deepak's own
+   * felt guess ('manual') or a learned prefill ('learned' — applied by
+   * StepNameAutocomplete's onSelect in TemplateEdit/DepartureSetup,
+   * autoLearn.ts's write-itself update, or Home's suggestion-card Apply).
+   * `undefined` on every row written before this field existed.
+   *
+   * Deliberately NOT this codebase's usual undefined-as-null convention
+   * (compare `Template.schedule`/`autoLearn`/`arrivalSteps` above, all read
+   * as `?? null`/`=== true`/`?? []`): here, undefined means UNKNOWN, not
+   * "manual by default". Auto-learn has existed since the learning
+   * increment, well before this field did, so an unknown share of legacy
+   * step history is actually learned, not felt — collapsing undefined to
+   * 'manual' would tell src/lib/estimateBias.ts's bias math that every
+   * pre-increment guess was Deepak's own, poisoning the exact signal this
+   * field exists to keep clean. estimateBias.ts's `guessPairs` therefore
+   * excludes undefined the same way it excludes 'learned': the bias ledger
+   * only builds forward from the first step saved after this field shipped.
+   *
+   * Copied verbatim wherever a step is copied wholesale rather than
+   * re-guessed — Template<->Departure in both directions (materialize.ts's
+   * buildDeparture, DepartureSetup's sourceTemplate/save-with-repeat
+   * effects, TemplateEdit's "Make repeating" sourceDeparture effect) — a
+   * materialized or promoted copy has the same provenance as its source.
+   */
+  estimateSource?: 'manual' | 'learned';
 }
 
 /**
@@ -125,6 +151,13 @@ export interface DepartureStep {
   name: string;
   plannedMinutes: number;
   checkedAt: string | null;
+  /** Same undefined-as-UNKNOWN rule as `StepTemplate.estimateSource` above
+   * (see its own doc comment for the full reasoning) — 'manual' for a felt
+   * guess typed or edited by hand, 'learned' for a learned prefill applied
+   * and never subsequently hand-edited, `undefined` (excluded from
+   * estimateBias.ts's bias math, never assumed 'manual') for a row saved
+   * before this field existed. */
+  estimateSource?: 'manual' | 'learned';
 }
 
 export type DepartureStatus = 'planned' | 'running' | 'left' | 'done' | 'abandoned';
@@ -342,6 +375,13 @@ export interface TaskUnit {
   name: string;
   plannedMinutes: number;
   checkedAt: string | null;
+  /** Same undefined-as-UNKNOWN rule as `StepTemplate.estimateSource`
+   * (db/types.ts, above this section) — 'manual' for a felt guess typed
+   * or edited by hand in TaskSetup, 'learned' for a learned prefill applied
+   * and never subsequently hand-edited, `undefined` (excluded from
+   * estimateBias.ts's bias math) for a row saved before this field
+   * existed. */
+  estimateSource?: 'manual' | 'learned';
 }
 
 export type TaskStatus = 'planned' | 'running' | 'done' | 'abandoned';

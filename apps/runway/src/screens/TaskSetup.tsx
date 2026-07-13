@@ -56,6 +56,16 @@ export function TaskSetup({ onNavigate }: TaskSetupProps) {
   // actually updated, which under 3 samples it wasn't).
   const [selectedEntry, setSelectedEntry] = useState<{ runCount: number; applied: boolean } | null>(null);
 
+  // Estimation-bias increment (0.30.0): provenance of `minutesPerUnit` —
+  // see db/types.ts's TaskUnit.estimateSource doc comment. Starts 'manual'
+  // (a freshly opened form's default of 15 is exactly Deepak's own baseline
+  // guess until something else overwrites it), flips to 'learned' only when
+  // the autocomplete's onSelect actually applies a learned value below, and
+  // flips right back to 'manual' on ANY subsequent hand-edit of the Minutes
+  // per unit field — the same "his edit always wins" rule TemplateEdit's
+  // provenance label already lives by.
+  const [estimateSource, setEstimateSource] = useState<'manual' | 'learned'>('manual');
+
   // Task-memory autocomplete (learning increment §5, extended by the tasks
   // increment): every step name ever used across departures/templates, PLUS
   // every task name ever used — the whole point of a shared, name-keyed
@@ -114,6 +124,7 @@ export function TaskSetup({ onNavigate }: TaskSetupProps) {
       name: trimmedName,
       plannedMinutes: minutesPerUnit,
       checkedAt: null,
+      estimateSource,
     }));
     const deadlineAt = deadlineTime.trim() !== '' ? nextOccurrenceOf(new Date(), deadlineTime).toISOString() : null;
 
@@ -146,7 +157,10 @@ export function TaskSetup({ onNavigate }: TaskSetupProps) {
           }}
           onSelect={(entry) => {
             setName(entry.name);
-            if (entry.learnedMinutes !== null) setMinutesPerUnit(entry.learnedMinutes);
+            if (entry.learnedMinutes !== null) {
+              setMinutesPerUnit(entry.learnedMinutes);
+              setEstimateSource('learned');
+            }
             setSelectedEntry({ runCount: entry.runCount, applied: entry.learnedMinutes !== null });
           }}
         />
@@ -171,7 +185,10 @@ export function TaskSetup({ onNavigate }: TaskSetupProps) {
           label="Minutes per unit"
           value={minutesPerUnit}
           min={1}
-          onChange={setMinutesPerUnit}
+          onChange={(value) => {
+            setMinutesPerUnit(value);
+            setEstimateSource('manual');
+          }}
         />
       </div>
 

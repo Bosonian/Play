@@ -155,6 +155,10 @@ function buildDeparture(template: Template, occurrence: Occurrence): Departure {
       name: step.name,
       plannedMinutes: step.minutes,
       checkedAt: null,
+      // Estimation-bias increment: a materialized copy has the same
+      // provenance as its source — see db/types.ts's
+      // StepTemplate.estimateSource comment.
+      estimateSource: step.estimateSource,
     })),
     // Arrival-steps increment: same fresh-ids-copied-from-template shape as
     // `steps` above, `?? []` for a template saved before this field existed.
@@ -163,6 +167,7 @@ function buildDeparture(template: Template, occurrence: Occurrence): Departure {
       name: step.name,
       plannedMinutes: step.minutes,
       checkedAt: null,
+      estimateSource: step.estimateSource,
     })),
     arrivedAt: null,
     // Arrival-detection increment: same undefined-as-null copy-from-template

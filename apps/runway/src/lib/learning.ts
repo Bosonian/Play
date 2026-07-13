@@ -161,8 +161,17 @@ function mergeOccurrenceActuals(occurrences: NamedOccurrence[]): Map<string, num
   return byName;
 }
 
-/** Departure occurrences eligible for either the natural or rushed pool —
- * status left/done, started, not a batched retroactive check-off —
+/** Shared "counts as a real, live-timed run" predicate — status left/done,
+ * started, not a batched retroactive check-off (isBatchedRun). Extracted so
+ * `departureOccurrences` below and `naturalDepartures` (estimation-bias
+ * increment, exported for src/lib/estimateBias.ts's `guessPairs`) share
+ * exactly one definition of "eligible" rather than two copies that could
+ * silently drift apart. */
+function isEligibleDepartureRun(departure: Departure): boolean {
+  return (departure.status === 'left' || departure.status === 'done') && departure.startedAt !== null && !isBatchedRun(departure);
+}
+
+/** Departure occurrences eligible for either the natural or rushed pool,
  * differing only in which side of the wasReplanned split `runFilter`
  * selects. Shared by naturalActualsByStepName/rushedActualsByStepName. */
 function departureOccurrences(
@@ -170,25 +179,46 @@ function departureOccurrences(
   runFilter: (departure: Departure) => boolean,
 ): NamedOccurrence[] {
   return departures
-    .filter(
-      (d) => (d.status === 'left' || d.status === 'done') && d.startedAt !== null && !isBatchedRun(d) && runFilter(d),
-    )
+    .filter((d) => isEligibleDepartureRun(d) && runFilter(d))
     .map((d) => ({ occurredAtMs: departureOccurredAtMs(d), actuals: deriveStepActuals(d) }));
 }
 
-/** Task occurrences eligible for the natural pool (tasks increment) — a
- * `done` task, started, not a batched retroactive check-off. There is no
- * task equivalent of rushedActualsByStepName's compressed-run pool: tasks
- * have no compression at all (see db/types.ts's header comment on this
- * section for why), so every eligible task occurrence is natural, full
- * stop — nothing to split on the way departures split on wasReplanned.
- * `isBatchedRun` is reused verbatim against `{ steps: task.units }` — the
- * same field-for-field TaskUnit/DepartureStep shape every other reused
- * function in this feature leans on (db/types.ts's TaskUnit doc comment). */
+/**
+ * Estimation-bias increment: the raw Departure rows eligible for the
+ * NATURAL pool — same eligibility (`isEligibleDepartureRun`) and the same
+ * `wasReplanned !== true` exclusion `naturalActualsByStepName` itself
+ * applies below, kept in sync by construction since both read that one
+ * flag the same way. Exported (unlike `departureOccurrences`, which stays
+ * file-private) because src/lib/estimateBias.ts's `guessPairs` needs the
+ * raw rows, not pre-reduced actuals — it has to look up each step's own
+ * `estimateSource`, a fact `departureOccurrences`' reduction to plain
+ * `actualMinutes` numbers already throws away by the time it's done.
+ */
+export function naturalDepartures(departures: Departure[]): Departure[] {
+  return departures.filter((d) => isEligibleDepartureRun(d) && d.wasReplanned !== true);
+}
+
+/** Same "counts as a real, live-timed run" reasoning as
+ * `isEligibleDepartureRun` above, for a task (tasks increment) — a task has
+ * no wasReplanned split (no compression at all, db/types.ts's header
+ * comment on the Tasks section), so this one predicate covers every
+ * eligible task occurrence, natural or not. */
+function isEligibleTaskRun(task: WorkTask): boolean {
+  return task.status === 'done' && task.startedAt !== null && !isBatchedRun({ steps: task.units });
+}
+
+/** Task occurrences eligible for the natural pool (tasks increment). There
+ * is no task equivalent of rushedActualsByStepName's compressed-run pool —
+ * every eligible task occurrence is natural, full stop. */
 function taskOccurrences(tasks: WorkTask[]): NamedOccurrence[] {
-  return tasks
-    .filter((t) => t.status === 'done' && t.startedAt !== null && !isBatchedRun({ steps: t.units }))
-    .map((t) => ({ occurredAtMs: taskOccurredAtMs(t), actuals: deriveTaskUnitActuals(t) }));
+  return tasks.filter(isEligibleTaskRun).map((t) => ({ occurredAtMs: taskOccurredAtMs(t), actuals: deriveTaskUnitActuals(t) }));
+}
+
+/** Estimation-bias increment: the raw WorkTask rows eligible for the
+ * natural pool — same reasoning and export rationale as `naturalDepartures`
+ * above, for `guessPairs`' task half. */
+export function naturalTasks(tasks: WorkTask[]): WorkTask[] {
+  return tasks.filter(isEligibleTaskRun);
 }
 
 /**

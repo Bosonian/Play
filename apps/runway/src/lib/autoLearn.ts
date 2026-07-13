@@ -75,7 +75,9 @@ export async function applyAutoLearn(templateId: string): Promise<void> {
       if (!learned) return step; // under 3 samples - not enough evidence to write anything
       if (Math.abs(learned.minutes - step.minutes) < AUTO_LEARN_DELTA_MINUTES) return step;
       changed = true;
-      return { ...step, minutes: learned.minutes };
+      // Estimation-bias increment: this is the canonical "learned, no tap"
+      // write — see db/types.ts's StepTemplate.estimateSource comment.
+      return { ...step, minutes: learned.minutes, estimateSource: 'learned' as const };
     };
 
     const nextSteps = template.steps.map(learnStep);

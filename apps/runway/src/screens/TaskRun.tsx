@@ -191,12 +191,31 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
     // set) renders no line at all, same "nothing to be honest ABOUT here"
     // reasoning taskDeadlineResult's own doc comment gives.
     const deadlineResult = taskDeadlineResult(task);
+    // Estimation-bias increment (0.30.0): the "see" half of "guess-then-see"
+    // — shown only when EVERY unit was Deepak's own felt guess
+    // (estimateSource === 'manual'), never for a learned or unknown-
+    // provenance unit, because feedback on a number he didn't choose
+    // himself trains nothing (estimateBias.ts's own header comment makes
+    // the same exclusion for the same reason). Summed per-unit rather than
+    // `units.length * minutesPerUnit` — units are field-for-field
+    // independent rows (db/types.ts's TaskUnit comment), and nothing
+    // guarantees they still share one value by the time this renders.
+    // text-slate-400/tabular-nums/no color coding, deliberately — this is a
+    // measurement Runway is handing back, not a verdict on how the guess
+    // went; CLAUDE.md's no-shame rule is binding here.
+    const allUnitsManual = task.units.length > 0 && task.units.every((unit) => unit.estimateSource === 'manual');
+    const guessedTotalMinutes = task.units.reduce((sum, unit) => sum + unit.plannedMinutes, 0);
     return (
       <div className="mx-auto flex min-h-screen max-w-lg flex-col items-center justify-center gap-2 px-4 pb-12 pt-safe-top text-center">
         <p className="text-lg text-slate-100">{task.name}</p>
         <p className="mt-2 tabular-nums text-emerald-300">
           {task.units.length} unit{task.units.length === 1 ? '' : 's'} · {actualTotalMinutes} min.
         </p>
+        {allUnitsManual && (
+          <p className="tabular-nums text-slate-400">
+            Guessed {guessedTotalMinutes} min. Took {actualTotalMinutes} min.
+          </p>
+        )}
         {deadlineResult !== null && (
           <p className={`tabular-nums ${deadlineResult.kind === 'overshot' ? 'text-red-400' : 'text-slate-400'}`}>
             {deadlineResult.kind === 'overshot'

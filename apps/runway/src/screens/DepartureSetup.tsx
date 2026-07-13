@@ -197,6 +197,11 @@ export function DepartureSetup({
           name: step.name,
           plannedMinutes: step.minutes,
           checkedAt: null,
+          // Estimation-bias increment: a copy of a template step has the
+          // same provenance as its source — same reasoning as
+          // materialize.ts's buildDeparture, just triggered by "New from
+          // template" instead of the recurring materializer.
+          estimateSource: step.estimateSource,
         })),
       );
       // Same fresh-ids-copied-from-template shape as `steps` above.
@@ -206,6 +211,7 @@ export function DepartureSetup({
           name: step.name,
           plannedMinutes: step.minutes,
           checkedAt: null,
+          estimateSource: step.estimateSource,
         })),
       );
       setArrivalWifiSsid(sourceTemplate.arrivalWifiSsid ?? '');
@@ -213,7 +219,13 @@ export function DepartureSetup({
   }, [sourceTemplate]);
 
   function addStep() {
-    setSteps((prev) => [...prev, { id: crypto.randomUUID(), name: '', plannedMinutes: 5, checkedAt: null }]);
+    // Estimation-bias increment: a freshly added row's default 5 min is
+    // Deepak's own baseline until an autocomplete pick or a hand-edit says
+    // otherwise — see db/types.ts's DepartureStep.estimateSource comment.
+    setSteps((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), name: '', plannedMinutes: 5, checkedAt: null, estimateSource: 'manual' },
+    ]);
   }
 
   function removeStep(stepId: string) {
@@ -224,12 +236,25 @@ export function DepartureSetup({
     setSteps((prev) => prev.map((s) => (s.id === stepId ? { ...s, ...patch } : s)));
   }
 
+  // Estimation-bias increment: any direct edit of a step's minutes is, by
+  // definition, Deepak's own hand — flips provenance back to 'manual' even
+  // if this step's minutes previously came from a learned prefill. Kept
+  // separate from `updateStep` (which is also used for the autocomplete's
+  // name+minutes patch, where 'learned' is the correct outcome) rather than
+  // baked into it, so the two call sites can't be confused for each other.
+  function updateStepMinutes(stepId: string, plannedMinutes: number) {
+    updateStep(stepId, { plannedMinutes, estimateSource: 'manual' });
+  }
+
   // Arrival-steps increment: same three operations as the prep-steps trio
   // above (DepartureSetup, unlike TemplateEdit, never offered reordering
   // for `steps` either — arrival steps stay consistent with that, no
   // move function here).
   function addArrivalStep() {
-    setArrivalSteps((prev) => [...prev, { id: crypto.randomUUID(), name: '', plannedMinutes: 5, checkedAt: null }]);
+    setArrivalSteps((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), name: '', plannedMinutes: 5, checkedAt: null, estimateSource: 'manual' },
+    ]);
   }
 
   function removeArrivalStep(stepId: string) {
@@ -238,6 +263,11 @@ export function DepartureSetup({
 
   function updateArrivalStep(stepId: string, patch: Partial<DepartureStep>) {
     setArrivalSteps((prev) => prev.map((s) => (s.id === stepId ? { ...s, ...patch } : s)));
+  }
+
+  // Same "a hand-edit is always manual" reasoning as updateStepMinutes above.
+  function updateArrivalStepMinutes(stepId: string, plannedMinutes: number) {
+    updateArrivalStep(stepId, { plannedMinutes, estimateSource: 'manual' });
   }
 
   function toggleRepeatDay(iso: number) {
@@ -436,11 +466,20 @@ export function DepartureSetup({
           // exact reverse copy (Template -> Departure) and TemplateEdit's
           // "Make repeating" path (§3) doing this same Departure ->
           // Template direction for an EXISTING departure.
-          steps: steps.map((step) => ({ id: crypto.randomUUID(), name: step.name, minutes: step.plannedMinutes })),
+          steps: steps.map((step) => ({
+            id: crypto.randomUUID(),
+            name: step.name,
+            minutes: step.plannedMinutes,
+            // Estimation-bias increment: reverse-direction copy of the same
+            // "a copy has the same provenance as its source" rule (see
+            // db/types.ts's StepTemplate.estimateSource comment).
+            estimateSource: step.estimateSource,
+          })),
           arrivalSteps: arrivalSteps.map((step) => ({
             id: crypto.randomUUID(),
             name: step.name,
             minutes: step.plannedMinutes,
+            estimateSource: step.estimateSource,
           })),
           arrivalWifiSsid: sharedFields.arrivalWifiSsid,
           createdAt: templateNowIso,
@@ -712,7 +751,9 @@ export function DepartureSetup({
                   onSelect={(entry) =>
                     updateStep(step.id, {
                       name: entry.name,
-                      ...(entry.learnedMinutes !== null ? { plannedMinutes: entry.learnedMinutes } : {}),
+                      ...(entry.learnedMinutes !== null
+                        ? { plannedMinutes: entry.learnedMinutes, estimateSource: 'learned' }
+                        : {}),
                     })
                   }
                 />
@@ -724,7 +765,7 @@ export function DepartureSetup({
                   aria-label={`${step.name || 'Step'} minutes`}
                   onChange={(e) => {
                     const parsed = Number.parseInt(e.target.value, 10);
-                    updateStep(step.id, { plannedMinutes: Number.isNaN(parsed) ? 0 : parsed });
+                    updateStepMinutes(step.id, Number.isNaN(parsed) ? 0 : parsed);
                   }}
                   className="min-h-12 w-16 rounded-lg border border-slate-700 bg-raised px-2 py-2 text-slate-100 tabular-nums focus:border-sky-500 focus:outline-none"
                 />
@@ -789,7 +830,9 @@ export function DepartureSetup({
                   onSelect={(entry) =>
                     updateArrivalStep(step.id, {
                       name: entry.name,
-                      ...(entry.learnedMinutes !== null ? { plannedMinutes: entry.learnedMinutes } : {}),
+                      ...(entry.learnedMinutes !== null
+                        ? { plannedMinutes: entry.learnedMinutes, estimateSource: 'learned' }
+                        : {}),
                     })
                   }
                 />
@@ -801,7 +844,7 @@ export function DepartureSetup({
                   aria-label={`${step.name || 'Step'} minutes`}
                   onChange={(e) => {
                     const parsed = Number.parseInt(e.target.value, 10);
-                    updateArrivalStep(step.id, { plannedMinutes: Number.isNaN(parsed) ? 0 : parsed });
+                    updateArrivalStepMinutes(step.id, Number.isNaN(parsed) ? 0 : parsed);
                   }}
                   className="min-h-12 w-16 rounded-lg border border-slate-700 bg-raised px-2 py-2 text-slate-100 tabular-nums focus:border-sky-500 focus:outline-none"
                 />

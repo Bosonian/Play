@@ -426,8 +426,15 @@ export function Home({ onNavigate }: HomeProps) {
   async function applySuggestion(suggestion: Suggestion) {
     const template = await db.templates.get(suggestion.templateId);
     if (!template) return;
+    // Estimation-bias increment: same "learned, this time with a tap"
+    // provenance as autoLearn.ts's write-itself update — see db/types.ts's
+    // StepTemplate.estimateSource comment. Found while tracing every
+    // plannedMinutes write site for that increment; not on the original
+    // list.
     const steps = template.steps.map((step) =>
-      step.name === suggestion.stepName ? { ...step, minutes: suggestion.learnedMinutes } : step,
+      step.name === suggestion.stepName
+        ? { ...step, minutes: suggestion.learnedMinutes, estimateSource: 'learned' as const }
+        : step,
     );
     await db.templates.update(suggestion.templateId, { steps, updatedAt: new Date().toISOString() });
     // No need to also add to dismissedSuggestions - once the template step's

@@ -148,3 +148,70 @@ export function slipMinutes(departure: Departure): number | undefined {
   if (!departure.leftAt) return undefined;
   return Math.round((new Date(departure.leftAt).getTime() - plannedLeaveBy(departure).getTime()) / 60_000);
 }
+
+export interface SlipTrend {
+  /** Median slip (minutes) of the EARLIEST `window` departures. */
+  early: number;
+  /** Median slip (minutes) of the LATEST `window` departures. */
+  late: number;
+  /** How many departures each median is built from — shown alongside the
+   * copy (Learning.tsx) so "earliest 10" / "latest 10" is never a silent,
+   * unstated sample size. */
+  window: number;
+}
+
+/** Below this many departures on EACH side, a window median is noise, not a
+ * trend — same "needs real evidence" floor family as learnedEstimate's 3
+ * and learnedBufferSuggestion's MIN_BUFFER_SLIP_RUNS' 5. 3 (not 5) because
+ * a trend line only needs to be believable, not the same conservative
+ * headline claim a single "here's your bias" number is — `globalBias`
+ * (estimateBias.ts) is the number that has to carry that weight; this is
+ * corroborating evidence sitting next to it. */
+const MIN_TREND_WINDOW = 3;
+
+/** Slip-trend increment (0.30.0): the evidence-of-change half of the
+ * estimation-bias increment — a single "you guess N% short" number
+ * (estimateBias.ts's globalBias) says nothing about whether that's getting
+ * better or worse. This answers that, cheaply, by comparing the median slip
+ * of Deepak's EARLIEST departures against his LATEST, without needing a
+ * time-series chart this app has no infrastructure for.
+ *
+ * `window = min(10, floor(slips.length / 2))`: capped at 10 so a very long
+ * history doesn't let "earliest" reach back years into a habit that no
+ * longer describes him (same reasoning as learning.ts's RECENCY_WINDOW, a
+ * different cap for a different kind of number); floor(length/2) so the two
+ * windows never overlap — every departure counted in `early` is provably
+ * NOT one of the departures counted in `late`, which is what makes the
+ * comparison mean "did it change" rather than "what's the median of a pool
+ * that partly counts itself twice." An odd total leaves one middle
+ * departure in neither window — thrown away deliberately, not a rounding
+ * bug: including it in one side or the other would make that arbitrary
+ * choice quietly tip the comparison.
+ *
+ * `null` when `window < MIN_TREND_WINDOW` — fewer than 6 total departures
+ * means even 3-and-3 windows aren't reachable, and a "trend" built from
+ * fewer than 3 departures per side is exactly the kind of noise-as-a-
+ * statistic this app's other floors already refuse to report.
+ *
+ * PRECONDITION: `slips` must already be in chronological order, OLDEST
+ * first — this function has no timestamp to sort by (same "pure, explicit
+ * inputs" shape as compressPlan/suggestNewTarget in replan.ts), so ordering
+ * is entirely the caller's responsibility. Learning.tsx sorts its
+ * departures ascending by `appointmentAt` before mapping to slips — the
+ * OPPOSITE of History.tsx's own most-recent-first `.reverse()`, worth
+ * calling out explicitly since it would be an easy copy-paste mistake to
+ * reuse History's ordering here and silently swap "earliest" and "latest."
+ */
+export function slipTrend(slips: number[]): SlipTrend | null {
+  const window = Math.min(10, Math.floor(slips.length / 2));
+  if (window < MIN_TREND_WINDOW) return null;
+
+  const early = medianMinutes(slips.slice(0, window));
+  const late = medianMinutes(slips.slice(-window));
+  // Unreachable given window >= MIN_TREND_WINDOW (> 0) above — both slices
+  // are non-empty, so medianMinutes can't actually return null here — but
+  // this keeps the return type honest without a non-null assertion.
+  if (early === null || late === null) return null;
+
+  return { early, late, window };
+}
