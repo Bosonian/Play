@@ -1,4 +1,4 @@
-import type { Departure } from '../db/types';
+import type { Departure, DepartureStep } from '../db/types';
 
 /**
  * Field bug, real user report: tapped "I'm out the door" on a departure
@@ -41,4 +41,39 @@ export function strandedArrivalLine(departure: Pick<Departure, 'arrivedAt' | 'ar
   if (departure.arrivedAt == null) return 'En route · arrival steps waiting.';
   const checkedCount = steps.filter((step) => step.checkedAt !== null).length;
   return `Arrived · ${checkedCount} of ${steps.length} arrival steps done.`;
+}
+
+/**
+ * "Change into scrubs · Lift · Ward station — 12 min." — the RUNNING-state
+ * "After arrival" preview line on Runway.tsx (field report, verbatim: "now
+ * the after arrival steps are all missing. i had saved them, they seem to
+ * be hidden"). Before this, a departure's saved arrival steps were
+ * genuinely invisible anywhere on the Runway screen until the moment
+ * "I'm out the door" was tapped — nothing wrong had happened to them, they
+ * were simply never shown, which reads exactly like "lost" from the other
+ * side of the screen. This line is that fix: a quiet, read-only preview
+ * during the RUNNING (prep) phase, so what was saved is visible the whole
+ * time it's waiting its turn.
+ *
+ * Names in list order, not re-sorted — list order IS the intended
+ * chronological order (the reorder increment this same release ships is
+ * what lets that order be corrected from either editor), so this line is
+ * just a straight read of it, not a second judgment about sequence.
+ *
+ * Pulled out as a pure function, not written inline in Runway.tsx, for the
+ * same reason strandedArrivalLine above is: the exact tally string is
+ * something a test can pin down directly, without going through Dexie or
+ * React.
+ *
+ * Returns '' for an empty list. The only real caller (Runway.tsx) already
+ * length-guards before ever rendering this line, so an empty result is
+ * never actually shown on screen — but a pure function that silently
+ * produced "— 0 min." for an input its own caller promised never to pass
+ * would be a worse trap than just returning the honest empty string.
+ */
+export function arrivalPreviewLine(steps: Pick<DepartureStep, 'name' | 'plannedMinutes'>[]): string {
+  if (steps.length === 0) return '';
+  const names = steps.map((step) => step.name || 'Step').join(' · ');
+  const totalMinutes = steps.reduce((sum, step) => sum + step.plannedMinutes, 0);
+  return `${names} — ${totalMinutes} min.`;
 }

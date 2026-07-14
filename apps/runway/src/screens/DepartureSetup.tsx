@@ -248,10 +248,54 @@ export function DepartureSetup({
     updateStep(stepId, { plannedMinutes, estimateSource: 'manual' });
   }
 
-  // Arrival-steps increment: same three operations as the prep-steps trio
-  // above (DepartureSetup, unlike TemplateEdit, never offered reordering
-  // for `steps` either — arrival steps stay consistent with that, no
-  // move function here).
+  // Reordering increment (field report, direct request: "also need an
+  // option to reorder the steps in their chronological order"). This used
+  // to be a deliberate omission — DepartureSetup never offered reordering
+  // for `steps`, on the reasoning that TemplateEdit was the one place that
+  // needed it. That reasoning is reversed here by direct user request: a
+  // one-off departure's own step order can be wrong too, and there's no
+  // reason to force a round trip through "save as template, reorder there,
+  // copy back" just to fix it. Implementation is copied from TemplateEdit's
+  // moveStep verbatim — same swap-with-neighbor idiom, same no-op at either
+  // end of the array — so the two editors stay behaviourally identical
+  // rather than growing two subtly different reorder implementations.
+  //
+  // Safe to allow even while `isEditingRunning` (a departure whose run is
+  // already under way), unlike some of this form's other edits: every
+  // downstream reader that cares about step order reads it in a way that's
+  // insensitive to swaps across a checked/unchecked boundary. computeProjection
+  // (projection.ts) only ever SUMS unchecked steps' plannedMinutes — order
+  // never enters the math. currentStepAnchor (currentStepElapsed.ts) picks
+  // the "current" step as the first `checkedAt === null` entry in list
+  // order, but its own doc comment already establishes checking is
+  // nonlinear ("any step can be checked in any order") and its anchor
+  // timestamp is the MOST RECENT checkedAt across the whole list, not
+  // whatever precedes the current step positionally. The one place list
+  // order is genuinely user-visible — which unchecked step Runway.tsx shows
+  // as "current" vs. "later" — only depends on the RELATIVE order of
+  // unchecked steps among themselves; swapping an unchecked step with an
+  // adjacent CHECKED one (one step at a time, which is all `moveStep` ever
+  // does) can never change that relative order, because the checked
+  // neighbor is invisible to the unchecked-only filter both Runway.tsx and
+  // this reasoning are built on. So reordering while running can only ever
+  // do the one thing it's meant to do — change which step comes next — and
+  // never corrupts the projection or the checked-step history.
+  function moveStep(stepId: string, direction: -1 | 1) {
+    setSteps((prev) => {
+      const index = prev.findIndex((s) => s.id === stepId);
+      const target = index + direction;
+      if (index === -1 || target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  }
+
+  // Arrival-steps increment: same trio as the prep-steps quartet above,
+  // mechanically identical, just pointed at `arrivalSteps`. `moveArrivalStep`
+  // mirrors `moveStep` above for the same reordering increment, same safety
+  // reasoning (computeProjection's arrival-minutes term is also a sum over
+  // unchecked steps — see projection.ts).
   function addArrivalStep() {
     setArrivalSteps((prev) => [
       ...prev,
@@ -270,6 +314,17 @@ export function DepartureSetup({
   // Same "a hand-edit is always manual" reasoning as updateStepMinutes above.
   function updateArrivalStepMinutes(stepId: string, plannedMinutes: number) {
     updateArrivalStep(stepId, { plannedMinutes, estimateSource: 'manual' });
+  }
+
+  function moveArrivalStep(stepId: string, direction: -1 | 1) {
+    setArrivalSteps((prev) => {
+      const index = prev.findIndex((s) => s.id === stepId);
+      const target = index + direction;
+      if (index === -1 || target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
   }
 
   function toggleRepeatDay(iso: number) {
@@ -718,7 +773,7 @@ export function DepartureSetup({
         </h2>
 
         <div className="flex flex-col gap-2">
-          {steps.map((step) => {
+          {steps.map((step, index) => {
             // F3: a checked step is history, not a draft - toggleStep
             // (Runway.tsx) stamped `checkedAt` for a reason, and this form
             // must not be a back door to un-stamp it, rename it, or resize
@@ -728,6 +783,10 @@ export function DepartureSetup({
             // its `checkedAt`/`name`/`plannedMinutes` untouched all the way
             // through to the save in handleSave above (this component never
             // clears or rewrites those fields for a step it never edited).
+            // Same rule extends to the reorder buttons below (reordering
+            // increment): a locked row gets none, so a checked step's
+            // position — like everything else about it — stays untouched
+            // by this form.
             const locked = step.checkedAt !== null;
             if (locked) {
               return (
@@ -749,6 +808,31 @@ export function DepartureSetup({
             }
             return (
               <div key={step.id} className="flex items-center gap-2 rounded-lg border border-slate-800/60 bg-surface p-2">
+                {/* Reordering increment: same up/down pair as TemplateEdit's
+                    step rows, mirrored exactly (aria-labels included) — see
+                    moveStep's own doc comment for why this is safe to offer
+                    even on a running departure's unchecked steps. `index` is
+                    this row's position in the FULL `steps` array (locked
+                    rows included), matching moveStep's own array-index
+                    semantics. */}
+                <div className="flex flex-col">
+                  <button
+                    onClick={() => moveStep(step.id, -1)}
+                    disabled={index === 0}
+                    aria-label={`Move ${step.name || 'step'} up`}
+                    className="flex h-5 w-8 items-center justify-center text-slate-500 transition-colors hover:text-slate-200 disabled:opacity-30"
+                  >
+                    ▲
+                  </button>
+                  <button
+                    onClick={() => moveStep(step.id, 1)}
+                    disabled={index === steps.length - 1}
+                    aria-label={`Move ${step.name || 'step'} down`}
+                    className="flex h-5 w-8 items-center justify-center text-slate-500 transition-colors hover:text-slate-200 disabled:opacity-30"
+                  >
+                    ▼
+                  </button>
+                </div>
                 <StepNameAutocomplete
                   value={step.name}
                   library={stepLibrary}
@@ -797,7 +881,11 @@ export function DepartureSetup({
           begins on the Runway screen, but this form has no way to know
           that hasn't somehow already happened for whatever departure it's
           editing, so the same defensive lock applies here too). Optional
-          and empty by default. */}
+          and empty by default. Reordering increment: also gets the same
+          up/down pair as the prep-steps section above — see moveArrivalStep's
+          own comment (next to moveStep) for the shared safety reasoning;
+          computeProjection's arrival term is a sum over unchecked steps the
+          same way its prep term is. */}
       <section className="flex flex-col gap-3">
         <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Arrival steps</h2>
         <p className="text-sm text-slate-500">
@@ -806,7 +894,7 @@ export function DepartureSetup({
         </p>
 
         <div className="flex flex-col gap-2">
-          {arrivalSteps.map((step) => {
+          {arrivalSteps.map((step, index) => {
             const locked = step.checkedAt !== null;
             if (locked) {
               return (
@@ -828,6 +916,24 @@ export function DepartureSetup({
             }
             return (
               <div key={step.id} className="flex items-center gap-2 rounded-lg border border-slate-800/60 bg-surface p-2">
+                <div className="flex flex-col">
+                  <button
+                    onClick={() => moveArrivalStep(step.id, -1)}
+                    disabled={index === 0}
+                    aria-label={`Move ${step.name || 'step'} up`}
+                    className="flex h-5 w-8 items-center justify-center text-slate-500 transition-colors hover:text-slate-200 disabled:opacity-30"
+                  >
+                    ▲
+                  </button>
+                  <button
+                    onClick={() => moveArrivalStep(step.id, 1)}
+                    disabled={index === arrivalSteps.length - 1}
+                    aria-label={`Move ${step.name || 'step'} down`}
+                    className="flex h-5 w-8 items-center justify-center text-slate-500 transition-colors hover:text-slate-200 disabled:opacity-30"
+                  >
+                    ▼
+                  </button>
+                </div>
                 <StepNameAutocomplete
                   value={step.name}
                   library={stepLibrary}

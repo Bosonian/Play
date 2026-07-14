@@ -30,6 +30,7 @@ import { getCurrentSsid } from '../native/wifi';
 import { nextOccurrenceOf } from '../lib/nextOccurrence';
 import { pushBackOverride } from '../lib/backOverride';
 import { logEvent } from '../lib/eventLog';
+import { arrivalPreviewLine } from '../lib/strandedArrival';
 
 /** Same confirm copy as Home's "Remove" action on a planned departure (M1) —
  * abandoning from either screen is the same operation with the same
@@ -1462,6 +1463,33 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Arrival-steps increment (field report, verbatim: "now the after
+          arrival steps are all missing. i had saved them, they seem to be
+          hidden"). RUNNING state only — the moment "I'm out the door" is
+          tapped these steps stop being a preview and start being the live
+          arrival-phase checklist (the `arrivalPhaseActive` branch, top of
+          this component). Until this section existed, a departure with
+          saved arrival steps showed no trace of them anywhere on this
+          screen until that tap: nothing was ever wrong with the data (both
+          editors save them, materialize.ts copies them across), they were
+          just never rendered here, which reads exactly like "lost" from
+          the other side of the screen. This is the fix for that half of
+          the report — the reorder half is DepartureSetup's moveStep/
+          moveArrivalStep, below.
+          Deliberately read-only: no checkboxes, no taps. These steps only
+          become interactive in the arrival phase, where checking one has
+          real consequences (it can resolve the whole departure to 'done').
+          A tappable-looking row here would invite a tap that does nothing
+          yet — worse than no affordance at all. */}
+      {departure.status === 'running' && (departure.arrivalSteps ?? []).length > 0 && (
+        <div className="flex flex-col gap-1">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">After arrival</h2>
+          <p className="text-sm tabular-nums text-slate-500">
+            {arrivalPreviewLine(departure.arrivalSteps ?? [])}
+          </p>
         </div>
       )}
 

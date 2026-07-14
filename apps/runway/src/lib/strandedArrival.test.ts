@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { strandedArrivalLine, strandedInArrival } from './strandedArrival';
+import { arrivalPreviewLine, strandedArrivalLine, strandedInArrival } from './strandedArrival';
 import type { DepartureStep } from '../db/types';
 
 function makeStep(overrides: Partial<DepartureStep> = {}): DepartureStep {
@@ -54,5 +54,25 @@ describe('strandedArrivalLine', () => {
     expect(
       strandedArrivalLine({ arrivedAt: '2026-07-14T08:00:00.000Z', arrivalSteps: undefined as unknown as DepartureStep[] }),
     ).toBe('Arrived · 0 of 0 arrival steps done.');
+  });
+});
+
+describe('arrivalPreviewLine', () => {
+  it('joins multiple step names with " · " and sums their planned minutes', () => {
+    const steps = [
+      makeStep({ id: 'a', name: 'Change into scrubs', plannedMinutes: 4 }),
+      makeStep({ id: 'b', name: 'Lift', plannedMinutes: 3 }),
+      makeStep({ id: 'c', name: 'Ward station', plannedMinutes: 5 }),
+    ];
+    expect(arrivalPreviewLine(steps)).toBe('Change into scrubs · Lift · Ward station — 12 min.');
+  });
+
+  it('renders a single step without a separator', () => {
+    const steps = [makeStep({ id: 'a', name: 'Lift', plannedMinutes: 3 })];
+    expect(arrivalPreviewLine(steps)).toBe('Lift — 3 min.');
+  });
+
+  it('returns the empty string for an empty list (the caller length-guards before rendering)', () => {
+    expect(arrivalPreviewLine([])).toBe('');
   });
 });
