@@ -21,6 +21,7 @@ import { backupFilename, buildBackup, LAST_BACKUP_AT_SETTING, validateBackup } f
 import { restoreBackup } from '../lib/restoreBackup';
 import { exportBackupFile } from '../native/backupFile';
 import { formatDateLong, formatTime } from '../lib/format';
+import { logEvent } from '../lib/eventLog';
 
 interface SettingsProps {
   onNavigate: (screen: Screen) => void;
@@ -234,7 +235,7 @@ export function Settings({ onNavigate }: SettingsProps) {
   async function handleExportBackup() {
     setBackupError(null);
     setBackupRestored(false);
-    const [departures, templates, settings, exams, topics, sprints, milestones, fieldReports, tasks] =
+    const [departures, templates, settings, exams, topics, sprints, milestones, fieldReports, tasks, events] =
       await Promise.all([
         db.departures.toArray(),
         db.templates.toArray(),
@@ -245,10 +246,11 @@ export function Settings({ onNavigate }: SettingsProps) {
         db.milestones.toArray(),
         db.fieldReports.toArray(),
         db.tasks.toArray(),
+        db.events.toArray(),
       ]);
     const now = new Date();
     const backup = buildBackup(
-      { departures, templates, settings, exams, topics, sprints, milestones, fieldReports, tasks },
+      { departures, templates, settings, exams, topics, sprints, milestones, fieldReports, tasks, events },
       db.verno,
       now,
     );
@@ -274,6 +276,7 @@ export function Settings({ onNavigate }: SettingsProps) {
     // what happened past the click, so triggering is the best truth
     // available there).
     await db.settings.put({ key: LAST_BACKUP_AT_SETTING, value: now.toISOString() });
+    void logEvent('backup', 'Backup exported.');
   }
 
   function handleImportClick() {
@@ -551,6 +554,16 @@ export function Settings({ onNavigate }: SettingsProps) {
           Everything Runway has learned, as one file. API keys are not included — they stay on this
           device.
         </p>
+      </section>
+
+      <section className="flex flex-col gap-3 border-t border-slate-800 pt-6">
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Activity log</h2>
+        <p className="text-sm text-slate-500">
+          What the app did and when, kept on this phone. The newest 2000 events are retained.
+        </p>
+        <TextAction onClick={() => onNavigate({ name: 'activityLog' })} className="self-start">
+          View activity log
+        </TextAction>
       </section>
     </div>
   );

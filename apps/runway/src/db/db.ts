@@ -1,5 +1,16 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { Departure, Exam, FieldReport, Milestone, Setting, Sprint, Template, Topic, WorkTask } from './types';
+import type {
+  Departure,
+  Exam,
+  FieldReport,
+  Milestone,
+  RunwayEvent,
+  Setting,
+  Sprint,
+  Template,
+  Topic,
+  WorkTask,
+} from './types';
 
 // Dexie's index string only lists the fields we actually query by
 // (`id` is the implicit primary key for both tables). `appointmentAt` and
@@ -20,6 +31,9 @@ class RunwayDB extends Dexie {
   fieldReports!: EntityTable<FieldReport, 'id'>;
   // Tasks (Dexie v5 below) — timed work without travel.
   tasks!: EntityTable<WorkTask, 'id'>;
+  // Activity log (Dexie v6 below) — a capped, local record of what the app
+  // did, for tracing bugs after the fact. See src/lib/eventLog.ts.
+  events!: EntityTable<RunwayEvent, 'id'>;
 
   constructor() {
     super('runway');
@@ -99,6 +113,25 @@ class RunwayDB extends Dexie {
       milestones: 'id, examId, at',
       fieldReports: 'id, status, createdAt',
       tasks: 'id, status, createdAt',
+    });
+    // v6 (activity-log increment): adds `events`, a genuinely new table —
+    // same "new store needs a version bump" reasoning as fieldReports' v4
+    // and tasks' v5 above. Indexed on `id` (the implicit primary key) and
+    // `at` — the log is always read newest-first, capped (recentEvents,
+    // eventLog.ts), and pruned oldest-first (pruneEventLog), both of which
+    // want `at` sorted rather than a full-table scan. Purely additive
+    // otherwise; every existing table and row is untouched by this upgrade.
+    this.version(6).stores({
+      templates: 'id',
+      departures: 'id, appointmentAt, status',
+      settings: 'key',
+      exams: 'id',
+      topics: 'id, examId',
+      sprints: 'id, examId, topicId, startedAt',
+      milestones: 'id, examId, at',
+      fieldReports: 'id, status, createdAt',
+      tasks: 'id, status, createdAt',
+      events: 'id, at',
     });
   }
 }

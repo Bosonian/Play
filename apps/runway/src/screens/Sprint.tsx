@@ -19,6 +19,7 @@ import { FOCUS_SOUND_ON_SETTING, readFocusSoundConfig } from '../lib/focusSoundS
 import { startFocusSound, stopFocusSound } from '../audio/focusSound';
 import { sprintDoneMessage, sprintStartMessage } from '../lib/witness';
 import { shareWitnessText } from '../native/shareText';
+import { logEvent } from '../lib/eventLog';
 
 interface SprintProps {
   sprintId: string;
@@ -242,6 +243,7 @@ export function Sprint({ sprintId, onNavigate }: SprintProps) {
     await db.sprints.where('id').equals(sprint.id).modify((s) => {
       if (s.endedAt === null) s.endedAt = endedAtIso;
     });
+    void logEvent('sprint', `Sprint ended: ${topic?.name ?? ''}.`);
     // Terminal - the planned-end alarm would otherwise still fire later
     // for a sprint that's already been logged as finished.
     await cancelSprintEndAlarm(sprint.id);

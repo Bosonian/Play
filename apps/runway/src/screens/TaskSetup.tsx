@@ -12,6 +12,7 @@ import { stepNameLibrary } from '../lib/learning';
 import { taskProjection } from '../lib/taskProjection';
 import { formatSlackLine, formatTime } from '../lib/format';
 import { nextOccurrenceOf } from '../lib/nextOccurrence';
+import { logEvent } from '../lib/eventLog';
 
 /** Same "defaults lean toward less, not more" reasoning (CLAUDE.md) behind
  * every other capped list in this app — 50 identical units is already a
@@ -138,6 +139,7 @@ export function TaskSetup({ onNavigate }: TaskSetupProps) {
       createdAt: nowIso,
     };
     await db.tasks.add(task);
+    void logEvent('task', `Task created: ${task.name}.`);
     onNavigate({ name: 'task', taskId: task.id });
   }
 

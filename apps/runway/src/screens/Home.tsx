@@ -37,6 +37,7 @@ import { strandedArrivalLine, strandedInArrival } from '../lib/strandedArrival';
 import { useNow } from '../hooks/useNow';
 import { refreshWidgets } from '../native/widgets';
 import { refreshDayGauge } from '../lib/dayGaugeRefresh';
+import { logEvent } from '../lib/eventLog';
 
 /** Cap on "From your calendar" cards shown at once (E1; CLAUDE.md's
  * "defaults lean toward less, not more") — same shape as
@@ -366,7 +367,8 @@ export function Home({ onNavigate }: HomeProps) {
   async function removeDeparture(departure: Departure) {
     if (!window.confirm(REMOVE_CONFIRM)) return;
     await db.departures.update(departure.id, { status: 'abandoned' });
-    await cancelDepartureAlarms(departure.id);
+    void logEvent('departure', `Departure abandoned: ${departure.name}.`);
+    await cancelDepartureAlarms(departure.id, departure.name);
     // Widgets increment: an abandoned departure is no longer eligible to be
     // the widget's source departure — refresh so a removed "Klinik 14:30"
     // doesn't linger on the home screen.
@@ -533,6 +535,7 @@ export function Home({ onNavigate }: HomeProps) {
   // of the two, and a no-op recompute costs nothing.
   async function recordArrival(departure: Departure, result: 'early' | 'onTime') {
     await db.departures.update(departure.id, { status: 'done', arrivalResult: result, arrivalLateMinutes: null });
+    void logEvent('departure', `Departure done: ${departure.name}, ${result}.`);
     void refreshWidgets();
     void refreshDayGauge();
     if (departure.templateId) void applyAutoLearn(departure.templateId);
@@ -542,6 +545,7 @@ export function Home({ onNavigate }: HomeProps) {
     const minutes = Number.parseInt(lateMinutesInput, 10);
     if (Number.isNaN(minutes) || minutes < 0) return;
     await db.departures.update(departure.id, { status: 'done', arrivalResult: 'late', arrivalLateMinutes: minutes });
+    void logEvent('departure', `Departure done: ${departure.name}, late.`);
     setRevealingLateFor(null);
     setLateMinutesInput('');
     void refreshWidgets();
@@ -551,6 +555,7 @@ export function Home({ onNavigate }: HomeProps) {
 
   async function skipArrival(departure: Departure) {
     await db.departures.update(departure.id, { status: 'done' });
+    void logEvent('departure', `Departure done: ${departure.name}, skipped.`);
     void refreshWidgets();
     void refreshDayGauge();
     if (departure.templateId) void applyAutoLearn(departure.templateId);

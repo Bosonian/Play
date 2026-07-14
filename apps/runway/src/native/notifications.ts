@@ -10,6 +10,7 @@ import type { Departure, Exam, Milestone, Sprint } from '../db/types';
 import { computeAlarmTimes } from '../lib/alarmTimes';
 import { formatTime } from '../lib/format';
 import { HORIZON_DAYS, calendarDates, occurrenceDates } from '../lib/recurrence';
+import { logEvent } from '../lib/eventLog';
 
 // The ONLY file in this app that imports @capacitor/local-notifications
 // (increment-4 spec) — every screen goes through the functions exported
@@ -279,12 +280,23 @@ export function studyBlockNotificationIds(examId: string, dates: string[]): numb
  * pending (never scheduled, already fired, or already cancelled), which is
  * exactly what "terminal status cancels alarms" and "reschedule on edit"
  * both need without first checking what's actually pending.
+ *
+ * `name` (activity-log increment) is for the log line only — see
+ * `logEvent`'s own header comment for why a name is an accepted narrow
+ * exception to this log's usual name-free rule. Every real call site
+ * already has the full `Departure` in scope (Runway.tsx's handlers, Home's
+ * `removeDeparture`, materialize.ts's sweep, and `scheduleDepartureAlarms`
+ * below, which calls this as its own first step) — this function is called
+ * unconditionally even when nothing was actually pending, so a "cancelled"
+ * line here means "the app asked the OS to cancel," not "something was
+ * definitely armed a moment ago."
  */
-export async function cancelDepartureAlarms(departureId: string): Promise<void> {
+export async function cancelDepartureAlarms(departureId: string, name: string): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
   await LocalNotifications.cancel({
     notifications: allSlotIds(departureId).map((id) => ({ id })),
   });
+  void logEvent('alarm', `Alarms cancelled: ${name}.`);
 }
 
 /**
@@ -303,7 +315,7 @@ export async function cancelDepartureAlarms(departureId: string): Promise<void> 
 export async function scheduleDepartureAlarms(departure: Departure): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
   await ensureChannels();
-  await cancelDepartureAlarms(departure.id);
+  await cancelDepartureAlarms(departure.id, departure.name);
 
   const alarms = computeAlarmTimes(new Date(), departure);
   if (alarms.length === 0) return;
@@ -329,6 +341,7 @@ export async function scheduleDepartureAlarms(departure: Departure): Promise<voi
     })),
   };
   await LocalNotifications.schedule(options);
+  void logEvent('alarm', `Alarms armed: ${departure.name}.`);
 }
 
 /**
@@ -525,10 +538,16 @@ export async function scheduleStudyBlockAlarms(exam: Exam): Promise<void> {
   if (!Capacitor.isNativePlatform()) return;
   await ensureChannels();
   await cancelStudyBlockAlarms(exam);
-  if (exam.studySchedule == null) return;
+  if (exam.studySchedule == null) {
+    void logEvent('alarm', 'Study-block alarms re-armed.');
+    return;
+  }
 
   const occurrences = occurrenceDates(new Date(), exam.studySchedule, HORIZON_DAYS);
-  if (occurrences.length === 0) return;
+  if (occurrences.length === 0) {
+    void logEvent('alarm', 'Study-block alarms re-armed.');
+    return;
+  }
 
   await LocalNotifications.schedule({
     notifications: occurrences.map((occurrence) => ({
@@ -541,6 +560,7 @@ export async function scheduleStudyBlockAlarms(exam: Exam): Promise<void> {
       actionTypeId: START_ACTION_TYPE_ID,
     })),
   });
+  void logEvent('alarm', 'Study-block alarms re-armed.');
 }
 
 /**
@@ -639,7 +659,10 @@ export async function registerNotificationNavigation(
         return;
       }
       const departureId = action.notification.extra?.departureId;
-      if (typeof departureId === 'string') handler(departureId);
+      if (typeof departureId === 'string') {
+        void logEvent('navigation', 'Notification tap: departure.');
+        handler(departureId);
+      }
     },
   );
 

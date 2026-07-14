@@ -14,6 +14,7 @@ function makeReport(overrides: Partial<FieldReport> = {}): FieldReport {
     status: 'pending',
     syncedIssueUrl: null,
     syncError: null,
+    activityLog: null,
     ...overrides,
   };
 }
@@ -69,6 +70,26 @@ describe('buildIssuePayload', () => {
   it('omits the screenshot markdown image when the screenshot URL is null', () => {
     const { body } = buildIssuePayload(makeReport(), null);
     expect(body).not.toContain('![screenshot]');
+  });
+
+  it('omits the activity log section when activityLog is null', () => {
+    const { body } = buildIssuePayload(makeReport({ activityLog: null }));
+    expect(body).not.toContain('## Activity log');
+  });
+
+  it('omits the activity log section when activityLog is an empty array', () => {
+    const { body } = buildIssuePayload(makeReport({ activityLog: [] }));
+    expect(body).not.toContain('## Activity log');
+  });
+
+  it('appends a fenced activity log section when activityLog is present', () => {
+    const lines = [
+      '2026-07-09 08:10:00 [departure] Departure created: Klinik appointment.',
+      '2026-07-09 08:14:00 [departure] Out the door: Klinik appointment.',
+    ];
+    const { body } = buildIssuePayload(makeReport({ activityLog: lines }));
+    expect(body).toContain('## Activity log (last 50 events)');
+    expect(body).toContain('```\n' + lines.join('\n') + '\n```');
   });
 });
 

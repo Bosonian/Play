@@ -2,6 +2,7 @@ import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { db } from '../db/db';
 import type { FieldReport } from '../db/types';
 import { readReportConfig } from './reportSettings';
+import { logEvent } from './eventLog';
 
 const GITHUB_API_BASE = 'https://api.github.com';
 // 20s, not routesApi.ts's 12s — a screenshot upload (base64, up to the 4MB
@@ -44,6 +45,22 @@ export function buildIssuePayload(
   ];
   if (screenshotUrl) {
     bodyLines.push('', `![screenshot](${screenshotUrl})`);
+  }
+  // Activity-log increment: only present when ReportProblem.tsx's "Attach
+  // recent activity log" checkbox was on at SAVE time — `activityLog` is
+  // already the formatted lines (eventLog.ts's formatEventLine), snapshotted
+  // then, not re-read here (see db/types.ts's FieldReport.activityLog doc
+  // comment for why sync time is the wrong moment to read the log fresh).
+  // `?? null` — undefined-as-null discipline for a report row saved before
+  // this field existed.
+  if (report.activityLog != null && report.activityLog.length > 0) {
+    // Fixed heading text ("last 50 events"), matching ReportProblem.tsx's
+    // checkbox caption and its REPORT_ACTIVITY_LOG_LIMIT cap — not
+    // `report.activityLog.length`, which would read as a smaller number on
+    // a freshly installed phone that hasn't logged 50 events yet. The
+    // heading describes the CAP the checkbox promised, not this
+    // particular report's count.
+    bodyLines.push('', '## Activity log (last 50 events)', '', '```', ...report.activityLog, '```');
   }
 
   return { title, body: bodyLines.join('\n') };
@@ -272,6 +289,7 @@ async function syncOneReport(report: FieldReport, token: string, repo: string): 
     screenshotBase64: null,
     screenshotMime: null,
   });
+  void logEvent('report', 'Report synced.');
 }
 
 /**

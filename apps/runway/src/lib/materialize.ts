@@ -252,7 +252,7 @@ export async function replaceUntouchedFutureAutoRows(templateId: string): Promis
     if (new Date(departure.appointmentAt).getTime() <= nowMs) continue; // already past
 
     await db.departures.delete(departure.id);
-    await cancelDepartureAlarms(departure.id);
+    await cancelDepartureAlarms(departure.id, departure.name);
   }
 }
 
@@ -284,7 +284,7 @@ async function sweepStaleAutoDepartures(now: Date): Promise<boolean> {
     if (new Date(departure.appointmentAt).getTime() >= cutoff) continue; // not stale yet
 
     await db.departures.delete(departure.id);
-    await cancelDepartureAlarms(departure.id);
+    await cancelDepartureAlarms(departure.id, departure.name);
     changed = true;
   }
   return changed;

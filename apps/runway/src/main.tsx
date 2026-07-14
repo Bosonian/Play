@@ -10,6 +10,7 @@ import { refreshDayGauge } from './lib/dayGaugeRefresh';
 import { navigateToDeparture, navigateToScreen } from './lib/navigationRef';
 import { materializeScheduledDepartures, materializeStudyBlockAlarms } from './lib/materialize';
 import { syncPendingReports } from './lib/reportSync';
+import { logEvent, pruneEventLog } from './lib/eventLog';
 
 // Registered here, before the first render, rather than inside App — this
 // is the earliest point in the app's lifecycle a listener can attach, which
@@ -86,6 +87,15 @@ void materializeStudyBlockAlarms();
 // every app open is what makes offline capture eventually consistent
 // without any background sync worker.
 void syncPendingReports();
+
+// Activity-log increment: prune-on-open, beside the other startup
+// materializers — see pruneEventLog's own doc comment for why one cheap
+// pass here beats a count-and-maybe-delete after every single logEvent
+// call. Logged AFTER the prune call is issued (not awaited first) so
+// "App started." is always the earliest line for this session even though
+// the prune itself resolves asynchronously.
+void pruneEventLog();
+void logEvent('lifecycle', 'App started.');
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

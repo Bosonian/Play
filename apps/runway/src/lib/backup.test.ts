@@ -13,6 +13,7 @@ const EMPTY_TABLES: BackupTables = {
   milestones: [],
   fieldReports: [],
   tasks: [],
+  events: [],
 };
 
 const SOME_DEPARTURE: Departure = {

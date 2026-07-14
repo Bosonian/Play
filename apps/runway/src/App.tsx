@@ -15,9 +15,11 @@ import { MilestoneEdit } from './screens/MilestoneEdit';
 import { ReportProblem } from './screens/ReportProblem';
 import { TaskSetup } from './screens/TaskSetup';
 import { TaskRun } from './screens/TaskRun';
+import { ActivityLog } from './screens/ActivityLog';
 import { setNavigationRef } from './lib/navigationRef';
 import { registerBackGesture } from './native/backGesture';
 import { refreshDayGauge } from './lib/dayGaugeRefresh';
+import { logEvent } from './lib/eventLog';
 
 // Navigation as plain React state, not a router library. There's no
 // deep-linkable URL requirement in increment 1 (no shareable departure
@@ -131,7 +133,11 @@ export type Screen =
   // `task` is the live screen, TaskRun.tsx, mirroring `runway`'s own
   // `departureId` shape.
   | { name: 'taskSetup' }
-  | { name: 'task'; taskId: string };
+  | { name: 'task'; taskId: string }
+  // Activity-log increment: the on-device event viewer, reached from
+  // Settings' "View activity log" TextAction — a pure read-only view, no
+  // create/prefill props of its own, same shape as `learning` above.
+  | { name: 'activityLog' };
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'home' });
@@ -212,7 +218,12 @@ export default function App() {
   // navigationRef effect.
   useEffect(() => {
     function handleVisibilityChange() {
-      if (document.visibilityState === 'visible') void refreshDayGauge();
+      if (document.visibilityState === 'visible') {
+        void refreshDayGauge();
+        void logEvent('lifecycle', 'App resumed.');
+      } else {
+        void logEvent('lifecycle', 'App backgrounded.');
+      }
     }
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -271,6 +282,8 @@ export default function App() {
         return <TaskSetup onNavigate={setScreen} />;
       case 'task':
         return <TaskRun taskId={screen.taskId} onNavigate={setScreen} />;
+      case 'activityLog':
+        return <ActivityLog onNavigate={setScreen} />;
     }
   }
 

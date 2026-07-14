@@ -1,4 +1,15 @@
-import type { Departure, Exam, FieldReport, Milestone, Setting, Sprint, Template, Topic, WorkTask } from '../db/types';
+import type {
+  Departure,
+  Exam,
+  FieldReport,
+  Milestone,
+  RunwayEvent,
+  Setting,
+  Sprint,
+  Template,
+  Topic,
+  WorkTask,
+} from '../db/types';
 import { APP_VERSION } from './appVersion';
 import { GEMINI_API_KEY_SETTING } from './captureSettings';
 import { formatDateInput } from './format';
@@ -32,10 +43,15 @@ export const SECRET_SETTING_KEYS: string[] = [ROUTES_API_KEY_SETTING, GEMINI_API
  * cancelled share or a failed download must not claim a backup happened). */
 export const LAST_BACKUP_AT_SETTING = 'lastBackupAt';
 
-/** Every Dexie table this app has, as of db.ts's v5 schema — see db.ts's own
+/** Every Dexie table this app has, as of db.ts's v6 schema — see db.ts's own
  * `RunwayDB` class for the authoritative list. Confirmed against it directly
  * rather than assumed: templates, departures, settings, exams, topics,
- * sprints, milestones, fieldReports, tasks. Nine tables, nine keys below. */
+ * sprints, milestones, fieldReports, tasks, events. Ten tables, ten keys
+ * below. `events` (activity-log increment) travels with a backup like any
+ * other table — the log is exactly as much "everything Runway has learned"
+ * as the rest of this file's contents, and restoring an old phone's data
+ * should restore its trace of what happened too, not silently start that
+ * phone's log over at zero. */
 export interface BackupTables {
   departures: Departure[];
   templates: Template[];
@@ -46,6 +62,7 @@ export interface BackupTables {
   milestones: Milestone[];
   fieldReports: FieldReport[];
   tasks: WorkTask[];
+  events: RunwayEvent[];
 }
 
 export interface RunwayBackup {

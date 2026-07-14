@@ -11,6 +11,7 @@ import { findLiveSprint, loggedHoursByTopic } from '../lib/examProjection';
 import { autoSuggestSelection } from '../lib/nextMove';
 import { ensurePermissions, scheduleSprintEndAlarm } from '../native/notifications';
 import { hapticImpact } from '../native/haptics';
+import { logEvent } from '../lib/eventLog';
 
 interface SprintSetupProps {
   /** Prefill from ExamOverview's next-move card (guided-layer increment) —
@@ -228,6 +229,8 @@ export function SprintSetup({ topicId, plannedMinutes, autoSuggest, onNavigate }
       value: JSON.stringify(ritualItems.map((item) => item.name)),
     });
     await db.sprints.add(sprint);
+    const startedTopicName = topics?.find((t) => t.id === selectedTopicId)?.name ?? '';
+    void logEvent('sprint', `Sprint started: ${startedTopicName}, ${selectedMinutes} min.`);
 
     // Lazy permission request, on first sprint start — never at app launch
     // (CLAUDE.md: no permission ambush) — same shape as

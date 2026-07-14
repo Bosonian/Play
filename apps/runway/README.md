@@ -257,11 +257,17 @@ Focus sound (above) is the ambient half of body doubling — company that asks n
 
 ## Backup
 
-Everything Runway has learned — departure and task actuals, estimate provenance, exam sprints and milestones — lives in one IndexedDB on one phone. A lost phone or a cleared browser storage means all of it is gone. Settings → Backup (0.32.0) exports the full database as one JSON file (**Export backup**) and lets a phone start over from one (**Import backup**).
+Everything Runway has learned — departure and task actuals, estimate provenance, exam sprints and milestones, the activity log — lives in one IndexedDB on one phone. A lost phone or a cleared browser storage means all of it is gone. Settings → Backup (0.32.0) exports the full database as one JSON file (**Export backup**) and lets a phone start over from one (**Import backup**).
 
 **API keys are never included in a backup.** The Google Routes key, the Gemini key, and the GitHub field-report token stay on the device they're configured on — a backup file's purpose is to travel (Drive, email, a second phone), and a leaked key costs a lot more to fix than a re-typed one costs to make.
 
 **Import replaces, it does not merge.** Restoring a backup erases everything currently on the phone and puts the backup's data in its place — Import shows the backup's export date and asks for confirmation first. This is deliberate: merge semantics (what happens to a colliding id, or a learned pool that's half from each source) are unpredictable in exactly the moment — disaster recovery, under time pressure — where Deepak is least able to check the result. Replace is the only outcome that's fully predictable before confirming it.
+
+## Activity log
+
+Two field bugs (0.34.1, 0.34.2) had to be diagnosed by reading code and reconstructing what must have happened — the app kept no record of what it actually did or when. Settings → Activity log (0.35.0) is that record: a local, capped log of real transitions — a departure created, an alarm armed, an arrival detected, a task finished, a backup restored — never a render, a query, or a screen someone merely looked at. The newest 2000 events are kept; older ones are pruned once, on app open.
+
+**Local-first, still.** Nothing in the log leaves the device on its own. The viewer's **Share log** action hands the last 500 lines to your phone's own share sheet (clipboard on desktop web) — one deliberate tap, same as every other share action in this app. "Report a problem" (below) can optionally attach the last 50 lines to a filed report; that checkbox defaults OFF, and its own caption repeats the field-reports privacy note below it, because the two features share the same public-repo risk.
 
 ## Field reports
 

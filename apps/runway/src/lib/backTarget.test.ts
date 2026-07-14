@@ -90,4 +90,8 @@ describe('backTarget', () => {
     const screen: Screen = { name: 'task', taskId: 'task-1' };
     expect(backTarget(screen)).toEqual({ name: 'home' });
   });
+
+  it('activityLog backs to settings', () => {
+    expect(backTarget({ name: 'activityLog' })).toEqual({ name: 'settings' });
+  });
 });

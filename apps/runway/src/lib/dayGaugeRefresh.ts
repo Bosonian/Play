@@ -3,6 +3,22 @@ import { formatTime } from './format';
 import { nextCommitment } from './dayGauge';
 import { DAY_GAUGE_ENABLED_SETTING } from './dayGaugeSettings';
 import { hideDayGauge, showDayGauge } from '../native/dayGauge';
+import { logEvent } from './eventLog';
+
+/**
+ * The last gauge state actually LOGGED (not necessarily the last one
+ * shown) — module-level, not per-call, so consecutive `refreshDayGauge()`
+ * calls with an unchanged label/time (this function runs on nearly every
+ * write in the app: every step check, every task unit, every departure
+ * save) don't each mint a new "Day gauge: ..." line. Without this, the
+ * 2000-row cap would fill almost entirely with gauge noise on a busy day,
+ * crowding out the departure/task/sprint events actually worth tracing —
+ * exactly the flooding this module's own "transitions only" rule (see
+ * eventLog.ts's header comment) exists to prevent. `null` means "hidden, or
+ * never logged this session" so the very first show and every hide-after-a-
+ * show still get exactly one line.
+ */
+let lastLoggedGaugeState: string | null = null;
 
 /**
  * Rebuilds the day-gauge notification from the latest Dexie data — the
@@ -44,6 +60,10 @@ export async function refreshDayGauge(): Promise<void> {
     const setting = await db.settings.get(DAY_GAUGE_ENABLED_SETTING);
     if (setting?.value !== 'true') {
       await hideDayGauge();
+      if (lastLoggedGaugeState !== null) {
+        void logEvent('gauge', 'Day gauge: hidden.');
+        lastLoggedGaugeState = null;
+      }
       return;
     }
 
@@ -61,10 +81,19 @@ export async function refreshDayGauge(): Promise<void> {
     const next = nextCommitment(now, departures, tasks, exam);
     if (!next) {
       await hideDayGauge();
+      if (lastLoggedGaugeState !== null) {
+        void logEvent('gauge', 'Day gauge: hidden.');
+        lastLoggedGaugeState = null;
+      }
       return;
     }
 
     await showDayGauge(`Next: ${next.label} · ${formatTime(next.at)}`, next.at);
+    const state = `${next.label} at ${formatTime(next.at)}`;
+    if (state !== lastLoggedGaugeState) {
+      void logEvent('gauge', `Day gauge: ${state}.`);
+      lastLoggedGaugeState = state;
+    }
   } catch (err) {
     console.warn('Runway: failed to refresh day gauge', err);
   }

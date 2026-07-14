@@ -23,6 +23,7 @@ import { taskDoneMessage, taskStartMessage } from '../lib/witness';
 import { shareWitnessText } from '../native/shareText';
 import { refreshWidgets } from '../native/widgets';
 import { refreshDayGauge } from '../lib/dayGaugeRefresh';
+import { logEvent } from '../lib/eventLog';
 
 /** Distinct from Runway's departure-abandon copy — a task has no alarms to
  * cancel (tasks increment: no scheduled notifications in v1, see README's
@@ -187,6 +188,11 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
   const toggleUnit = async (unit: TaskUnit) => {
     void hapticImpact('light');
     const nowIso = new Date().toISOString();
+    // Read before the write below — same "closure state, not a value read
+    // back after the transactional modify" shape as Runway.tsx's own
+    // toggleStep/toggleArrivalStep logging.
+    const wasPlanned = task.status === 'planned';
+    const checking = unit.checkedAt === null;
     // Focus sound (0.33.0): captured from inside the modify() callback
     // below, since that's the only place that knows whether THIS check-off
     // is the one that resolves the task to 'done'.
@@ -205,6 +211,9 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
         becameDone = true;
       }
     });
+    if (wasPlanned) void logEvent('task', `Task started: ${task.name}.`);
+    void logEvent('task', `Task unit ${checking ? 'checked' : 'unchecked'}: ${task.name}.`);
+    if (becameDone) void logEvent('task', `Task done: ${task.name}.`);
     // Explicit and immediate, on top of the mount-effect's own cleanup
     // (which will also notice `task.status` changed once the live query
     // re-emits) - see that effect's own comment for why both exist.
@@ -213,12 +222,14 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
 
   const handleStart = async () => {
     void hapticImpact('light');
+    const wasPlanned = task.status === 'planned';
     await db.tasks.where('id').equals(task.id).modify((t) => {
       if (t.status === 'planned') {
         t.status = 'running';
         t.startedAt = t.startedAt ?? new Date().toISOString();
       }
     });
+    if (wasPlanned) void logEvent('task', `Task started: ${task.name}.`);
   };
 
   // Witness increment (0.34.0): composes the start-of-task message and
@@ -265,6 +276,8 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
         becameDone = true;
       }
     });
+    void logEvent('task', `Task unit backdated: ${task.name}.`);
+    if (becameDone) void logEvent('task', `Task done: ${task.name}.`);
     if (becameDone) stopFocusSound();
     setUnitBackdateOpen(false);
   };
@@ -275,6 +288,7 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
     // finish paths above - don't wait on the mount-effect's cleanup.
     stopFocusSound();
     await db.tasks.update(task.id, { status: 'abandoned' });
+    void logEvent('task', `Task abandoned: ${task.name}.`);
     onNavigate({ name: 'home' });
   };
 
@@ -357,6 +371,7 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
         u.checkedAt = null;
         t.status = 'running';
       });
+      void logEvent('task', `Task reopened: ${taskName}.`);
       // Learning integrity: clearing the accidental checkedAt also removes
       // the poisoned actual from the learning pools — deriveTaskUnitActuals
       // only pairs CHECKED units (this file's own import, above), so

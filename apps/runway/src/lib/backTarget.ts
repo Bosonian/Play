@@ -38,6 +38,12 @@ export function backTarget(screen: Screen): Screen | null {
     case 'task':
       return { name: 'home' };
 
+    // ActivityLog.tsx's own ScreenHeader onBack: always settings, the only
+    // place this screen is ever reached from (its "View activity log"
+    // TextAction).
+    case 'activityLog':
+      return { name: 'settings' };
+
     // Learning.tsx's own ScreenHeader onBack: always history, since that's
     // the only place this screen is ever reached from (see App.tsx's doc
     // comment on the `learning` Screen variant).

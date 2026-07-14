@@ -5,6 +5,7 @@ import { refreshWidgets } from '../native/widgets';
 import { SECRET_SETTING_KEYS, type RunwayBackup } from './backup';
 import { refreshDayGauge } from './dayGaugeRefresh';
 import { materializeScheduledDepartures, materializeStudyBlockAlarms } from './materialize';
+import { logEvent } from './eventLog';
 
 /**
  * Replaces every table's contents with `backup`'s, then re-arms the device.
@@ -24,7 +25,18 @@ export async function restoreBackup(backup: RunwayBackup): Promise<void> {
   // through (a bulkAdd rejecting on a malformed row, for instance).
   await db.transaction(
     'rw',
-    [db.departures, db.templates, db.settings, db.exams, db.topics, db.sprints, db.milestones, db.fieldReports, db.tasks],
+    [
+      db.departures,
+      db.templates,
+      db.settings,
+      db.exams,
+      db.topics,
+      db.sprints,
+      db.milestones,
+      db.fieldReports,
+      db.tasks,
+      db.events,
+    ],
     async () => {
       // Read THIS device's current secret settings before settings gets
       // cleared below. buildBackup (backup.ts) deliberately strips
@@ -71,6 +83,9 @@ export async function restoreBackup(backup: RunwayBackup): Promise<void> {
 
       await db.tasks.clear();
       await db.tasks.bulkAdd(backup.tables.tasks ?? []);
+
+      await db.events.clear();
+      await db.events.bulkAdd(backup.tables.events ?? []);
     },
   );
 
@@ -136,4 +151,10 @@ export async function restoreBackup(backup: RunwayBackup): Promise<void> {
   } catch (err) {
     console.warn('Runway: refreshDayGauge failed after restore', err);
   }
+
+  // Written to the just-restored events table (the transaction above
+  // already replaced it wholesale with the backup's own log) — so this
+  // becomes the first new line after the restored history, not lost inside
+  // the clear-then-bulkAdd that preceded it.
+  void logEvent('backup', 'Backup restored.');
 }

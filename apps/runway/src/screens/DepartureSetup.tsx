@@ -20,6 +20,7 @@ import { refreshDayGauge } from '../lib/dayGaugeRefresh';
 import { stepNameLibrary } from '../lib/learning';
 import { materializeScheduledDepartures } from '../lib/materialize';
 import { StepNameAutocomplete } from '../ui/StepNameAutocomplete';
+import { logEvent } from '../lib/eventLog';
 
 const DEFAULT_REPEAT_TIME = '08:00';
 
@@ -421,6 +422,7 @@ export function DepartureSetup({
     if (departureId && existingDeparture) {
       await db.departures.update(departureId, sharedFields);
       savedDeparture = { ...existingDeparture, ...sharedFields };
+      void logEvent('departure', `Departure edited: ${savedDeparture.name}.`);
     } else {
       // Save-with-repeat (field report #10 §2) — the careful part, worth
       // spelling out in full. Turning Repeat on here does NOT spin up a
@@ -522,6 +524,7 @@ export function DepartureSetup({
         arrivedAt: null,
       };
       await db.departures.add(savedDeparture);
+      void logEvent('departure', `Departure created: ${savedDeparture.name}.`);
 
       if (repeatTemplateJustCreated) {
         // Materializes the rest of the week, minus today — today's own

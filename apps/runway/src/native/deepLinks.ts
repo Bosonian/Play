@@ -4,6 +4,7 @@ import { Capacitor } from '@capacitor/core';
 import type { Screen } from '../App';
 import { parseSharedDestination } from '../lib/shareTarget';
 import { recordExternalArrival } from '../lib/externalArrival';
+import { logEvent } from '../lib/eventLog';
 
 // One of two files that import @capacitor/app — the other is
 // src/native/backGesture.ts (Android back-gesture support), which uses the
@@ -92,6 +93,23 @@ function screenForUrl(url: string): Screen | null {
   }
 }
 
+/** The bare route name of a `runway://...` URL ("exam", "departure",
+ * "arrived", ...) for the activity log's "Deep link: {route}." line —
+ * deliberately the raw hostname, not `screenForUrl`'s resolved Screen name,
+ * so two routes that happen to resolve to the same Screen (e.g.
+ * `share-target` and `new-departure` both landing on `departureSetup`)
+ * still leave visibly distinct trace lines. Same URL-parsing shape as
+ * `isArrivedUrl` below (try the `URL` constructor, treat anything
+ * unparseable or non-`runway:` as "no route"). */
+function urlRoute(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'runway:' ? parsed.hostname : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Whether `url` is the `runway://arrived` deep link — see `handleUrl`
  * below for why this needs its own check rather than folding into
  * `screenForUrl`. Same URL-parsing shape as that function (try the `URL`
@@ -173,6 +191,7 @@ export async function registerDeepLinkNavigation(handler: (screen: Screen) => vo
     if (isArrivedUrl(url)) {
       if (arrivedHandlingInFlight) return; // the other cold-start path already picked this up
       arrivedHandlingInFlight = true;
+      void logEvent('navigation', 'Deep link: arrived.');
       void recordExternalArrival()
         .then((screen) => handler(screen))
         .finally(() => {
@@ -185,6 +204,7 @@ export async function registerDeepLinkNavigation(handler: (screen: Screen) => vo
     const screen = screenForUrl(url);
     if (!screen) return;
     lastHandledUrl = url;
+    void logEvent('navigation', `Deep link: ${urlRoute(url) ?? 'unknown'}.`);
     handler(screen);
   };
 

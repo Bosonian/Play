@@ -9,6 +9,7 @@ import { TextAction } from '../ui/TextAction';
 import { APP_VERSION } from '../lib/appVersion';
 import { syncPendingReports } from '../lib/reportSync';
 import { formatDateDisplay, formatTime } from '../lib/format';
+import { formatEventLine, logEvent, recentEvents } from '../lib/eventLog';
 
 interface ReportProblemProps {
   fromScreen: string;
@@ -29,6 +30,14 @@ const MAX_SCREENSHOT_BYTES = 4 * 1024 * 1024;
 const SCREENSHOT_TOO_LARGE_MESSAGE = 'Screenshot too large — 4 MB limit.';
 
 const DESCRIPTION_PREVIEW_CHARS = 60;
+
+/** How many recent lines get attached when the "Attach recent activity log"
+ * checkbox is on — see reportSync.ts's buildIssuePayload for where this
+ * number reappears in the section heading it renders under. Smaller than
+ * ActivityLog.tsx's own viewer cap (200) and Share log's (500): a report
+ * travels to a public repo (see the checkbox's own caption below), so this
+ * stays deliberately narrow — CLAUDE.md's "defaults lean toward less". */
+const REPORT_ACTIVITY_LOG_LIMIT = 50;
 
 /** What FileReader.readAsDataURL hands back before it's split into the two
  * pieces Dexie actually stores (db/types.ts: screenshotBase64 has the
@@ -70,6 +79,13 @@ export function ReportProblem({ fromScreen, onNavigate }: ReportProblemProps) {
   const [description, setDescription] = useState('');
   const [screenshot, setScreenshot] = useState<ScreenshotDraft | null>(null);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
+  // Activity-log increment: default OFF (CLAUDE.md's "defaults lean toward
+  // less" plus the honesty that the target repo can be public — see the
+  // checkbox's own caption below). Deliberately not remembered across
+  // reports the way the feedback token/repo settings are: whether THIS
+  // report needs the log is a decision worth making fresh each time, not a
+  // standing preference.
+  const [attachLog, setAttachLog] = useState(false);
   // Reset after every selection (see handleFileChange) so choosing the same
   // file again after Remove fires onChange a second time — browsers
   // otherwise treat picking an unchanged value as a no-op event.
@@ -114,6 +130,14 @@ export function ReportProblem({ fromScreen, onNavigate }: ReportProblemProps) {
     const trimmed = description.trim();
     if (!trimmed) return;
 
+    // Snapshotted NOW, not re-read at sync time — see db/types.ts's
+    // FieldReport.activityLog doc comment for why a queued-offline report
+    // must keep the log it was filed with, not whatever the log says by the
+    // time a token/connection finally lets it sync.
+    const activityLog = attachLog
+      ? (await recentEvents(REPORT_ACTIVITY_LOG_LIMIT)).map(formatEventLine)
+      : null;
+
     await db.fieldReports.add({
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
@@ -125,7 +149,9 @@ export function ReportProblem({ fromScreen, onNavigate }: ReportProblemProps) {
       status: 'pending',
       syncedIssueUrl: null,
       syncError: null,
+      activityLog,
     });
+    void logEvent('report', 'Report submitted.');
 
     // Fire-and-forget: the report is already durably saved above regardless
     // of whether this succeeds, times out, or the device is offline — the
@@ -193,6 +219,22 @@ export function ReportProblem({ fromScreen, onNavigate }: ReportProblemProps) {
             {screenshotError && <p className="text-sm text-red-400">{screenshotError}</p>}
           </div>
         )}
+
+        <label className="flex items-start gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
+          <input
+            type="checkbox"
+            checked={attachLog}
+            onChange={(e) => setAttachLog(e.target.checked)}
+            className="mt-0.5 size-6 shrink-0 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+          />
+          <span className="flex flex-col gap-1">
+            <span className="text-slate-100">Attach recent activity log</span>
+            <span className="text-sm text-slate-500">
+              The last 50 events are appended to the report. The report repo is public — check the
+              log for anything you would not post publicly.
+            </span>
+          </span>
+        </label>
 
         <Button onClick={() => void saveReport()} disabled={description.trim() === ''} className="w-full">
           Save report

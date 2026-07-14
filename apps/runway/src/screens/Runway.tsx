@@ -29,6 +29,7 @@ import { BackdateDialog } from '../ui/BackdateDialog';
 import { getCurrentSsid } from '../native/wifi';
 import { nextOccurrenceOf } from '../lib/nextOccurrence';
 import { pushBackOverride } from '../lib/backOverride';
+import { logEvent } from '../lib/eventLog';
 
 /** Same confirm copy as Home's "Remove" action on a planned departure (M1) —
  * abandoning from either screen is the same operation with the same
@@ -278,6 +279,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
       if (ssid.trim().toLowerCase() !== target) return;
       void hapticImpact('light');
       await db.departures.update(departure.id, { arrivedAt: new Date().toISOString() });
+      void logEvent('arrival', `Arrival detected via Wi-Fi: ${departure.name}.`);
     };
     void checkNow();
     const onVisibilityChange = () => {
@@ -337,6 +339,11 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   // "did this tap start the run" and "did this tap check the step".
   const toggleStep = async (step: DepartureStep) => {
     void hapticImpact('light');
+    // Read before the write below — checking the first step of a still-
+    // 'planned' departure is a forgivable-shortcut start (see this
+    // function's own comment above), and that transition is exactly as
+    // real a "running" event as the explicit Start button (handleStart).
+    const wasPlanned = departure.status === 'planned';
     await db.departures.where('id').equals(departure.id).modify((d) => {
       if (d.status === 'planned') {
         d.status = 'running';
@@ -345,6 +352,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
       const s = d.steps.find((x) => x.id === step.id);
       if (s) s.checkedAt = s.checkedAt === null ? new Date().toISOString() : null;
     });
+    if (wasPlanned) void logEvent('departure', `Departure started: ${departure.name}.`);
     // m4: checking the LAST remaining step flips planLine from "Leave by ...
     // · start by ..." to plain "Leave by ..." (buildDepartureWidgetData in
     // widgetSnapshot.ts keys that off allStepsChecked) — without this the
@@ -386,19 +394,22 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   // shouldn't be able to race on `startedAt`.
   const handleStart = async () => {
     void hapticImpact('light');
+    const wasPlanned = departure.status === 'planned';
     await db.departures.where('id').equals(departure.id).modify((d) => {
       if (d.status === 'planned') {
         d.status = 'running';
         d.startedAt = d.startedAt ?? new Date().toISOString();
       }
     });
+    if (wasPlanned) void logEvent('departure', `Departure started: ${departure.name}.`);
   };
 
   const handleLeave = async () => {
     void hapticImpact('heavy');
     await db.departures.update(departure.id, { status: 'left', leftAt: new Date().toISOString() });
+    void logEvent('departure', `Out the door: ${departure.name}.`);
     // Terminal status - no more staged alerts make sense once you've left.
-    await cancelDepartureAlarms(departure.id);
+    await cancelDepartureAlarms(departure.id, departure.name);
     // Widgets increment: 'left' is no longer 'planned'/'running', so this
     // departure drops out of the widget's source pool — refresh so it
     // doesn't keep showing "Leave now" after you already have.
@@ -428,7 +439,8 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   const handleLeaveBackdateConfirm = async (at: Date) => {
     void hapticImpact('heavy');
     await db.departures.update(departure.id, { status: 'left', leftAt: at.toISOString() });
-    await cancelDepartureAlarms(departure.id);
+    void logEvent('departure', `Out the door: ${departure.name}.`);
+    await cancelDepartureAlarms(departure.id, departure.name);
     void refreshWidgets();
     void refreshDayGauge();
     if (departure.templateId) void applyAutoLearn(departure.templateId);
@@ -444,7 +456,8 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   const handleAbandon = async () => {
     if (!window.confirm(ABANDON_CONFIRM)) return;
     await db.departures.update(departure.id, { status: 'abandoned' });
-    await cancelDepartureAlarms(departure.id);
+    void logEvent('departure', `Departure abandoned: ${departure.name}.`);
+    await cancelDepartureAlarms(departure.id, departure.name);
     // Widgets increment: same reasoning as handleLeave above — 'abandoned'
     // takes this departure out of the widget's source pool.
     void refreshWidgets();
@@ -463,6 +476,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   const handleArrived = async () => {
     void hapticImpact('light');
     await db.departures.update(departure.id, { arrivedAt: new Date().toISOString() });
+    void logEvent('arrival', `Arrival recorded: ${departure.name}.`);
   };
 
   // Backdating increment ("Arrived earlier"): same write as handleArrived,
@@ -474,6 +488,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   const handleArrivedBackdateConfirm = async (at: Date) => {
     void hapticImpact('light');
     await db.departures.update(departure.id, { arrivedAt: at.toISOString() });
+    void logEvent('arrival', `Arrival recorded: ${departure.name}.`);
     setArrivedBackdateOpen(false);
   };
 
@@ -492,6 +507,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   const toggleArrivalStep = async (step: DepartureStep) => {
     void hapticImpact('light');
     const nowIso = new Date().toISOString();
+    let becameDone: 'onTime' | 'late' | null = null;
     await db.departures.where('id').equals(departure.id).modify((d) => {
       const arrivalStepsList = d.arrivalSteps ?? [];
       const s = arrivalStepsList.find((x) => x.id === step.id);
@@ -506,12 +522,19 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
         if (lateMinutes > 0) {
           d.arrivalResult = 'late';
           d.arrivalLateMinutes = lateMinutes;
+          becameDone = 'late';
         } else {
           d.arrivalResult = 'onTime';
           d.arrivalLateMinutes = null;
+          becameDone = 'onTime';
         }
       }
     });
+    // Only the CHECKING half is logged, not the uncheck — an uncheck is a
+    // correction of the previous check, not a new event worth its own trace
+    // line (same "transitions only" rule this module's own header states).
+    if (step.checkedAt === null) void logEvent('arrival', `Arrival step checked: ${step.name}.`);
+    if (becameDone) void logEvent('departure', `Departure done: ${departure.name}, ${becameDone}.`);
     void refreshWidgets();
     void refreshDayGauge();
     // Same trigger rule as handleLeave above ("a departure of an autoLearn
@@ -536,10 +559,13 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   const handleArrivalStepBackdateConfirm = async (at: Date) => {
     void hapticImpact('light');
     const atIso = at.toISOString();
+    let backdatedStepName: string | null = null;
+    let becameDone: 'onTime' | 'late' | null = null;
     await db.departures.where('id').equals(departure.id).modify((d) => {
       const arrivalStepsList = d.arrivalSteps ?? [];
       const s = arrivalStepsList.find((x) => x.checkedAt === null);
       if (!s) return;
+      backdatedStepName = s.name;
       s.checkedAt = atIso;
       if (arrivalStepsList.every((x) => x.checkedAt !== null)) {
         d.status = 'done';
@@ -547,12 +573,16 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
         if (lateMinutes > 0) {
           d.arrivalResult = 'late';
           d.arrivalLateMinutes = lateMinutes;
+          becameDone = 'late';
         } else {
           d.arrivalResult = 'onTime';
           d.arrivalLateMinutes = null;
+          becameDone = 'onTime';
         }
       }
     });
+    if (backdatedStepName !== null) void logEvent('arrival', `Arrival step backdated: ${backdatedStepName}.`);
+    if (becameDone) void logEvent('departure', `Departure done: ${departure.name}, ${becameDone}.`);
     void refreshWidgets();
     void refreshDayGauge();
     if (departure.templateId) void applyAutoLearn(departure.templateId);
@@ -610,6 +640,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     // that's already fired (e.g. slot 0, "Start getting ready.") simply
     // doesn't get rescheduled - nothing to reimplement here.
     await scheduleDepartureAlarms({ ...departure, steps: result.steps, bufferMinutes: result.bufferMinutes });
+    void logEvent('departure', `Departure replanned: ${departure.name}.`);
     void refreshWidgets();
     void refreshDayGauge();
     setReplanOpen(false);
@@ -647,6 +678,7 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     // — the appointment itself just moved, so all four staged alarm times
     // move with it.
     await scheduleDepartureAlarms({ ...departure, appointmentAt: chosenIso, originalAppointmentAt: originalToKeep });
+    void logEvent('departure', `Departure re-anchored: ${departure.name}.`);
     void refreshWidgets();
     void refreshDayGauge();
     setReplanOpen(false);

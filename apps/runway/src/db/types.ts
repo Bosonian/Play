@@ -607,4 +607,66 @@ export interface FieldReport {
   status: FieldReportStatus;
   syncedIssueUrl: string | null;
   syncError: string | null;
+  /**
+   * Activity-log increment: the last 50 lines of the on-device event log
+   * (src/lib/eventLog.ts), snapshotted at SAVE time — `null` when the
+   * "Attach recent activity log" checkbox (ReportProblem.tsx, default OFF)
+   * was unchecked. Stored ON THE REPORT ROW, not re-read from the log at
+   * sync time, deliberately: a report can sit `pending` for a while (no
+   * token configured, or offline) and by the time `syncPendingReports`
+   * finally files it, the live log has moved on — pruned, or full of
+   * unrelated events from whatever Deepak did between filing and syncing.
+   * The log attached to a report must be the log AS IT STOOD when the bug
+   * was fresh in his mind, not whatever the log happens to say later.
+   * Undefined-as-null discipline (this file's usual rule): a report row
+   * saved before this field existed has no `activityLog` property at all,
+   * read everywhere as `activityLog ?? null`.
+   */
+  activityLog: string[] | null;
+}
+
+// --- Activity log (activity-log increment, Dexie v6) ---
+// A local, capped record of what the app DID — not what the user saw, not
+// every render or query, only real transitions (a departure created, an
+// alarm armed, an arrival detected...). Exists because two field bugs this
+// week ("finished task vanished", "left departure stranded when Android
+// killed the app mid-drive") had to be diagnosed by reading code and
+// reconstructing events from memory — there was no record of what actually
+// happened. See src/lib/eventLog.ts for the writer/reader and the
+// "what did the app DO, never what did the user see" rule stated in full.
+
+/** One event's kind — deliberately a flat, closed string union (not a
+ * free-form string) so a typo in a call site's category fails to compile
+ * rather than silently fragmenting the log into two spellings of the same
+ * thing. */
+export type EventCategory =
+  | 'lifecycle'
+  | 'departure'
+  | 'task'
+  | 'sprint'
+  | 'arrival'
+  | 'alarm'
+  | 'gauge'
+  | 'backup'
+  | 'report'
+  | 'navigation';
+
+/**
+ * One row of the activity log. Deliberately flat — `category` plus one
+ * exact sentence, no free-form data blob — for two reasons: a category and
+ * a sentence are enough to trace a bug (this is a log, not a second copy of
+ * the database), and a flat shape means a log call can never accidentally
+ * serialize a whole Departure/Task/Sprint object (with names, destinations,
+ * step lists) into a row nobody meant to keep an extra copy of. `message`
+ * itself DOES sometimes carry a name (e.g. "Out the door: {name}.") — that's
+ * a deliberate, narrow exception (see eventLog.ts's own header comment) for
+ * tracing value, not a loophole for dumping structured data here.
+ */
+export interface RunwayEvent {
+  id: string;
+  /** ISO 8601 datetime, this file's usual timestamp shape — see the header
+   * comment at the top of this file. */
+  at: string;
+  category: EventCategory;
+  message: string;
 }
