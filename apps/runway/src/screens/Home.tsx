@@ -33,6 +33,7 @@ import { computeBufferSuggestions, computeSuggestions } from '../lib/learning';
 import type { BufferSuggestion, Suggestion } from '../lib/learning';
 import { applyAutoLearn } from '../lib/autoLearn';
 import { materializeScheduledDepartures, replaceUntouchedFutureAutoRows } from '../lib/materialize';
+import { strandedArrivalLine, strandedInArrival } from '../lib/strandedArrival';
 import { useNow } from '../hooks/useNow';
 import { refreshWidgets } from '../native/widgets';
 import { refreshDayGauge } from '../lib/dayGaugeRefresh';
@@ -393,6 +394,39 @@ export function Home({ onNavigate }: HomeProps) {
         .where('status')
         .equals('left')
         .filter((departure) => (departure.arrivalSteps ?? []).length === 0)
+        .sortBy('appointmentAt'),
+    [],
+  );
+
+  // Field bug, real user report: "I'm out the door" on a departure WITH
+  // arrival steps, then Android killed the backgrounded app mid-drive. The
+  // filter just above is exactly what stranded him — it exists so an
+  // arrival-steps departure resolves through Runway.tsx's own (more
+  // precise) arrival phase instead of this section's coarse Early/On
+  // time/Late buttons, on the assumption he'd stay on that screen through
+  // the whole arrival phase. A backgrounded app dying mid-drive breaks that
+  // assumption: the departure is still 'left' in Dexie, `leftAt` stamped,
+  // arrival steps still there to finish, but relaunching the app lands on
+  // Home, and nothing here pointed back to it. `strandedInArrival` (new,
+  // src/lib/strandedArrival.ts — pulled out so it's testable without Dexie)
+  // is that missing door. Covers both "hasn't tapped 'I'm at the building'
+  // yet" (`arrivedAt == null`) and "arrived but didn't finish the
+  // checklist" — a checklist half-done when the app died is exactly as
+  // stranded as one that never started. Same soonest-appointment-first sort
+  // as `waitingOnArrival` above, so the oldest stranded run sits at the top.
+  //
+  // These render as tappable Cards ABOVE the plain confirm-button rows
+  // inside the SAME "Waiting on arrival" section (see the JSX below) — same
+  // semantic, "you left, this isn't finished" — rather than a second
+  // section, and this section's "no empty state" rule (see that comment,
+  // unchanged) still applies: a stranded arrival simply doesn't add a row
+  // when there isn't one.
+  const strandedArrivals = useLiveQuery(
+    () =>
+      db.departures
+        .where('status')
+        .equals('left')
+        .filter((departure) => strandedInArrival(departure))
         .sortBy('appointmentAt'),
     [],
   );
@@ -765,13 +799,32 @@ export function Home({ onNavigate }: HomeProps) {
           clears one instantly. Showing "nothing waiting" text when it's
           empty would make an absence into a thing to notice, which is
           exactly the guilt-list shape increment-5 §2 rules out. */}
-      {waitingOnArrival && waitingOnArrival.length > 0 && (
+      {((waitingOnArrival && waitingOnArrival.length > 0) ||
+        (strandedArrivals && strandedArrivals.length > 0)) && (
         <section className="flex flex-col gap-3">
           <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">
             Waiting on arrival
           </h2>
           <div className="flex flex-col gap-2">
-            {waitingOnArrival.map((departure) => (
+            {/* Stranded arrival-steps departures, above the plain
+                confirm-button rows below — these are tappable because
+                there's a real checklist to resume on Runway, not a single
+                Early/On time/Late guess to make right here. */}
+            {strandedArrivals?.map((departure) => (
+              <Card
+                key={departure.id}
+                onClick={() => onNavigate({ name: 'runway', departureId: departure.id })}
+              >
+                <div className="flex items-center justify-between">
+                  <p className="font-medium text-slate-100">{departure.name}</p>
+                  <p className="text-sm tabular-nums text-slate-500">
+                    {formatAppointmentLine(new Date(departure.appointmentAt), now)}
+                  </p>
+                </div>
+                <p className="mt-1 text-sm text-slate-400">{strandedArrivalLine(departure)}</p>
+              </Card>
+            ))}
+            {waitingOnArrival?.map((departure) => (
               <div key={departure.id} className="rounded-xl border border-slate-800/60 bg-surface p-4">
                 <div className="flex items-center justify-between">
                   <p className="font-medium text-slate-100">{departure.name}</p>
