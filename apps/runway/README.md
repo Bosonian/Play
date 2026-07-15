@@ -71,6 +71,8 @@ Timed work without travel — the field report behind this one: "befunden 5 EEGs
 
 **Home's "Tasks" section** sits between Quick capture and Waiting on arrival: up to 3 in-progress (planned or running) tasks, soonest-deadline-first, "+N more" for the rest, each card showing the task's name, progress ("N of M units"), and either a deadline slack line or a plain "Finishes HH:mm" when there's no deadline. **Recently-done tasks are not listed anywhere on Home, and History stays departures-only in v1** — a natural v1.5 extension (a combined or task-specific history view), not built here.
 
+**A task can also be captured as a name alone (anti-rot increment 2, 0.38.0)** — `TaskSetup.tsx`'s "Capture for later" action saves just the name (`status: 'captured'`, no units, no deadline) and parks it on Home's "To arm" shelf, oldest-first, until a tap arms it with the units/minutes/deadline an ordinary task needs. Arming UPDATEs the same row rather than creating a second one, so the shelf time stays honest history instead of being erased the moment the task becomes real.
+
 ## Automatic arrival
 
 The manual "I'm at the building" tap always works, but two more ways to trigger it exist as of 0.23.0 — both stamp `arrivedAt` with the exact same write the button does, so nothing downstream (calibration, History, the arrival checklist itself) can tell which path recorded it. Neither is a replacement for the button: both can fail to fire (network timing, the phone's screen being off, a routine that doesn't run), so it stays as the honest fallback either way.

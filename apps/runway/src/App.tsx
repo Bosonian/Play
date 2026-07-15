@@ -132,7 +132,14 @@ export type Screen =
   // own doc comment on why there's no `taskId` to edit an existing one);
   // `task` is the live screen, TaskRun.tsx, mirroring `runway`'s own
   // `departureId` shape.
-  | { name: 'taskSetup' }
+  //
+  // `capturedTaskId` (anti-rot increment 2, 0.38.0): set only by Home's "To
+  // arm" shelf card tap — puts TaskSetup into PROMOTE mode, arming an
+  // existing name-only 'captured' row (units/deadline UPDATE the same row,
+  // never a second `db.tasks.add`) instead of creating a new one. Still not
+  // a general edit path — see TaskSetup.tsx's own doc comment for why this
+  // is a narrower thing than `departureSetup`'s optional `departureId`.
+  | { name: 'taskSetup'; capturedTaskId?: string }
   | { name: 'task'; taskId: string }
   // Activity-log increment: the on-device event viewer, reached from
   // Settings' "View activity log" TextAction — a pure read-only view, no
@@ -279,7 +286,7 @@ export default function App() {
       case 'report':
         return <ReportProblem fromScreen={screen.fromScreen} onNavigate={setScreen} />;
       case 'taskSetup':
-        return <TaskSetup onNavigate={setScreen} />;
+        return <TaskSetup capturedTaskId={screen.capturedTaskId} onNavigate={setScreen} />;
       case 'task':
         return <TaskRun taskId={screen.taskId} onNavigate={setScreen} />;
       case 'activityLog':

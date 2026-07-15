@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
 import type { TaskUnit, WorkTask } from '../db/types';
@@ -8,6 +8,7 @@ import { NumberField } from '../ui/NumberField';
 import { TextField } from '../ui/TextField';
 import { ScreenHeader } from '../ui/ScreenHeader';
 import { StepNameAutocomplete } from '../ui/StepNameAutocomplete';
+import { TextAction } from '../ui/TextAction';
 import { stepNameLibrary } from '../lib/learning';
 import { taskProjection } from '../lib/taskProjection';
 import { formatSlackLine, formatTime } from '../lib/format';
@@ -23,17 +24,33 @@ const MAX_UNITS = 50;
 
 interface TaskSetupProps {
   onNavigate: (screen: Screen) => void;
+  /**
+   * Anti-rot increment 2 (0.38.0): set only by Home's "To arm" shelf card
+   * tap. Puts this screen into PROMOTE mode — the ordinary Save button
+   * UPDATEs the existing 'captured' row (units/deadline/status, keeping its
+   * original `createdAt` — see handleSave's own comment for why) instead of
+   * adding a new task, and a "Discard capture" action becomes available.
+   * Still not a general edit path (see this component's own doc comment
+   * below) — the only editable row this ever reaches is one in 'captured'
+   * status, never a 'planned'/'running' one.
+   */
+  capturedTaskId?: string;
 }
 
 /**
  * Create-only setup for a Task — "Befunden EEG", 5 units, ~15 min each,
- * optionally due before the 16:00 Übergabe. Deliberately no edit path (the
- * App.tsx Screen union's `taskSetup` case takes no `taskId`, unlike
- * `departureSetup`'s optional one) — v1's scope is create + the live
- * TaskRun screen's own "Abandon this task" exit, not a general editor; see
- * README's "Tasks" section for this as a stated cut, not an oversight.
+ * optionally due before the 16:00 Übergabe. Deliberately no GENERAL edit
+ * path (the App.tsx Screen union's `taskSetup` case takes no `taskId` the
+ * way `departureSetup`'s optional one does) — v1's scope is create + the
+ * live TaskRun screen's own "Abandon this task" exit, not a general editor;
+ * see README's "Tasks" section for this as a stated cut, not an oversight.
+ *
+ * `capturedTaskId` (anti-rot increment 2) is a narrower, deliberate
+ * exception to that cut, not a reversal of it: it only ever arms a
+ * name-only 'captured' row into a real plan, never edits an already-planned
+ * or running task's units/deadline. See `capturedTaskId`'s own prop comment.
  */
-export function TaskSetup({ onNavigate }: TaskSetupProps) {
+export function TaskSetup({ onNavigate, capturedTaskId }: TaskSetupProps) {
   const [name, setName] = useState('');
   const [unitCount, setUnitCount] = useState(1);
   const [minutesPerUnit, setMinutesPerUnit] = useState(15);
@@ -83,6 +100,25 @@ export function TaskSetup({ onNavigate }: TaskSetupProps) {
     [allDepartures, allTemplates, allTasks],
   );
 
+  // Promote mode (anti-rot increment 2): the 'captured' row this screen is
+  // arming, or `undefined` while `capturedTaskId` is unset (ordinary create)
+  // or the read is still in flight. Same "load once, prefill via a mount
+  // effect" pattern DepartureSetup.tsx uses for `existingDeparture` — see
+  // the effect just below.
+  const capturedTask = useLiveQuery(
+    () => (capturedTaskId ? db.tasks.get(capturedTaskId) : undefined),
+    [capturedTaskId],
+  );
+
+  // Prefills the name field ONCE the captured row loads — mirrors
+  // DepartureSetup's own existingDeparture effect. Only `name` is prefilled
+  // (a captured task has no units/minutes/deadline to prefill FROM — that's
+  // capture's whole point, see TaskSetup's capture action below) so the rest
+  // of the form starts exactly as blank as an ordinary create does.
+  useEffect(() => {
+    if (capturedTask) setName(capturedTask.name);
+  }, [capturedTask]);
+
   const errors: string[] = [];
   if (touched) {
     if (name.trim() === '') errors.push('Name this task.');
@@ -130,17 +166,42 @@ export function TaskSetup({ onNavigate }: TaskSetupProps) {
     }));
     const deadlineAt = deadlineTime.trim() !== '' ? nextOccurrenceOf(new Date(), deadlineTime).toISOString() : null;
 
-    const task: WorkTask = {
-      id: crypto.randomUUID(),
-      name: trimmedName,
-      units,
-      deadlineAt,
-      status: 'planned',
-      startedAt: null,
-      createdAt: nowIso,
-    };
-    await db.tasks.add(task);
-    void logEvent('task', `Task created: ${task.name}.`);
+    let task: WorkTask;
+    if (capturedTaskId && capturedTask) {
+      // Promote mode: UPDATE the existing 'captured' row rather than adding
+      // a second one — `createdAt` is deliberately left untouched (not
+      // reset to `nowIso`) so the capture's age stays honest history: "this
+      // sat on the shelf for 6 days before it got armed" is a true and
+      // useful fact, not something arming should erase.
+      task = {
+        ...capturedTask,
+        name: trimmedName,
+        units,
+        deadlineAt,
+        status: 'planned',
+        startedAt: null,
+      };
+      await db.tasks.update(capturedTaskId, {
+        name: trimmedName,
+        units,
+        deadlineAt,
+        status: 'planned',
+        startedAt: null,
+      });
+      void logEvent('task', `Task armed from capture: ${task.name}.`);
+    } else {
+      task = {
+        id: crypto.randomUUID(),
+        name: trimmedName,
+        units,
+        deadlineAt,
+        status: 'planned',
+        startedAt: null,
+        createdAt: nowIso,
+      };
+      await db.tasks.add(task);
+      void logEvent('task', `Task created: ${task.name}.`);
+    }
 
     // Anti-rot increment (0.37.0): mirrors DepartureSetup's own save path —
     // request notification permission lazily, only now that there's
@@ -164,10 +225,48 @@ export function TaskSetup({ onNavigate }: TaskSetupProps) {
     onNavigate({ name: 'task', taskId: task.id });
   }
 
+  // Capture action (anti-rot increment 2): the whole point is skipping the
+  // arming cost, so this deliberately does NOT run the unit-count/minutes/
+  // deadline validation `handleSave` above enforces — a captured task has
+  // none of those fields yet (`units: []`, `deadlineAt: null`) and isn't
+  // pretending to. Only shown on the ordinary create form (`!capturedTask`,
+  // see the render below) — capturing a capture makes no sense.
+  const canCapture = name.trim() !== '';
+
+  async function handleCapture() {
+    if (!canCapture) return;
+    const trimmedName = name.trim();
+    const task: WorkTask = {
+      id: crypto.randomUUID(),
+      name: trimmedName,
+      units: [],
+      deadlineAt: null,
+      status: 'captured',
+      startedAt: null,
+      createdAt: new Date().toISOString(),
+    };
+    await db.tasks.add(task);
+    void logEvent('task', `Task captured: ${task.name}.`);
+    onNavigate({ name: 'home' });
+  }
+
+  // Discard (promote mode only): deletes the captured row outright rather
+  // than abandoning it — 'abandoned' is a status TaskRun/History give real
+  // meaning to (a task that was actually started and then let go); a
+  // capture that never became a real plan has no run to abandon, so the
+  // honest action is removing the row entirely, same as it never existed.
+  async function handleDiscardCapture() {
+    if (!capturedTask) return;
+    if (!window.confirm(`Discard this capture? ${capturedTask.name} is deleted.`)) return;
+    await db.tasks.delete(capturedTask.id);
+    void logEvent('task', `Capture discarded: ${capturedTask.name}.`);
+    onNavigate({ name: 'home' });
+  }
+
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-6 px-4 pb-12 pt-safe-top">
       <div className="pt-8">
-        <ScreenHeader title="New task" onBack={() => onNavigate({ name: 'home' })} />
+        <ScreenHeader title={capturedTaskId ? 'Arm task' : 'New task'} onBack={() => onNavigate({ name: 'home' })} />
       </div>
 
       <div>
@@ -245,6 +344,23 @@ export function TaskSetup({ onNavigate }: TaskSetupProps) {
       )}
 
       <Button onClick={() => void handleSave()}>Save task</Button>
+
+      {/* Capture action (anti-rot increment 2): ordinary create form only —
+          arming an existing capture already has its own commitment (Save
+          task, above); offering "Capture for later" too would just be a
+          second way to defer the same row. */}
+      {!capturedTaskId && (
+        <TextAction onClick={() => void handleCapture()} disabled={!canCapture} className="self-start disabled:opacity-40">
+          Capture for later
+        </TextAction>
+      )}
+
+      {/* Promote mode only — deleting the row this screen exists to arm. */}
+      {capturedTaskId && capturedTask && (
+        <TextAction onClick={() => void handleDiscardCapture()} className="self-start">
+          Discard capture
+        </TextAction>
+      )}
     </div>
   );
 }

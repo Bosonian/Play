@@ -221,3 +221,24 @@ export function taskDeadlineResult(
   }
   return { kind: 'overshot', minutes: Math.ceil(-marginMs / 60_000) };
 }
+
+/**
+ * Home's "To arm" shelf (anti-rot increment 2, 0.38.0): every 'captured'
+ * task, oldest first. Oldest-first, not newest — the longest-parked capture
+ * is the one that most needs eyes on it before it quietly becomes exactly
+ * the kind of dateless, invisible obligation this whole increment exists to
+ * prevent (see CLAUDE.md's binding "state facts without shame" rule: this
+ * function doesn't compute a day-count or otherwise editorialize, it just
+ * orders by the one honest timestamp a capture has).
+ *
+ * Deliberately UNCAPPED — Home.tsx applies its own MAX_VISIBLE_CAPTURED
+ * "+N more" cap at render time, the same "cap the rendered list, don't cap
+ * the data" split `collapsedUpcoming`/`hiddenUpcomingCount` already use
+ * there, so this pure function's own count is always the true total, not a
+ * pre-truncated one a caller might mistake for the whole shelf.
+ */
+export function capturedShelf(tasks: WorkTask[]): WorkTask[] {
+  return tasks
+    .filter((task) => task.status === 'captured')
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  capturedShelf,
   deriveTaskUnitActuals,
   lastCheckedUnitId,
   taskDeadlineResult,
@@ -393,5 +394,47 @@ describe('taskDeadlineResult', () => {
     delete legacy.deadlineAt;
 
     expect(taskDeadlineResult(legacy as typeof task)).toBeNull();
+  });
+});
+
+describe('capturedShelf', () => {
+  function makeCapturedTask(overrides: Partial<WorkTask> = {}): WorkTask {
+    return {
+      id: 'task-1',
+      name: 'Send PhD documents',
+      units: [],
+      deadlineAt: null,
+      status: 'captured',
+      startedAt: null,
+      createdAt: '2026-07-09T08:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  it('returns only tasks with status "captured"', () => {
+    const captured = makeCapturedTask({ id: 'c1' });
+    const planned = makeCapturedTask({ id: 'p1', status: 'planned', units: [{ id: 'u1', name: 'x', plannedMinutes: 5, checkedAt: null }] });
+    const done = makeCapturedTask({ id: 'd1', status: 'done' });
+    const abandoned = makeCapturedTask({ id: 'a1', status: 'abandoned' });
+
+    expect(capturedShelf([captured, planned, done, abandoned])).toEqual([captured]);
+  });
+
+  it('sorts oldest createdAt first — the longest-parked capture needs eyes most', () => {
+    const newer = makeCapturedTask({ id: 'newer', createdAt: '2026-07-10T08:00:00.000Z' });
+    const older = makeCapturedTask({ id: 'older', createdAt: '2026-07-01T08:00:00.000Z' });
+    const middle = makeCapturedTask({ id: 'middle', createdAt: '2026-07-05T08:00:00.000Z' });
+
+    expect(capturedShelf([newer, older, middle]).map((t) => t.id)).toEqual(['older', 'middle', 'newer']);
+  });
+
+  it('returns [] for an empty task list', () => {
+    expect(capturedShelf([])).toEqual([]);
+  });
+
+  it('ignores every non-captured status, even when it is the only task present', () => {
+    const running = makeCapturedTask({ id: 'r1', status: 'running' });
+
+    expect(capturedShelf([running])).toEqual([]);
   });
 });

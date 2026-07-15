@@ -384,7 +384,28 @@ export interface TaskUnit {
   estimateSource?: 'manual' | 'learned';
 }
 
-export type TaskStatus = 'planned' | 'running' | 'done' | 'abandoned';
+/**
+ * 'captured' (anti-rot increment 2, 0.38.0): a name-only task parked on
+ * Home's "To arm" shelf, awaiting the units/minutes/deadline that turn it
+ * into a real plan — `units` is `[]`, `deadlineAt` and `startedAt` are both
+ * `null`, written only by TaskSetup's capture action (see that screen's own
+ * doc comment). The ONE status that never reaches TaskRun.tsx: there's
+ * nothing live to run (no units, no start-by alarm) until TaskSetup's
+ * promote mode fills in the missing pieces and flips this to 'planned' —
+ * every other status transition in this app (planned -> running -> done/
+ * abandoned) still applies unchanged once that happens.
+ *
+ * `status` is already an indexed Dexie field (db.ts's `tasks: 'id, status,
+ * createdAt'`), so adding this VALUE needs no version() bump — only a new
+ * indexed FIELD would (see db.ts's own version() comments for that
+ * distinction). Every existing status filter across the app (Home's
+ * planned/running queries, dayGauge.ts, History's done/abandoned query,
+ * learning.ts's naturalTasks/isEligibleTaskRun, restoreBackup's re-arm
+ * sweep) already names its statuses explicitly rather than reading
+ * "everything except X" — verified during this increment, listed in
+ * CHANGELOG.md, none needed a code change to keep excluding 'captured'.
+ */
+export type TaskStatus = 'planned' | 'running' | 'done' | 'abandoned' | 'captured';
 
 /**
  * A block of N identical units of timed work with no travel component. Runs

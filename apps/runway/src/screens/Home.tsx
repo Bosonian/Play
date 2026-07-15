@@ -15,7 +15,7 @@ import {
   formatSlackLine,
   formatTime,
 } from '../lib/format';
-import { taskProjection } from '../lib/taskProjection';
+import { capturedShelf, taskProjection } from '../lib/taskProjection';
 import {
   cancelDepartureAlarms,
   getExactAlarmStatus,
@@ -96,6 +96,12 @@ const MAX_VISIBLE_UPCOMING = 5;
  * just a smaller number: unlike a week of scheduled departures, a resident
  * realistically has a small handful of task blocks in flight at once. */
 const MAX_VISIBLE_TASKS = 3;
+
+/** Cap on "To arm" shelf cards shown at once (anti-rot increment 2,
+ * 0.38.0) — same "+N more" pattern and same small number as MAX_VISIBLE_TASKS
+ * above: a shelf of half-formed captures is meant to stay small enough to
+ * scan at a glance, not become a second backlog to manage. */
+const MAX_VISIBLE_CAPTURED = 3;
 
 /** "Not now" dismissals, scoped to templateId+stepName. A module-level Set
  * (not component state) so a dismissal survives navigating away from Home
@@ -301,6 +307,21 @@ export function Home({ onNavigate }: HomeProps) {
   }, [tasksInProgress]);
   const visibleTasks = sortedTasks?.slice(0, MAX_VISIBLE_TASKS);
   const hiddenTasksCount = Math.max(0, (sortedTasks?.length ?? 0) - MAX_VISIBLE_TASKS);
+
+  // Anti-rot increment 2 (0.38.0): "To arm" shelf — name-only tasks parked
+  // by TaskSetup's capture action, waiting for units/minutes/deadline.
+  // `capturedShelf` (src/lib/taskProjection.ts) is the pure filter+sort
+  // (oldest first — see its own doc comment for why oldest, not newest);
+  // this component's own job is only the render-time cap, same
+  // "cap the rendered list, don't cap the data" split `collapsedUpcoming`/
+  // `visibleUpcomingDepartures` already use above.
+  const capturedTasksRaw = useLiveQuery(() => db.tasks.where('status').equals('captured').toArray(), []);
+  const shelvedTasks = useMemo(
+    () => (capturedTasksRaw ? capturedShelf(capturedTasksRaw) : undefined),
+    [capturedTasksRaw],
+  );
+  const visibleCapturedTasks = shelvedTasks?.slice(0, MAX_VISIBLE_CAPTURED);
+  const hiddenCapturedCount = Math.max(0, (shelvedTasks?.length ?? 0) - MAX_VISIBLE_CAPTURED);
 
   // templateId -> Template, for the "Repeats Mon-Fri . 08:00" line below.
   // `templates` is already fetched (top of this component) for the
@@ -825,6 +846,36 @@ export function Home({ onNavigate }: HomeProps) {
           New task
         </Button>
       </div>
+
+      {/* Anti-rot increment 2 (0.38.0): "To arm" shelf. Sits right after the
+          create-entry-point row and ahead of Tasks — a capture is the
+          shortest-possible commitment (a name, nothing else), so the shelf
+          that holds it reads as the FIRST stop after "I want to remember
+          this," not a buried secondary list. No empty state (same "an
+          absence is not a thing to comment on" rule Waiting on arrival's
+          own comment states below) — CLAUDE.md's defaults-lean-smaller rule
+          applies directly: a shelf with nothing on it says nothing worth
+          saying. The card's one caption line is a bare date, never a day
+          count — "Captured 2026-07-09." is a fact; "Captured 6 days ago."
+          is a countdown toward guilt, exactly what CLAUDE.md's "state facts
+          without shame" rule for this shelf rules out. Colour is plain
+          text-slate-500 throughout, the same quiet secondary tone every
+          other card caption on this screen uses — never red, regardless of
+          how long a capture has sat here. */}
+      {visibleCapturedTasks && visibleCapturedTasks.length > 0 && (
+        <section className="flex flex-col gap-3">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">To arm</h2>
+          <div className="flex flex-col gap-2">
+            {visibleCapturedTasks.map((task) => (
+              <Card key={task.id} onClick={() => onNavigate({ name: 'taskSetup', capturedTaskId: task.id })}>
+                <p className="text-xl font-medium text-slate-100">{task.name}</p>
+                <p className="mt-1 text-sm text-slate-500">Captured {formatDateDisplay(new Date(task.createdAt))}.</p>
+              </Card>
+            ))}
+          </div>
+          {hiddenCapturedCount > 0 && <p className="text-sm text-slate-500">+{hiddenCapturedCount} more</p>}
+        </section>
+      )}
 
       {/* Tasks increment: timed work without travel, run on the same live-
           projection/check-off machinery as a departure. Creation now lives
