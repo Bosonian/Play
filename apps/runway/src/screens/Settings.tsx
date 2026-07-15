@@ -30,6 +30,7 @@ import {
   setWatchedDevice,
   type BondedDevice,
 } from '../native/bluetooth';
+import { carChooserMessage } from '../lib/transit';
 
 interface SettingsProps {
   onNavigate: (screen: Screen) => void;
@@ -349,10 +350,12 @@ export function Settings({ onNavigate }: SettingsProps) {
   const hasWatchedDevice = watchedDeviceAddress !== '';
 
   // Chooser is local, transient UI state — not persisted, not shown again
-  // once a car is chosen or the flow is cancelled. `carChooserError` covers
-  // both "permission wasn't granted" and "nothing paired to choose from",
-  // shown as one quiet line rather than two separate error states — Deepak
-  // doesn't need to know which; he needs to know why the list didn't open.
+  // once a car is chosen or the flow is cancelled. `carChooserError` now
+  // holds one of FOUR distinct messages (see carChooserMessage in
+  // src/lib/transit.ts for why this used to be one wrong sentence covering
+  // all four, and which field bug that caused) rather than a single
+  // catch-all string — the message text itself still decides what Deepak
+  // sees; this state just stopped hard-coding which text that is.
   const [carChooserOpen, setCarChooserOpen] = useState(false);
   const [bondedDevices, setBondedDevices] = useState<BondedDevice[]>([]);
   const [carChooserError, setCarChooserError] = useState<string | null>(null);
@@ -360,13 +363,12 @@ export function Settings({ onNavigate }: SettingsProps) {
   async function openCarChooser() {
     setCarChooserError(null);
     const granted = await ensureBluetoothPermission();
-    if (!granted) {
-      setCarChooserError('Bluetooth permission was not granted.');
-      return;
-    }
-    const devices = await getBondedDevices();
-    if (devices.length === 0) {
-      setCarChooserError('No paired Bluetooth devices found. Pair your car in Android Settings first.');
+    const { devices, permitted, radio } = await getBondedDevices();
+    void logEvent('transit', `Car chooser: permitted=${permitted}, radio=${radio}, ${devices.length} devices.`);
+
+    const message = carChooserMessage(granted, permitted, radio, devices.length);
+    if (message) {
+      setCarChooserError(message);
       return;
     }
     setBondedDevices(devices);
@@ -383,7 +385,10 @@ export function Settings({ onNavigate }: SettingsProps) {
     await db.settings.put({ key: WATCHED_DEVICE_ADDRESS_SETTING, value: device.address });
     await db.settings.put({ key: WATCHED_DEVICE_NAME_SETTING, value: device.name || device.address });
     setCarChooserOpen(false);
-    void logEvent('transit', `Car Bluetooth watching enabled: ${device.name || device.address}.`);
+    // Exact text per 0.36.1's field-bug fix spec — was "Car Bluetooth
+    // watching enabled: {name}." One line per choose, not two: this same
+    // event doesn't need a second, differently-worded log line.
+    void logEvent('transit', `Watching car: ${device.name || device.address}.`);
   }
 
   async function stopWatchingCar() {
@@ -555,13 +560,28 @@ export function Settings({ onNavigate }: SettingsProps) {
           </div>
         )}
 
-        {!hasWatchedDevice && !carChooserOpen && (
+        {!hasWatchedDevice && !carChooserOpen && !carChooserError && (
           <TextAction onClick={() => void openCarChooser()} className="self-start">
             Choose car
           </TextAction>
         )}
 
-        {carChooserError && <p className="text-sm text-amber-400">{carChooserError}</p>}
+        {/* One of four distinct messages (src/lib/transit.ts's
+            carChooserMessage) rather than the single wrong catch-all this
+            replaced — see that function's doc comment for the field bug.
+            "Try again" re-runs the whole openCarChooser flow (permission +
+            radio + device read again, since any of those three could have
+            changed); "Cancel" just dismisses the message back to the plain
+            "Choose car" prompt without retrying anything. */}
+        {!hasWatchedDevice && carChooserError && (
+          <div className="flex flex-col gap-2">
+            <p className="text-sm text-amber-400">{carChooserError}</p>
+            <div className="flex gap-4">
+              <TextAction onClick={() => void openCarChooser()}>Try again</TextAction>
+              <TextAction onClick={() => setCarChooserError(null)}>Cancel</TextAction>
+            </div>
+          </div>
+        )}
 
         <p className="text-sm text-slate-500">
           Drives are measured from your car&apos;s Bluetooth connect to disconnect and refine

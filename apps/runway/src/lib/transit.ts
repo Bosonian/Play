@@ -273,3 +273,44 @@ export function transitMeasurementSummaries(measurementsByName: TransitMeasureme
   summaries.sort((a, b) => b.runCount - a.runCount || a.name.localeCompare(b.name));
   return summaries;
 }
+
+/**
+ * Field bug (0.36.1): Settings' "Choose car" once collapsed FOUR distinct
+ * failure causes — permission not actually granted, the Bluetooth radio
+ * being off, a read that failed outright, and a genuinely empty bond list —
+ * into one message, "No paired Bluetooth devices found. Pair your car in
+ * Android Settings first." A user with a paired car and permission granted
+ * hit exactly this: the radio was off at that moment, and
+ * `BluetoothAdapter.getBondedDevices()` is documented to return an empty set
+ * whenever the radio isn't on (see BluetoothBridgePlugin.java's own comment)
+ * — indistinguishable, from `devices.length` alone, from "nothing is
+ * paired." This function picks the one message that names the actual cause.
+ *
+ * Pulled out as pure, Dexie/Capacitor-free logic (this file's existing
+ * shape) rather than left inline in Settings.tsx, so the branch order itself
+ * — permission before radio before read-failure before empty-list — is
+ * something a test locks down, not something a future edit to Settings.tsx
+ * can silently reorder.
+ *
+ * Returns `null` when the device list should be shown instead of a message.
+ */
+export function carChooserMessage(
+  granted: boolean,
+  permitted: boolean,
+  radio: 'on' | 'off' | 'unavailable' | 'error',
+  deviceCount: number,
+): string | null {
+  if (!granted || !permitted) {
+    return 'Bluetooth permission was not granted. Allow Nearby devices for Runway in Android settings.';
+  }
+  if (radio === 'off') {
+    return 'Bluetooth is turned off. Turn it on, then choose again.';
+  }
+  if (radio === 'unavailable' || radio === 'error') {
+    return 'The paired-device list could not be read. Try again, and report it if it persists.';
+  }
+  if (deviceCount === 0) {
+    return 'No paired Bluetooth devices found. Pair your car in Android Settings first.';
+  }
+  return null;
+}

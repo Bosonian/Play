@@ -96,25 +96,48 @@ public class BluetoothBridgePlugin extends Plugin {
     }
 
     /**
-     * Resolves to `{ devices: [{name, address}] }` — the phone's already-
-     * paired ("bonded") devices, for Settings' "Choose car" list. Empty
-     * array, never a rejection, when permission is missing, the adapter is
-     * unavailable, or any Bluetooth API call throws (a small number of OEM
-     * builds are known to throw SecurityException from getBondedDevices()/
-     * getName() even when getPermissionState reports GRANTED — a documented
-     * Android inconsistency, not something this method can fully rule out,
-     * so the try/catch is real defense, not ceremony).
+     * Resolves to `{ devices: [{name, address}], permitted: boolean, radio:
+     * 'on'|'off'|'unavailable'|'error' }` — the phone's already-paired
+     * ("bonded") devices, for Settings' "Choose car" list, PLUS enough
+     * diagnostic shape for Settings to say which of four different things
+     * went wrong instead of collapsing them all into one wrong sentence.
+     *
+     * THE BUG THIS FIELD EXISTS TO FIX (field report, 0.36.1): a user with a
+     * paired car and Nearby-devices permission granted still saw "No paired
+     * Bluetooth devices found." `BluetoothAdapter.getBondedDevices()` is
+     * documented (developer.android.com) to return an EMPTY SET whenever the
+     * adapter is not `STATE_ON` — a car radio toggled off at that exact
+     * moment produces precisely this false "nothing paired" read, with the
+     * bonding data itself untouched. `devices` alone can never distinguish
+     * that from a genuinely empty bond list, so this method now reports the
+     * adapter's on/off state (and permission, and unavailable/error)
+     * alongside it, and never resolves `devices` and `radio` in a way that
+     * lets the caller confuse "empty because off" with "empty because
+     * nothing is paired."
      */
     @PluginMethod
     public void getBondedDevices(PluginCall call) {
         JSArray devices = new JSArray();
+        String radio = "unavailable";
 
         boolean permitted = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || getPermissionState(BLUETOOTH_ALIAS) == PermissionState.GRANTED;
         if (permitted) {
             try {
                 BluetoothManager manager = (BluetoothManager) getContext().getSystemService(Context.BLUETOOTH_SERVICE);
                 BluetoothAdapter adapter = manager != null ? manager.getAdapter() : null;
-                if (adapter != null) {
+                if (adapter == null) {
+                    radio = "unavailable";
+                } else if (!adapter.isEnabled()) {
+                    // isEnabled() reads cached adapter state and needs no
+                    // Bluetooth permission at all on any API level — safe to
+                    // call before/without BLUETOOTH_CONNECT. Radio off is
+                    // exactly the documented getBondedDevices()-returns-
+                    // empty-set condition cited above, so we stop here
+                    // rather than calling it and reporting a misleading
+                    // "0 devices, radio unknown."
+                    radio = "off";
+                } else {
+                    radio = "on";
                     Set<BluetoothDevice> bonded = adapter.getBondedDevices();
                     for (BluetoothDevice device : bonded) {
                         String name = device.getName();
@@ -125,13 +148,21 @@ public class BluetoothBridgePlugin extends Plugin {
                     }
                 }
             } catch (SecurityException e) {
-                // Empty list is the correct fallback — see this method's own
-                // doc comment above.
+                // A small number of OEM builds are known to throw
+                // SecurityException from getBondedDevices()/getName() even
+                // when getPermissionState reports GRANTED — a documented
+                // Android inconsistency, not something this method can fully
+                // rule out. Keep whatever devices were already read before
+                // the throw (normally none) and report 'error' so Settings
+                // shows "could not be read" rather than "none paired."
+                radio = "error";
             }
         }
 
         JSObject result = new JSObject();
         result.put("devices", devices);
+        result.put("permitted", permitted);
+        result.put("radio", radio);
         call.resolve(result);
     }
 

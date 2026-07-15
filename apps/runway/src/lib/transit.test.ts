@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Departure, Template } from '../db/types';
 import {
+  carChooserMessage,
   flattenMeasurements,
   matchTransitsToDepartures,
   MIN_DRIVE_MINUTES,
@@ -257,5 +258,45 @@ describe('transitMeasurementSummaries', () => {
       Charlie: [{ minutes: 10, atMs: 1 }, { minutes: 12, atMs: 2 }],
     };
     expect(transitMeasurementSummaries(byName).map((s) => s.name)).toEqual(['Charlie', 'Alpha', 'Bravo']);
+  });
+});
+
+describe('carChooserMessage', () => {
+  it('names a permission problem when the ensurePermission call itself was not granted, even if radio+permitted look fine', () => {
+    expect(carChooserMessage(false, true, 'on', 3)).toBe(
+      'Bluetooth permission was not granted. Allow Nearby devices for Runway in Android settings.',
+    );
+  });
+
+  it('names a permission problem when getBondedDevices reports permitted=false', () => {
+    expect(carChooserMessage(true, false, 'unavailable', 0)).toBe(
+      'Bluetooth permission was not granted. Allow Nearby devices for Runway in Android settings.',
+    );
+  });
+
+  it('names the radio-off case ahead of the device count — the documented getBondedDevices-empty-when-off bug this exists to fix', () => {
+    expect(carChooserMessage(true, true, 'off', 0)).toBe('Bluetooth is turned off. Turn it on, then choose again.');
+  });
+
+  it('names a read failure for an unavailable adapter', () => {
+    expect(carChooserMessage(true, true, 'unavailable', 0)).toBe(
+      'The paired-device list could not be read. Try again, and report it if it persists.',
+    );
+  });
+
+  it('names a read failure for a caught SecurityException', () => {
+    expect(carChooserMessage(true, true, 'error', 0)).toBe(
+      'The paired-device list could not be read. Try again, and report it if it persists.',
+    );
+  });
+
+  it('falls back to the genuinely-empty-list message only once permission and radio are both fine', () => {
+    expect(carChooserMessage(true, true, 'on', 0)).toBe(
+      'No paired Bluetooth devices found. Pair your car in Android Settings first.',
+    );
+  });
+
+  it('returns null — show the list — once permission, radio, and device count all check out', () => {
+    expect(carChooserMessage(true, true, 'on', 2)).toBeNull();
   });
 });

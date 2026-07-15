@@ -18,9 +18,26 @@ export interface NativeTransitEvent {
   atMs: number;
 }
 
+/**
+ * Radio state as read by the native side's `adapter.isEnabled()` check —
+ * see BluetoothBridgePlugin.java's getBondedDevices doc comment for why this
+ * exists: `getBondedDevices()` is documented to return an empty set whenever
+ * the radio isn't 'on', which without this field is indistinguishable from
+ * "nothing is actually paired." 'unavailable' covers no adapter at all (rare
+ * hardware/emulator case); 'error' covers a SecurityException some OEM
+ * builds throw even when permission is granted.
+ */
+export type BluetoothRadioState = 'on' | 'off' | 'unavailable' | 'error';
+
+export interface BondedDevicesResult {
+  devices: BondedDevice[];
+  permitted: boolean;
+  radio: BluetoothRadioState;
+}
+
 interface BluetoothBridgePlugin {
   ensurePermission(): Promise<{ granted: boolean }>;
-  getBondedDevices(): Promise<{ devices: BondedDevice[] }>;
+  getBondedDevices(): Promise<BondedDevicesResult>;
   setWatchedDevice(options: { address: string }): Promise<void>;
   clearWatchedDevice(): Promise<void>;
   readTransitEvents(): Promise<{ events: NativeTransitEvent[] }>;
@@ -49,18 +66,20 @@ export async function ensureBluetoothPermission(): Promise<boolean> {
 
 /**
  * The phone's already-paired ("bonded") Bluetooth devices — the candidate
- * list Settings' "Choose car" flow renders as rows to pick from. Empty
- * array (never throws) on web, missing permission, or any native error —
- * the caller has no separate error state to render for this list, so
- * "nothing to choose from" is the one signal it needs.
+ * list Settings' "Choose car" flow renders as rows to pick from — PLUS
+ * `permitted`/`radio` so the caller can tell an empty list apart from a
+ * radio that's off, a permission that isn't actually granted, or a read
+ * that failed outright (see BondedDevicesResult's own doc comment). Never
+ * throws: web and any native error both resolve the same "nothing to show,
+ * radio state unknown" shape, matching this file's every-other-function
+ * never-throw contract.
  */
-export async function getBondedDevices(): Promise<BondedDevice[]> {
-  if (!Capacitor.isNativePlatform()) return [];
+export async function getBondedDevices(): Promise<BondedDevicesResult> {
+  if (!Capacitor.isNativePlatform()) return { devices: [], permitted: false, radio: 'unavailable' };
   try {
-    const result = await BluetoothBridge.getBondedDevices();
-    return result.devices;
+    return await BluetoothBridge.getBondedDevices();
   } catch {
-    return [];
+    return { devices: [], permitted: false, radio: 'unavailable' };
   }
 }
 
