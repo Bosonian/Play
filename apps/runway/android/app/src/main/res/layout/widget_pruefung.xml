@@ -1,17 +1,39 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Widgets increment (Runway 0.10.0): the Prüfung home-screen widget's
-     layout. Three plain TextViews, no progress bars or icons — same "plain
-     numbers, no bars" reasoning as the app's own topic list
-     (RUNWAY_PRUFUNG_PLAN.md §4.1). Rendered by
-     PruefungWidgetProvider.java; colours for widget_line1 are set
-     programmatically there (calm/tight/late), everything else here is
-     static.
+<!-- Widgets increment (Runway 0.10.0); progress bar polish (0.40.0). The
+     Prüfung home-screen widget's layout: the ready-by line, then a thin
+     weekly progress bar (below), then the "This week ..." line, then the
+     exam anchor line, smallest and dimmest, last. Rendered by
+     PruefungWidgetProvider.java; colours for widget_line1 and which of the
+     two progress-bar views is shown are set programmatically there
+     (calm/tight/late for the text, sky-vs-emerald for the bar), everything
+     else here is static.
+
+     0.40.0: this used to be "three plain TextViews, no progress bars or
+     icons" (RUNWAY_PRUFUNG_PLAN.md §4.1's "a bar at 8% is demoralising"
+     rule) — but that rule is about the PER-TOPIC coverage bars the app
+     deliberately never draws, not about the app's ONE sanctioned exception:
+     ExamOverview.tsx's weekly bar, which fills across days and resets every
+     Monday rather than accumulating into a months-long low-percentage
+     indictment (see that screen's own comment). This widget mirrors that
+     one bar, and only that one — the topic list still stays plain numbers
+     on the live screen, unchanged.
+
+     Two ProgressBar views (widget_progress_sky / widget_progress_emerald),
+     layered in a FrameLayout at the same position rather than one bar whose
+     colour is changed at runtime — RemoteViews cannot reliably retint a
+     drawable's tint across every API level this app's minSdk spans, so
+     "two pre-coloured variants, toggle which one is visible" is the robust
+     RemoteViews idiom here (see PruefungWidgetProvider.java's own comment
+     on this same point). Both are given android:progress="0" here so the
+     widget-picker preview (m1 below) shows an honest EMPTY bar, matching
+     this increment's "render honestly at zero" rule rather than looking
+     falsely progressed in the picker.
 
      m1: the android:text values below are visible ONLY in the widget
      picker's preview (no previewImage is set — see widget_pruefung_info.xml
      — so the picker falls back to rendering this initialLayout as-is).
      PruefungWidgetProvider.onUpdate ALWAYS overwrites every one of these
-     TextViews the moment the widget is actually placed on a home screen;
+     views the moment the widget is actually placed on a home screen;
      nothing below is ever shown to Deepak on a real, placed widget. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_root"
@@ -32,24 +54,56 @@
         android:maxLines="1"
         android:text="Ready by 14 Dec" />
 
-    <TextView
-        android:id="@+id/widget_line2"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="2dp"
-        android:textSize="13sp"
-        android:textColor="#94A3B8"
-        android:maxLines="1"
-        android:text="Exam Nov 2026" />
+    <!-- Weekly progress bar row (0.40.0) — see this file's own header
+         comment. match_parent width so it reads as a full-width tactical
+         surface, not a token sliver; 6dp height per the increment spec,
+         comfortably tappable-looking without dominating a 64dp-tall
+         widget. -->
+    <FrameLayout
+        android:id="@+id/widget_progress_row"
+        android:layout_width="match_parent"
+        android:layout_height="6dp"
+        android:layout_marginTop="6dp">
+
+        <ProgressBar
+            android:id="@+id/widget_progress_sky"
+            style="@android:style/Widget.ProgressBar.Horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:max="100"
+            android:progress="0"
+            android:progressDrawable="@drawable/progress_sky" />
+
+        <ProgressBar
+            android:id="@+id/widget_progress_emerald"
+            style="@android:style/Widget.ProgressBar.Horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:max="100"
+            android:progress="0"
+            android:visibility="gone"
+            android:progressDrawable="@drawable/progress_emerald" />
+
+    </FrameLayout>
 
     <TextView
         android:id="@+id/widget_line3"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="2dp"
-        android:textSize="13sp"
+        android:layout_marginTop="6dp"
+        android:textSize="12sp"
         android:textColor="#94A3B8"
         android:maxLines="1"
-        android:text="This week 1.5 of 6.5 h" />
+        android:text="This week: 0.0 of 18.4 h" />
+
+    <TextView
+        android:id="@+id/widget_line2"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:textSize="11sp"
+        android:textColor="#64748B"
+        android:maxLines="1"
+        android:text="Exam Nov 2026" />
 
 </LinearLayout>

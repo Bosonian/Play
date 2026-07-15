@@ -5,13 +5,16 @@
 
      minWidth/minHeight: sized for a nominal 3-cell-wide, 1-cell-tall
      placement. The standard cell-size formula ((70 × n) − 30 dp) gives
-     180dp × 40dp for 3×1, but 40dp is tight for three stacked text lines
-     (18sp + 13sp + 13sp, plus padding) — bumped minHeight to 64dp so all
-     three lines have room to render without clipping on a real launcher
-     grid, which is usually a bit more generous than the strict formula
-     anyway. A judgment call, not a spec number — untested against a real
-     launcher (no Android SDK/emulator available in this environment; see
-     the increment's own "CI will prove" list).
+     180dp × 40dp for 3×1, but 40dp was already tight for three stacked
+     text lines and got bumped to 64dp (see git history for the original
+     3-line reasoning). Progress bar polish (0.40.0) adds a fourth row (the
+     6dp bar plus its own top margin) between line1 and the two remaining
+     text lines, so minHeight is bumped again here, to 84dp, using the same
+     "give every row room, real launcher grids tend to be a bit more
+     generous than the strict formula anyway" reasoning — still a judgment
+     call, not a spec number, and still untested against a real launcher
+     (no Android SDK/emulator available in this environment; see the
+     increment's own "CI will prove" list).
 
      updatePeriodMillis: 6 hours. The widget's whole display is a 1:1
      calendar slide (m3: readyDayEpochMs slid forward by however many whole
@@ -34,7 +37,7 @@
      needed for it. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:minWidth="180dp"
-    android:minHeight="64dp"
+    android:minHeight="84dp"
     android:updatePeriodMillis="21600000"
     android:initialLayout="@layout/widget_pruefung"
     android:description="@string/widget_pruefung_description"

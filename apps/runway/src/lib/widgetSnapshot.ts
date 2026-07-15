@@ -6,8 +6,9 @@ import { PAST_DEPARTURE_THRESHOLD_MS } from './departureThreshold';
 import { computeProjection, computeStartBy } from './projection';
 import { taskStartBy } from './taskProjection';
 
-// Widgets increment (Runway 0.10.0 W1, 0.11.0 W2, 0.39.0 W3): the JSON shape
-// written to Android SharedPreferences and read by the three native widgets
+// Widgets increment (Runway 0.10.0 W1, 0.11.0 W2, 0.39.0 W3, 0.40.0 progress
+// bar): the JSON shape written to Android SharedPreferences and read by the
+// three native widgets
 // (android/app/src/main/java/de/bosonian/runway/PruefungWidgetProvider.java,
 // DepartureWidgetProvider.java, and TaskWidgetProvider.java).
 //
@@ -21,6 +22,10 @@ import { taskStartBy } from './taskProjection';
 // any widget renders verbatim (anchorLabel, weekLine, nameLine,
 // appointmentLine, planLine, and W3's nameLine/dueLine/countsLine) is built
 // here too, so a copy change never needs a matching native change.
+// weekProgressPercent/weekAtTarget (0.40.0) extend this same rule to the
+// Prüfung widget's progress bar: the ratio and the emerald/sky decision are
+// both computed here, never in PruefungWidgetProvider.java, which only
+// picks which of two pre-coloured ProgressBar views to show.
 
 /** Same tight/late threshold the app's own STATE_TEXT (ExamOverview.tsx)
  * switches colour at — passed through in the snapshot rather than hardcoded
@@ -85,8 +90,13 @@ export interface PruefungWidgetData {
    * formatExamAnchorLine so the widget never needs its own date-formatting
    * rules. */
   anchorLabel: string;
-  /** "This week 1.5 of 6.5 h" (or a shorter form when there's no meaningful
-   * weekly target right now — see buildWeekLine below) — prebaked. */
+  /** "This week: 1.5 of 6.5 h" (or a shorter form when there's no meaningful
+   * weekly target right now — see buildWeekLine below) — prebaked. The
+   * colon (0.40.0) was missing from this line even though format.ts's own
+   * longer prose version of the same fact ("Ready by ... needs ... This
+   * week: x of y.") has always had one — an inconsistency noticed while
+   * building the progress-bar polish, fixed here rather than left as
+   * "close enough". */
   weekLine: string;
   /** Start-of-week (Monday-start, CLAUDE.md's European-default rule) this
    * weekLine describes. The widget hides weekLine once the real device
@@ -94,6 +104,24 @@ export interface PruefungWidgetData {
    * should stop claiming to describe "this week" once it no longer does. */
   weekStartEpochMs: number;
   stateThresholdDays: number;
+  /** Progress polish (0.40.0): the SAME ratio ExamOverview.tsx's weekly bar
+   * fills to — `Math.min(100, (thisWeekHours / requiredPaceHoursPerWeek) *
+   * 100)` — but floored to a whole int and prebaked here, because
+   * RemoteViews.setProgressBar wants a plain int and this file's own
+   * ARCHITECTURE RULE keeps every bit of arithmetic on the TS side, never
+   * in PruefungWidgetProvider.java. 0 when there's no real weekly target to
+   * compare against (requiredPaceHoursPerWeek null or <= 0 — the same
+   * condition buildWeekLine's own null branch checks) — an honest empty
+   * bar, not a hidden one; see the widget's own "render at zero" rule. */
+  weekProgressPercent: number;
+  /** True once this week's logged hours have met or passed the required
+   * pace — mirrors ExamOverview.tsx's own emerald-vs-sky decision
+   * (`thisWeekHours >= projection.requiredPaceHoursPerWeek`) exactly, so
+   * this widget's bar colour can never drift out of sync with the live
+   * screen's. The native side reads this to pick which of the two
+   * pre-coloured ProgressBar views to show (see
+   * PruefungWidgetProvider.java) — it makes no colour decision itself. */
+  weekAtTarget: boolean;
 }
 
 /** The departure widget's data (W2) — mirrors PruefungWidgetData's shape:
@@ -160,19 +188,49 @@ export interface WidgetSnapshot {
   generatedAtEpochMs: number;
 }
 
-/** "This week 1.5 of 6.5 h" when there's a real weekly rate to compare
- * against; "This week 1.5 h logged." when there isn't (the exam anchor is
+/** "This week: 1.5 of 6.5 h" when there's a real weekly rate to compare
+ * against; "This week: 1.5 h logged." when there isn't (the exam anchor is
  * today or already past — examProjection's requiredPaceHoursPerWeek is null
  * in exactly that case, same condition formatRequiredPaceLine in format.ts
  * checks for its own, longer, prose version of this line). Deliberately a
  * shorter, standalone line rather than reusing formatRequiredPaceLine
  * directly: that function's copy ("Ready by ... needs ... This week: x of
  * y.") is sized for the app's own actionable-line slot, not a 3-line home
- * screen widget. */
+ * screen widget. Colon added (0.40.0, progress-bar polish) to match that
+ * same format.ts line's own punctuation — the widget's copy had silently
+ * drifted from it. */
 function buildWeekLine(loggedThisWeek: number, requiredPaceHoursPerWeek: number | null): string {
   const logged = loggedThisWeek.toFixed(1);
-  if (requiredPaceHoursPerWeek === null) return `This week ${logged} h logged.`;
-  return `This week ${logged} of ${requiredPaceHoursPerWeek.toFixed(1)} h`;
+  if (requiredPaceHoursPerWeek === null) return `This week: ${logged} h logged.`;
+  return `This week: ${logged} of ${requiredPaceHoursPerWeek.toFixed(1)} h`;
+}
+
+/**
+ * Widget progress bar (0.40.0): floor(logged/target × 100), clamped to
+ * [0, 100] — the same fill ratio ExamOverview.tsx's weekly bar computes,
+ * pre-converted to the whole int RemoteViews.setProgressBar needs (see
+ * PruefungWidgetData.weekProgressPercent's own doc comment for why that
+ * conversion happens here and not in Java). `target` mirrors
+ * requiredPaceHoursPerWeek: `null` or non-positive both mean "no real
+ * weekly target exists to measure against" (an exam whose anchor has
+ * already arrived, same condition buildWeekLine's null branch checks) —
+ * reported as 0%, not hidden, per this increment's "render honestly at
+ * zero" rule.
+ */
+export function computeWeekProgressPercent(logged: number, target: number | null): number {
+  if (target === null || target <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.floor((logged / target) * 100)));
+}
+
+/**
+ * Widget progress bar (0.40.0): true once `logged` has met or passed
+ * `target` — mirrors ExamOverview.tsx's own emerald/sky decision exactly
+ * (see PruefungWidgetData.weekAtTarget's own doc comment). False whenever
+ * there's no real target to be "at" (null or non-positive), same guard
+ * computeWeekProgressPercent above uses.
+ */
+export function computeWeekAtTarget(logged: number, target: number | null): boolean {
+  return target !== null && target > 0 && logged >= target;
 }
 
 /**
@@ -378,6 +436,8 @@ export function buildWidgetSnapshot(
       weekLine: buildWeekLine(loggedThisWeek, projection.requiredPaceHoursPerWeek),
       weekStartEpochMs: weekStart.getTime(),
       stateThresholdDays: PRUEFUNG_STATE_THRESHOLD_DAYS,
+      weekProgressPercent: computeWeekProgressPercent(loggedThisWeek, projection.requiredPaceHoursPerWeek),
+      weekAtTarget: computeWeekAtTarget(loggedThisWeek, projection.requiredPaceHoursPerWeek),
     },
     departure: departureData,
     tasks: taskData,

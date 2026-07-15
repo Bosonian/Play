@@ -1,6 +1,12 @@
 import { startOfWeek } from 'date-fns';
 import { describe, expect, it } from 'vitest';
-import { buildWidgetSnapshot, formatTaskCountsLine, selectWidgetTask } from './widgetSnapshot';
+import {
+  buildWidgetSnapshot,
+  computeWeekAtTarget,
+  computeWeekProgressPercent,
+  formatTaskCountsLine,
+  selectWidgetTask,
+} from './widgetSnapshot';
 import { examProjection } from './examProjection';
 import { computeProjection, computeStartBy } from './projection';
 import { taskStartBy } from './taskProjection';
@@ -174,13 +180,13 @@ describe('buildWidgetSnapshot', () => {
   it('builds weekLine with a required-pace comparison when the anchor is still in the future', () => {
     const topic = makeTopic({ estimatedHours: 10 });
     const snapshot = buildWidgetSnapshot(NOW, makeExam(), [topic], [], [], []);
-    expect(snapshot.pruefung?.weekLine).toMatch(/^This week 0\.0 of \d+\.\d h$/);
+    expect(snapshot.pruefung?.weekLine).toMatch(/^This week: 0\.0 of \d+\.\d h$/);
   });
 
   it('builds a plain logged-hours weekLine once the anchor is today or past', () => {
     const exam = makeExam({ examDate: '2026-07-09' }); // exact anchor === NOW's calendar day
     const snapshot = buildWidgetSnapshot(NOW, exam, [makeTopic({ estimatedHours: 10 })], [], [], []);
-    expect(snapshot.pruefung?.weekLine).toBe('This week 0.0 h logged.');
+    expect(snapshot.pruefung?.weekLine).toBe('This week: 0.0 h logged.');
   });
 
   it('sets anchorLabel from formatExamAnchorLine, unchanged', () => {
@@ -197,6 +203,24 @@ describe('buildWidgetSnapshot', () => {
   it('always includes the same stateThresholdDays examProjection/ExamOverview use for tight/late', () => {
     const snapshot = buildWidgetSnapshot(NOW, makeExam(), [makeTopic()], [], [], []);
     expect(snapshot.pruefung?.stateThresholdDays).toBe(14);
+  });
+
+  // Progress bar polish (0.40.0): wiring-level checks that buildWidgetSnapshot
+  // actually threads loggedThisWeek/requiredPaceHoursPerWeek through to the
+  // two new fields — see the dedicated computeWeekProgressPercent/
+  // computeWeekAtTarget describe blocks below for the fields' own formula
+  // coverage (zero, partial, clamped-over-100, at-target boundary).
+  it('weekProgressPercent is 0 and weekAtTarget is false when nothing has been logged this week', () => {
+    const snapshot = buildWidgetSnapshot(NOW, makeExam(), [makeTopic({ estimatedHours: 10 })], [], [], []);
+    expect(snapshot.pruefung?.weekProgressPercent).toBe(0);
+    expect(snapshot.pruefung?.weekAtTarget).toBe(false);
+  });
+
+  it('weekProgressPercent/weekAtTarget are 0/false once the anchor is today or past (no real target to compare against)', () => {
+    const exam = makeExam({ examDate: '2026-07-09' }); // exact anchor === NOW's calendar day
+    const snapshot = buildWidgetSnapshot(NOW, exam, [makeTopic({ estimatedHours: 10 })], [], [], []);
+    expect(snapshot.pruefung?.weekProgressPercent).toBe(0);
+    expect(snapshot.pruefung?.weekAtTarget).toBe(false);
   });
 });
 
@@ -350,6 +374,62 @@ describe('formatTaskCountsLine', () => {
     expect(formatTaskCountsLine(3, 1)).toBe('3 armed · 1 to arm');
     expect(formatTaskCountsLine(0, 2)).toBe('0 armed · 2 to arm');
     expect(formatTaskCountsLine(4, 0)).toBe('4 armed · 0 to arm');
+  });
+});
+
+// Progress bar polish (0.40.0): the widget mirrors ExamOverview.tsx's ONE
+// sanctioned progress bar (the weekly one — see that screen's own comment
+// on why a week-scoped, Monday-resetting bar is the sanctioned exception to
+// CLAUDE.md's "no bars, no streaks" rule). These two pure functions are
+// tested directly, with plain numbers, rather than only through
+// buildWidgetSnapshot — same "small helper gets its own describe block"
+// convention formatTaskCountsLine above already uses — because pinning an
+// exact target value via examProjection's real date/pace math would make
+// the boundary and clamp cases fragile for no real coverage gain.
+describe('computeWeekProgressPercent', () => {
+  it('is 0 when nothing has been logged yet', () => {
+    expect(computeWeekProgressPercent(0, 10)).toBe(0);
+  });
+
+  it('reports partial progress as a floored whole percent', () => {
+    expect(computeWeekProgressPercent(3, 10)).toBe(30);
+    // Floors rather than rounds — 1/3 of 10 is 33.3...%, not 33%-rounded
+    // and not 34%.
+    expect(computeWeekProgressPercent(3.34, 10)).toBe(33);
+  });
+
+  it('clamps at 100 once logged hours run past the target', () => {
+    expect(computeWeekProgressPercent(15, 10)).toBe(100);
+  });
+
+  it('is exactly 100 at the at-target boundary (logged === target)', () => {
+    expect(computeWeekProgressPercent(10, 10)).toBe(100);
+  });
+
+  it('is 0 when there is no real target to compare against (null or non-positive)', () => {
+    expect(computeWeekProgressPercent(3, null)).toBe(0);
+    expect(computeWeekProgressPercent(3, 0)).toBe(0);
+    expect(computeWeekProgressPercent(3, -1)).toBe(0);
+  });
+});
+
+describe('computeWeekAtTarget', () => {
+  it('is false while logged hours are still short of the target', () => {
+    expect(computeWeekAtTarget(3, 10)).toBe(false);
+  });
+
+  it('is true exactly at the boundary (logged === target)', () => {
+    expect(computeWeekAtTarget(10, 10)).toBe(true);
+  });
+
+  it('is true once logged hours run past the target', () => {
+    expect(computeWeekAtTarget(15, 10)).toBe(true);
+  });
+
+  it('is false when there is no real target to be "at" (null or non-positive)', () => {
+    expect(computeWeekAtTarget(3, null)).toBe(false);
+    expect(computeWeekAtTarget(3, 0)).toBe(false);
+    expect(computeWeekAtTarget(0, 0)).toBe(false);
   });
 });
 

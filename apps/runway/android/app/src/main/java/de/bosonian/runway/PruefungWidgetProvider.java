@@ -24,6 +24,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import android.view.View;
 import android.widget.RemoteViews;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
@@ -32,11 +33,21 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
- * The Prüfung home-screen widget: three lines (ready-by date, exam anchor,
- * this week's hours) rendered from the JSON snapshot
+ * The Prüfung home-screen widget: the ready-by date, a weekly progress bar,
+ * this week's hours, and the exam anchor, rendered from the JSON snapshot
  * WidgetBridgePlugin.updateSnapshot last wrote to SharedPreferences. Tapping
  * anywhere on the widget opens the app to the Prüfung overview via the
  * `runway://exam` deep link (src/native/deepLinks.ts).
+ *
+ * Progress bar polish (0.40.0): the bar mirrors ExamOverview.tsx's ONE
+ * sanctioned progress bar (the weekly one — see that screen's own comment
+ * on why a week-scoped, Monday-resetting bar is exempt from CLAUDE.md's
+ * "no bars, no streaks" rule). ARCHITECTURE RULE, unchanged and extended:
+ * this class does ZERO arithmetic and makes ZERO colour decisions for the
+ * bar — `weekProgressPercent` (the fill, 0-100) and `weekAtTarget` (which
+ * of the two pre-coloured ProgressBar views to show) are both prebaked in
+ * widgetSnapshot.ts and simply read here via optInt/optBoolean, same
+ * tolerance idiom `emptyExam` below already uses.
  */
 public class PruefungWidgetProvider extends AppWidgetProvider {
 
@@ -130,6 +141,7 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
         views.setTextColor(R.id.widget_line1, COLOR_CALM);
         views.setTextViewText(R.id.widget_line2, "");
         views.setTextViewText(R.id.widget_line3, "");
+        views.setViewVisibility(R.id.widget_progress_row, View.GONE);
     }
 
     // m2: same shape as renderFallback (one-line message, calm colour,
@@ -144,6 +156,7 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
         views.setTextColor(R.id.widget_line1, COLOR_CALM);
         views.setTextViewText(R.id.widget_line2, "");
         views.setTextViewText(R.id.widget_line3, "");
+        views.setViewVisibility(R.id.widget_progress_row, View.GONE);
     }
 
     private void renderSnapshot(RemoteViews views, String snapshotJson) throws JSONException {
@@ -178,6 +191,7 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
             views.setTextColor(R.id.widget_line1, COLOR_CALM);
             views.setTextViewText(R.id.widget_line2, "");
             views.setTextViewText(R.id.widget_line3, "");
+            views.setViewVisibility(R.id.widget_progress_row, View.GONE);
             return;
         }
 
@@ -246,10 +260,53 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
         // week" — hidden rather than shown out of date. A snapshot is only
         // ever refreshed by the app itself (src/native/widgets.ts), so an
         // app that's stayed closed across a Monday rollover is exactly the
-        // case this guards against.
+        // case this guards against. The progress bar (0.40.0) is gated on
+        // the SAME weekIsCurrent check, for the same reason — a bar left
+        // over from a stale, no-longer-current week is exactly as
+        // out-of-date as the text line it sits beside.
         long nowMillis = System.currentTimeMillis();
         boolean weekIsCurrent = nowMillis < weekStartEpochMs + 7 * DAY_MILLIS;
         views.setTextViewText(R.id.widget_line3, weekIsCurrent ? weekLine : "");
+
+        if (weekIsCurrent) {
+            // optInt/optBoolean(..., default): same schema-upgrade
+            // tolerance idiom as emptyExam above — a snapshot written by a
+            // pre-0.40.0 APK build has neither key, and defaults to a 0%,
+            // sky-coloured (not-at-target) bar rather than throwing.
+            int weekProgressPercent = pruefung.optInt("weekProgressPercent", 0);
+            boolean weekAtTarget = pruefung.optBoolean("weekAtTarget", false);
+
+            views.setViewVisibility(R.id.widget_progress_row, View.VISIBLE);
+            // Two pre-coloured ProgressBar views occupying the same
+            // FrameLayout cell (see widget_pruefung.xml's own comment on
+            // why — RemoteViews can't reliably retint a drawable across
+            // every API level this app's minSdk spans, so visibility-
+            // toggling two ready-made variants is the robust idiom here,
+            // not a workaround). Exactly one is VISIBLE at a time; both get
+            // the render-honestly-at-zero treatment (0.40.0 spec) — a 0%
+            // bar is never hidden, its empty track IS the visual pressure
+            // this widget exists to add.
+            if (weekAtTarget) {
+                views.setViewVisibility(R.id.widget_progress_sky, View.GONE);
+                views.setViewVisibility(R.id.widget_progress_emerald, View.VISIBLE);
+                views.setProgressBar(R.id.widget_progress_emerald, 100, weekProgressPercent, false);
+            } else {
+                views.setViewVisibility(R.id.widget_progress_emerald, View.GONE);
+                views.setViewVisibility(R.id.widget_progress_sky, View.VISIBLE);
+                views.setProgressBar(R.id.widget_progress_sky, 100, weekProgressPercent, false);
+            }
+        } else {
+            views.setViewVisibility(R.id.widget_progress_row, View.GONE);
+        }
+
+        // UNVERIFIED on device: how RemoteViews' ProgressBar renders inside
+        // One UI's own widget theming (Samsung launchers are known to
+        // reskin some system widget styles) — no Android SDK/emulator
+        // available in this environment, same caveat every widget-info XML
+        // in this app already documents for itself. The two-drawable
+        // visibility-toggle approach is the standard, documented RemoteViews
+        // pattern for a coloured progress bar, but "standard" isn't the
+        // same as "confirmed on Deepak's actual S25 Ultra home screen".
     }
 
     /** Whole days between two instants, floor-divided — mirrors
