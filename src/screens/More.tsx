@@ -17,9 +17,14 @@ export function More() {
   const settings = useLiveQuery(() => getSettings(), []);
   const theme = settings?.theme ?? 'system';
 
-  async function pickTheme(value: ThemePreference) {
+  function pickTheme(value: ThemePreference) {
     setTheme(value); // apply immediately
-    await updateSettings({ theme: value }); // persist
+    // Persist in the background; a failed write shouldn't throw an unhandled
+    // rejection (the theme still applied for this session).
+    void updateSettings({ theme: value }).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error('[Head-in] could not save theme', err);
+    });
   }
 
   return (

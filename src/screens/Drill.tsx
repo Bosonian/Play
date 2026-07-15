@@ -5,7 +5,7 @@
 // continues (auto-graded Again). Every answer is recorded to SRS + mastery +
 // the attempt log.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Question } from '../engine/questionGen';
 import { recordStudy } from '../engine/study';
 import type { Grade } from '../engine/srs';
@@ -30,14 +30,25 @@ export function Drill({
   const q = questions[idx];
   const done = idx >= questions.length;
 
+  // Re-entry lock: two touch events in the same frame both pass the phase
+  // guard (state hasn't flushed), double-counting or skipping. The ref blocks
+  // the second synchronously; it's reset whenever idx/phase actually changes.
+  const busy = useRef(false);
+  useEffect(() => {
+    busy.current = false;
+  }, [idx, phase]);
+
   function choose(i: number) {
-    if (phase !== 'answering') return;
+    if (busy.current || phase !== 'answering') return;
+    busy.current = true;
     setChosen(i);
     setPhase('revealed');
     if (questions[idx].choices[i].correct) setCorrectCount((c) => c + 1);
   }
 
   function finish(grade: Grade) {
+    if (busy.current) return;
+    busy.current = true;
     const question = questions[idx];
     const wasCorrect = chosen !== null && question.choices[chosen].correct;
     // Advance the UI immediately; persist in the background. Progression must
@@ -151,7 +162,9 @@ export function Drill({
             <Feedback
               correct={wasCorrect}
               chosenLabel={q.choices[chosen].label}
-              correctLabel={q.choices.find((c) => c.correct)!.label}
+              // Guard: a malformed question with no correct choice must not
+              // throw and blank the app (robustness audit P0).
+              correctLabel={q.choices.find((c) => c.correct)?.label ?? '—'}
               explanation={q.explanation}
               whyWrong={q.choices[chosen].whyWrong}
               crossLink={q.crossLink}

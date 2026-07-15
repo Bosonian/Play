@@ -10,7 +10,10 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // 'prompt' (not 'autoUpdate'): a new deploy is precached but applied only
+      // when the user taps Update (see src/ui/UpdatePrompt). autoUpdate would
+      // hard-reload the app mid-round and discard in-progress state.
+      registerType: 'prompt',
       // Make sure the SVG icon is precached by the service worker — the
       // manifest references it but the SW won't otherwise know to cache it.
       includeAssets: ['pwa-icon.svg'],

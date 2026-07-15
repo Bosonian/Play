@@ -158,6 +158,23 @@ export function validateContent(bundle: unknown): ContentLintIssue[] {
   }
 
   const b = parsed.data;
+
+  // Duplicate ids silently drop records when byId maps are built (last write
+  // wins) — a real wrong-answer/data-loss path. Catch it here.
+  const findDups = (items: { id: string }[], label: string) => {
+    const seen = new Set<string>();
+    for (const it of items) {
+      if (seen.has(it.id)) {
+        issues.push({ severity: 'error', where: label, message: `duplicate id "${it.id}"` });
+      }
+      seen.add(it.id);
+    }
+  };
+  findDups(b.structures, 'structures');
+  findDups(b.tracts, 'tracts');
+  findDups(b.syndromes, 'syndromes');
+  findDups(b.crossSections, 'crossSections');
+
   const structureIds = new Set(b.structures.map((s) => s.id));
   const tractIds = new Set(b.tracts.map((t) => t.id));
   const syndromeIds = new Set(b.syndromes.map((s) => s.id));

@@ -33,7 +33,14 @@ export function schedule(card: SrsCard, grade: Grade): SrsCard {
   const q = QUALITY[grade];
   const today = todayISO();
 
-  let { ease, intervalDays, reps, lapses } = card;
+  // Coerce any non-finite persisted field back to a sane default. A NaN here
+  // would propagate to addDaysISO() and throw a RangeError, which (being
+  // swallowed by recordStudy's catch) would silently stall this card forever.
+  const num = (v: number, fallback: number) => (Number.isFinite(v) ? v : fallback);
+  let ease = num(card.ease, 2.5);
+  let intervalDays = num(card.intervalDays, 0);
+  let reps = num(card.reps, 0);
+  let lapses = num(card.lapses, 0);
 
   if (q < 3) {
     reps = 0;

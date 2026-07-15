@@ -4,7 +4,7 @@
 // when wrong, highlights where the target actually was (never leave them not
 // knowing). Each answer records to SRS + mastery (rung: locate).
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { byId } from '../content';
 import { DIAGRAMS } from '../diagrams';
 import type { DiagramState } from '../diagrams/types';
@@ -43,6 +43,12 @@ export function Atlas({
   const [tapped, setTapped] = useState<string | null>(null);
   const [correctCount, setCorrectCount] = useState(0);
 
+  // Re-entry lock against double-taps (see Drill for rationale).
+  const busy = useRef(false);
+  useEffect(() => {
+    busy.current = false;
+  }, [idx, tapped]);
+
   if (!section || !Diagram) {
     return (
       <div className="p-4">
@@ -68,12 +74,15 @@ export function Atlas({
   }
 
   function pick(structureId: string) {
-    if (revealed) return;
+    if (busy.current || revealed) return;
+    busy.current = true;
     setTapped(structureId);
     if (structureId === targetId) setCorrectCount((c) => c + 1);
   }
 
   function next() {
+    if (busy.current) return;
+    busy.current = true;
     // Advance immediately; persist in the background (never block on the write).
     void recordStudy({
       factId: `atlas:${section!.id}:${targetId}`,
@@ -135,7 +144,7 @@ export function Atlas({
           <Feedback
             correct={wasCorrect}
             chosenLabel={
-              tapped ? tr(byId.structure.get(tapped)!.name) : undefined
+              tapped ? tr(byId.structure.get(tapped)?.name) : undefined
             }
             correctLabel={target ? tr(target.name) : ''}
             explanation={

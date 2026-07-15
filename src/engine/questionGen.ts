@@ -48,14 +48,21 @@ function shuffle<T>(arr: T[]): T[] {
 }
 
 // Assemble a 4-option MCQ (fewer if the pool is small) from the correct answer
-// plus teaching distractors. Each distractor keeps its own whyWrong.
+// plus teaching distractors. De-dupes against the correct label AND against
+// other distractors, so two records with identical text can't render two
+// visually identical wrong options.
 function assemble(
   correctLabel: string,
   distractors: { label: string; whyWrong: string }[],
 ): Choice[] {
-  const picked = shuffle(distractors)
-    .filter((d) => d.label !== correctLabel)
-    .slice(0, 3);
+  const seen = new Set<string>([correctLabel]);
+  const picked: { label: string; whyWrong: string }[] = [];
+  for (const d of shuffle(distractors)) {
+    if (seen.has(d.label)) continue;
+    seen.add(d.label);
+    picked.push(d);
+    if (picked.length === 3) break;
+  }
   const choices: Choice[] = [
     { label: correctLabel, correct: true },
     ...picked.map((d) => ({ label: d.label, correct: false, whyWrong: d.whyWrong })),
@@ -71,6 +78,14 @@ const DECUSSATION_PAD = [
 const LESION_PAD = [
   { label: 'Bilateral flaccid weakness confined to the level of the lesion', whyWrong: 'That is a ventral-horn (LMN) pattern, not a long-tract pattern.' },
 ];
+// Ensures structure-function questions always have enough plausible options,
+// even in a chapter scoped to a single structure (otherwise the MCQ could have
+// just one choice).
+const STRUCTURE_PAD = [
+  { label: 'Conveys unconscious proprioception to the cerebellum', whyWrong: 'That is a spinocerebellar-tract function.' },
+  { label: 'Houses preganglionic sympathetic neurons', whyWrong: 'That describes the lateral horn (intermediolateral cell column).' },
+  { label: 'Relays the signal to the thalamus', whyWrong: 'Relay to the thalamus happens in brainstem/thalamic nuclei, not here.' },
+];
 
 export function generateQuestions(scope: Scope): Question[] {
   const structures = (scope.structureIds ?? [])
@@ -84,12 +99,15 @@ export function generateQuestions(scope: Scope): Question[] {
 
   // --- Structure: function ---------------------------------------------------
   for (const s of structures) {
-    const distractors = structures
-      .filter((o) => o.id !== s.id)
-      .map((o) => ({
-        label: tr(o.function),
-        whyWrong: `That describes the ${tr(o.name).toLowerCase()}.`,
-      }));
+    const distractors = [
+      ...structures
+        .filter((o) => o.id !== s.id)
+        .map((o) => ({
+          label: tr(o.function),
+          whyWrong: `That describes the ${tr(o.name).toLowerCase()}.`,
+        })),
+      ...STRUCTURE_PAD,
+    ];
     questions.push({
       id: `struct:${s.id}:function`,
       factId: `struct:${s.id}:function`,

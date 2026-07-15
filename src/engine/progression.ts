@@ -18,15 +18,29 @@ import { RUNGS } from '../db/types';
 export type NodeState = 'locked' | 'available' | 'learned' | 'retained';
 
 // learned = rungsPassed / 5, where "passed" = at least one correct at that rung.
+// Used by Stats as a depth metric across all authored structures.
 export function computeLearned(m: Mastery | undefined): number {
   if (!m) return 0;
   const passed = RUNGS.filter((r: Rung) => (m.rungs[r]?.correct ?? 0) > 0);
   return passed.length / RUNGS.length;
 }
 
-// A region is "mastered/green" when learned ≥ 0.8 AND retained ≥ 0.7 (§5a).
-export function isMastered(learned: number, retained: number): boolean {
-  return learned >= 0.8 && retained >= 0.7;
+// Has this item been answered correctly at least once, in any mode/rung? This
+// is the per-item signal the map uses: a chapter progresses as its items are
+// engaged. (Rung-depth learning — /5 above — needs questions at every rung,
+// which most structures don't have yet, so it can't drive map progress.)
+export function hasAnyCorrect(m: Mastery | undefined): boolean {
+  if (!m) return false;
+  return RUNGS.some((r: Rung) => (m.rungs[r]?.correct ?? 0) > 0);
+}
+
+// A region counts as climbed once learned ≥ 0.8 (§5a). The design's full
+// "green/retained" state additionally needs retained ≥ 0.7, but retained isn't
+// computed per-node yet (see deriveNodeStates) — so gating the frontier on it
+// would freeze the whole map. We advance on `learned` here; the retained ring
+// is a later increment.
+export function isMastered(learned: number, _retained: number): boolean {
+  return learned >= 0.8;
 }
 
 export interface ChapterNode {
@@ -49,19 +63,21 @@ export function deriveNodeStates(
 
   for (const act of curriculum) {
     for (const chapter of act.chapters) {
-      // Aggregate learned/retained over the chapter's structures. With no
-      // authored structureIds yet, this is 0 (Increment 1).
-      const structureIds = chapter.structureIds ?? [];
+      // A chapter's progress = the fraction of its content items (structures,
+      // tracts, syndromes) the learner has answered correctly at least once.
+      // Completing a chapter's questions once fills it and advances the frontier.
+      const itemIds = [
+        ...(chapter.structureIds ?? []),
+        ...(chapter.tractIds ?? []),
+        ...(chapter.syndromeIds ?? []),
+      ];
       let learned = 0;
-      let retained = 0;
-      if (structureIds.length > 0) {
-        for (const id of structureIds) {
-          const m = masteryByStructure.get(id);
-          learned += computeLearned(m);
-          // retained stays 0 until the SRS engine computes it (Increment 3+).
-        }
-        learned /= structureIds.length;
-        retained /= structureIds.length;
+      const retained = 0; // per-node retained not computed yet (see isMastered)
+      if (itemIds.length > 0) {
+        const engaged = itemIds.filter((id) =>
+          hasAnyCorrect(masteryByStructure.get(id)),
+        ).length;
+        learned = engaged / itemIds.length;
       }
 
       let state: NodeState;

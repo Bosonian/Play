@@ -4,7 +4,7 @@
 // signal token travels on a correct choice (the one signature animation); a
 // wrong choice shows the resulting deficit and lets the player try again.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { RIDE_BY_TRACT, type Ride } from '../content/data/rides';
 import type { NeuraxisLevel, Side } from '../content/types';
 import { recordStudy } from '../engine/study';
@@ -45,6 +45,14 @@ export function RideTheTract({
   const [mistakes, setMistakes] = useState(0);
   const [finished, setFinished] = useState(false);
 
+  // Re-entry lock so double-tapping a correct route doesn't skip a step /
+  // double-record. Only the advancing (correct) branch locks; wrong picks must
+  // stay tappable for a retry. Reset whenever the step or finish state changes.
+  const busy = useRef(false);
+  useEffect(() => {
+    busy.current = false;
+  }, [stepIdx, finished]);
+
   if (!ride) {
     return (
       <div className="p-4">
@@ -65,6 +73,8 @@ export function RideTheTract({
   function pick(optId: string) {
     const opt = step.options.find((o) => o.id === optId)!;
     if (opt.correct) {
+      if (busy.current) return;
+      busy.current = true;
       const target = pos(opt.toLevel, opt.toSide);
       setCurrent({ level: opt.toLevel, side: opt.toSide });
       setPath((p) => [...p, target]);

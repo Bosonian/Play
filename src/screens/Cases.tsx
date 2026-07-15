@@ -4,7 +4,7 @@
 // part they missed) and explains each deficit mechanistically via the
 // syndrome's causedBy links. This is the Storyteller heart of the game.
 
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { byId } from '../content';
 import type { NeuraxisLevel, Side } from '../content/types';
 import { recordStudy } from '../engine/study';
@@ -81,13 +81,23 @@ export function Cases({
   const syndrome = syndromes[idx];
   const done = idx >= syndromes.length;
 
-  // Build the diagnosis options once per case.
-  const dxOptions = syndrome
-    ? shuffle([
-        tr(syndrome.name),
-        ...shuffle(CORD_DIFFERENTIALS.filter((d) => d !== tr(syndrome.name))).slice(0, 3),
-      ])
-    : [];
+  // Re-entry lock against double-taps advancing two cases at once.
+  const busy = useRef(false);
+  useEffect(() => {
+    busy.current = false;
+  }, [idx]);
+
+  // Build the diagnosis options once per case — memoized so tapping a Level or
+  // Side chip doesn't reshuffle the list under the user's finger.
+  const dxOptions = useMemo(() => {
+    if (!syndrome) return [];
+    const correct = tr(syndrome.name);
+    return shuffle([
+      correct,
+      ...shuffle(CORD_DIFFERENTIALS.filter((d) => d !== correct)).slice(0, 3),
+    ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syndrome?.id]);
 
   if (done || !syndrome) {
     return (
@@ -114,6 +124,8 @@ export function Cases({
   const canSubmit = level !== null && side !== null && dx !== null;
 
   function next() {
+    if (busy.current) return;
+    busy.current = true;
     // Advance immediately; persist in the background (never block on the write).
     void recordStudy({
       factId: `case:${syndrome.id}`,

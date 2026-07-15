@@ -9,6 +9,16 @@
     <meta name="theme-color" content="#F7F8FA" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0E1116" media="(prefers-color-scheme: dark)" />
     <title>Head-in</title>
+    <!-- Set the theme synchronously, before the module bundle loads, so there's
+         no flash of the wrong theme on cold start. Defaults to the OS
+         preference; the saved override (if any) is applied a beat later once
+         IndexedDB resolves. -->
+    <script>
+      try {
+        var dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

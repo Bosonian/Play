@@ -20,6 +20,7 @@ import {
   cordSyndromes,
   cordCrossSections,
 } from './data/spinalCord';
+import { RIDES } from './data/rides';
 
 // Content tables. The spinal-cord slice (Increment 2) is the first authored
 // content; the rest of the neuraxis pours in here act by act.
@@ -59,6 +60,20 @@ export const byId = {
 export function runContentLintInDev(): void {
   if (!import.meta.env.DEV) return;
   const issues: ContentLintIssue[] = validateContent(CONTENT);
+
+  // Rides live outside the validated bundle (gameplay scaffolding), so check
+  // their tract references separately — a renamed/removed tract id would
+  // otherwise silently break Ride-the-Tract at runtime.
+  const tractIds = new Set(TRACTS.map((t) => t.id));
+  for (const ride of RIDES) {
+    if (!tractIds.has(ride.tractId)) {
+      issues.push({
+        severity: 'error',
+        where: `ride.${ride.id}`,
+        message: `references unknown tract "${ride.tractId}"`,
+      });
+    }
+  }
   if (issues.length === 0) {
     // eslint-disable-next-line no-console
     console.info('[content] validation clean');

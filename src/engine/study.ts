@@ -56,25 +56,31 @@ export async function recordStudy(r: StudyResult): Promise<void> {
       axes: r.axes,
       at,
     };
-    await db.attempts.add(attempt);
-
-    // 2. Mastery (only when the fact is attributable to a structure/tract + rung)
-    if (r.masteryKey && r.rung) {
-      const existing = await db.mastery.get(r.masteryKey);
-      const m: Mastery = existing ?? { structureId: r.masteryKey, rungs: {} };
-      const prev = m.rungs[r.rung] ?? { attempts: 0, correct: 0, recent: [] };
-      m.rungs[r.rung] = {
-        attempts: prev.attempts + 1,
-        correct: prev.correct + (r.correct ? 1 : 0),
-        recent: keepRecent(prev.recent, r.correct),
-      };
-      await db.mastery.put(m);
-    }
-
-    // 3. SRS schedule
     const grade: Grade = r.grade ?? (r.correct ? 'good' : 'again');
-    const card = (await db.srsCards.get(r.factId)) ?? newCard(r.factId);
-    await db.srsCards.put(schedule(card, grade));
+
+    // All three writes in one transaction so a mid-way failure doesn't leave a
+    // half-updated state (attempt logged but mastery/SRS not).
+    await db.transaction('rw', db.attempts, db.mastery, db.srsCards, async () => {
+      // 1. Attempt log
+      await db.attempts.add(attempt);
+
+      // 2. Mastery (only when attributable to a structure/tract + rung)
+      if (r.masteryKey && r.rung) {
+        const existing = await db.mastery.get(r.masteryKey);
+        const m: Mastery = existing ?? { structureId: r.masteryKey, rungs: {} };
+        const prev = m.rungs[r.rung] ?? { attempts: 0, correct: 0, recent: [] };
+        m.rungs[r.rung] = {
+          attempts: prev.attempts + 1,
+          correct: prev.correct + (r.correct ? 1 : 0),
+          recent: keepRecent(prev.recent, r.correct),
+        };
+        await db.mastery.put(m);
+      }
+
+      // 3. SRS schedule
+      const card = (await db.srsCards.get(r.factId)) ?? newCard(r.factId);
+      await db.srsCards.put(schedule(card, grade));
+    });
   } catch (err) {
     // Never let a persistence failure block the UI (design note above).
     // eslint-disable-next-line no-console

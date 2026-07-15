@@ -3,7 +3,7 @@
 // nav — focus, per §8.3). Navigation is local state, not a router: four
 // destinations in a single installed PWA don't need one.
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from './db/db';
 import { STRUCTURES, TRACTS } from './content';
@@ -34,10 +34,40 @@ export function App() {
   const [tab, setTab] = useState<Tab>('map');
   const [session, setSession] = useState<Session | null>(null);
 
-  // Due count = SRS cards whose dueOn is today or earlier. Badges Today; drives
-  // the map's CTA. 0 until the first review creates cards.
+  // The facts the daily review can actually surface = every Drill question the
+  // current content can generate. Atlas/Cases/Ride also create SRS cards, but
+  // review re-asks them only as Drill MCQs, so the badge must count only these
+  // — otherwise "N due" shows but "Start review" builds nothing (a dead button).
+  const reviewable = useMemo(
+    () =>
+      generateQuestions({
+        structureIds: STRUCTURES.map((s) => s.id),
+        tractIds: TRACTS.map((t) => t.id),
+      }),
+    [],
+  );
+  const reviewableIds = useMemo(
+    () => new Set(reviewable.map((q) => q.factId)),
+    [reviewable],
+  );
+
+  // Due count = due, reviewable SRS cards. Badges Today; drives the map CTA.
   const cards = useLiveQuery(() => db.srsCards.toArray(), [], []);
-  const dueCount = (cards ?? []).filter((c) => isDue(c.dueOn)).length;
+  const dueCount = (cards ?? []).filter(
+    (c) => isDue(c.dueOn) && reviewableIds.has(c.factId),
+  ).length;
+
+  // Android hardware Back: while a mode session is open, Back should close the
+  // mode, not exit the installed PWA (which would discard the round). We push a
+  // history entry when a session opens; Back (or the ✕, via history.back())
+  // pops it and closes the session.
+  useEffect(() => {
+    if (!session) return;
+    window.history.pushState({ headin: 'session' }, '');
+    const onPop = () => setSession(null);
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [session]);
 
   // Launch a mode from a region (NodeSheet). Only Drill and Atlas are built;
   // the NodeSheet won't enable the others.
@@ -62,8 +92,7 @@ export function App() {
     }
   }
 
-  // Start the daily review: all currently-due facts, in one Drill. Built from
-  // every authored fact, filtered to those with a due SRS card.
+  // Start the daily review: the due, reviewable facts in one Drill.
   async function startReview() {
     const due = new Set(
       (await db.srsCards.toArray())
@@ -71,20 +100,19 @@ export function App() {
         .map((c) => c.factId),
     );
     if (due.size === 0) return;
-    const questions = generateQuestions({
-      structureIds: STRUCTURES.map((s) => s.id),
-      tractIds: TRACTS.map((t) => t.id),
-    }).filter((q) => due.has(q.factId));
+    const questions = reviewable.filter((q) => due.has(q.factId));
     if (questions.length) {
       setSession({ kind: 'drill', questions, title: 'Review' });
     }
   }
 
-  // A mode session takes the whole screen.
+  // A mode session takes the whole screen. Closing goes through history.back()
+  // so the ✕ and the Android Back button share one path (see the popstate
+  // effect above). pt-safe-top keeps the mode bar clear of the status bar/notch.
   if (session) {
-    const exit = () => setSession(null);
+    const exit = () => window.history.back();
     return (
-      <div className="mx-auto h-full max-w-md bg-bg text-fg">
+      <div className="mx-auto h-full max-w-md bg-bg pt-safe-top text-fg">
         {session.kind === 'drill' && (
           <Drill questions={session.questions} title={session.title} onExit={exit} />
         )}

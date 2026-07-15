@@ -13,7 +13,10 @@ export function todayISO(): string {
 }
 
 export function addDaysISO(iso: string, days: number): string {
-  return format(addDays(parseISO(iso), days), 'yyyy-MM-dd');
+  // Guard against a non-finite `days` (a corrupt interval) producing an Invalid
+  // Date that would make format() throw.
+  const safeDays = Number.isFinite(days) ? days : 0;
+  return format(addDays(parseISO(iso), safeDays), 'yyyy-MM-dd');
 }
 
 // True when `dueOn` is today or earlier (i.e. the card is due). ISO date-only

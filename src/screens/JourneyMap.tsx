@@ -110,7 +110,9 @@ export function JourneyMap({
     for (const chapter of act.chapters) {
       if (!hasContent(chapter)) continue;
       const node = nodeByChapter.get(chapter.id);
-      if (node?.state === 'retained') continue; // already solid; skip ahead
+      // Skip chapters already climbed (learned or retained) — point the CTA at
+      // the next unfinished one, matching the frontier node on the map.
+      if (node?.state === 'learned' || node?.state === 'retained') continue;
       frontierAct = act;
       frontierChapter = chapter;
       frontierStarted = (node?.learned ?? 0) > 0;

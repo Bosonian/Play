@@ -29,8 +29,11 @@ export function Feedback({
           : 'border-incorrect/40 bg-incorrect/10'
       }`}
     >
-      {/* Channel 1+2+3: glyph, colour, word. */}
+      {/* Channel 1+2+3: glyph, colour, word. role=status + aria-live announces
+          the result to screen readers, which otherwise get colour+glyph only. */}
       <p
+        role="status"
+        aria-live="polite"
         className={`flex items-center gap-2 text-body-lg font-semibold ${
           correct ? 'text-correct' : 'text-incorrect'
         }`}

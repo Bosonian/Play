@@ -32,24 +32,42 @@ export class HeadInDatabase extends Dexie {
       attempts: '&id, factId, at, mode',
       achievements: '&id',
     });
+
+    // When a future schema bump opens a new DB version in another tab, let the
+    // old connection (this one) close so the upgrade isn't blocked forever —
+    // otherwise the new tab hangs on open() and shows a blank screen. And if
+    // WE are the tab blocked by an older connection, surface it rather than
+    // hang silently. (robustness audit P0 — latent until the first version bump.)
+    this.on('versionchange', () => {
+      this.close();
+    });
+    this.on('blocked', () => {
+      // eslint-disable-next-line no-console
+      console.warn('[Head-in] database upgrade blocked — close other open tabs.');
+    });
   }
 }
 
 export const db = new HeadInDatabase();
 
 // Read the settings row, creating it with defaults on first run. Idempotent.
+// Returns a fresh copy of the defaults so callers can't mutate the shared
+// DEFAULT_SETTINGS constant.
 export async function getSettings(): Promise<Settings> {
   const existing = await db.settings.get('settings');
   if (existing) return existing;
-  await db.settings.put(DEFAULT_SETTINGS);
-  return DEFAULT_SETTINGS;
+  const fresh = { ...DEFAULT_SETTINGS };
+  await db.settings.put(fresh);
+  return fresh;
 }
 
-// Patch settings. Ensures the row exists first so early calls (before any
-// getSettings) still work.
+// Patch settings atomically. The read-modify-write runs inside a transaction so
+// two rapid toggles can't read the same row and clobber each other's change.
 export async function updateSettings(
   patch: Partial<Omit<Settings, 'id'>>,
 ): Promise<void> {
-  const current = await getSettings();
-  await db.settings.put({ ...current, ...patch, id: 'settings' });
+  await db.transaction('rw', db.settings, async () => {
+    const current = (await db.settings.get('settings')) ?? { ...DEFAULT_SETTINGS };
+    await db.settings.put({ ...current, ...patch, id: 'settings' });
+  });
 }
