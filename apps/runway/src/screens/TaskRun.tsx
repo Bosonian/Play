@@ -237,6 +237,17 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
       void logEvent('task', `Task done: ${task.name}.`);
       void cancelTaskAlarm(task.id, task.name);
     }
+    // Anti-rot increment 3 (0.39.0) widget audit: only a real STATUS
+    // transition (planned -> running, or -> done) can change what the tasks
+    // widget shows (its headline pick and armed/to-arm counts are keyed off
+    // status, not per-unit check-off) — an ordinary mid-task check/uncheck
+    // that leaves status alone has nothing for either refresh to pick up,
+    // so this is gated the same way the cancelTaskAlarm/logEvent calls
+    // above already are, rather than firing unconditionally on every tap.
+    if (wasPlanned || becameDone) {
+      void refreshWidgets();
+      void refreshDayGauge();
+    }
     // Explicit and immediate, on top of the mount-effect's own cleanup
     // (which will also notice `task.status` changed once the live query
     // re-emits) - see that effect's own comment for why both exist.
@@ -257,6 +268,12 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
     if (wasPlanned) {
       void logEvent('task', `Task started: ${task.name}.`);
       void cancelTaskAlarm(task.id, task.name);
+      // Anti-rot increment 3 (0.39.0) widget audit — same "status
+      // transition" gate as toggleUnit's own refreshWidgets/refreshDayGauge
+      // call, added here for the same reason: this handler had neither
+      // before.
+      void refreshWidgets();
+      void refreshDayGauge();
     }
   };
 
@@ -315,6 +332,11 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
     if (becameDone) {
       void logEvent('task', `Task done: ${task.name}.`);
       void cancelTaskAlarm(task.id, task.name);
+      // Anti-rot increment 3 (0.39.0) widget audit — same "status
+      // transition" gate as toggleUnit's own call, added here for the same
+      // reason: this handler had neither before.
+      void refreshWidgets();
+      void refreshDayGauge();
     }
     if (becameDone) stopFocusSound();
     setUnitBackdateOpen(false);
@@ -334,6 +356,12 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
     // may still have its start-by alarm pending. cancelTaskAlarm is safe to
     // call regardless (its own doc comment).
     void cancelTaskAlarm(task.id, task.name);
+    // Anti-rot increment 3 (0.39.0) widget audit — unconditional, same
+    // reasoning as the unconditional cancelTaskAlarm call just above:
+    // Abandon always moves the task out of 'planned'/'running', so it
+    // always changes what the tasks widget could show.
+    void refreshWidgets();
+    void refreshDayGauge();
     onNavigate({ name: 'home' });
   };
 

@@ -1,23 +1,26 @@
 import { startOfWeek } from 'date-fns';
-import type { Departure, Exam, Sprint, Topic } from '../db/types';
+import type { Departure, Exam, Sprint, Topic, WorkTask } from '../db/types';
 import { examProjection, hoursThisWeek } from './examProjection';
 import { formatDateTimeShort, formatExamAnchorLine, formatTime } from './format';
 import { PAST_DEPARTURE_THRESHOLD_MS } from './departureThreshold';
 import { computeProjection, computeStartBy } from './projection';
+import { taskStartBy } from './taskProjection';
 
-// Widgets increment (Runway 0.10.0 W1, 0.11.0 W2): the JSON shape written to
-// Android SharedPreferences and read by the two native widgets
-// (android/app/src/main/java/de/bosonian/runway/PruefungWidgetProvider.java
-// and DepartureWidgetProvider.java).
+// Widgets increment (Runway 0.10.0 W1, 0.11.0 W2, 0.39.0 W3): the JSON shape
+// written to Android SharedPreferences and read by the three native widgets
+// (android/app/src/main/java/de/bosonian/runway/PruefungWidgetProvider.java,
+// DepartureWidgetProvider.java, and TaskWidgetProvider.java).
 //
-// ARCHITECTURE RULE: this file is where every number either widget shows
-// gets computed. The native side may only do two things with numbers from
-// here — calendar-slide readyDayEpochMs forward by whole days, and diff two
+// ARCHITECTURE RULE: this file is where every number any widget shows gets
+// computed. The native side may only do two things with numbers from here —
+// calendar-slide readyDayEpochMs forward by whole days, and diff two
 // dates/epoch millis — both a 1:1 mirror of a time slide, never a
-// re-derivation of examProjection's or projection.ts's math. Every string
-// either widget renders verbatim (anchorLabel, weekLine, nameLine,
-// appointmentLine, planLine) is built here too, so a copy change never needs
-// a matching native change.
+// re-derivation of examProjection's or projection.ts's math (the tasks
+// widget, W3, does neither — see TaskWidgetProvider's own header comment for
+// why it's pure display plumbing with zero arithmetic at all). Every string
+// any widget renders verbatim (anchorLabel, weekLine, nameLine,
+// appointmentLine, planLine, and W3's nameLine/dueLine/countsLine) is built
+// here too, so a copy change never needs a matching native change.
 
 /** Same tight/late threshold the app's own STATE_TEXT (ExamOverview.tsx)
  * switches colour at — passed through in the snapshot rather than hardcoded
@@ -120,9 +123,40 @@ export interface DepartureWidgetData {
   appointmentEpochMs: number;
 }
 
+/** The tasks widget's data (anti-rot increment 3, "Runway Tasks", 0.39.0) —
+ * every string it renders verbatim is prebaked here, same ARCHITECTURE RULE
+ * as PruefungWidgetData/DepartureWidgetData above. Deliberately NOT nullable
+ * the way `pruefung`/`departure` are (those are null when there's no exam /
+ * nothing upcoming at all — "there is genuinely no widget to show"): a
+ * tasks widget with nothing armed is still a meaningful, always-renderable
+ * state ("No armed deadlines.", optionally with a counts line), so this is
+ * always built, never omitted. */
+export interface TaskWidgetData {
+  /** The headline task — the soonest-deadline planned/running task (see
+   * `selectWidgetTask`), or `null` when none carries a deadline at all.
+   * `TaskWidgetProvider.java` renders "No armed deadlines." in the null
+   * case, matching the other widgets' calm/muted empty-state treatment. */
+  task: {
+    id: string;
+    /** The task's own name, rendered bold on the native side. */
+    nameLine: string;
+    /** "due 16:00 · start by 14:30" while `taskStartBy` is still in the
+     * future; "due 16:00" once it's already passed — see
+     * `buildTaskWidgetData`'s own comment for why the start-by clause is
+     * dropped rather than shown false. */
+    dueLine: string;
+  } | null;
+  /** "{N} armed · {M} to arm", prebaked — see `formatTaskCountsLine`'s own
+   * doc comment for the exact counting rule and why it's `null` (omit the
+   * line entirely) rather than "0 armed · 0 to arm" when there's nothing to
+   * report. */
+  countsLine: string | null;
+}
+
 export interface WidgetSnapshot {
   pruefung: PruefungWidgetData | null;
   departure: DepartureWidgetData | null;
+  tasks: TaskWidgetData;
   generatedAtEpochMs: number;
 }
 
@@ -195,6 +229,98 @@ function buildDepartureWidgetData(now: Date, departures: Departure[]): Departure
 }
 
 /**
+ * Picks the task the tasks widget should headline: the soonest deadline
+ * (ascending sort) among 'planned'/'running' tasks that carry one at all —
+ * `null` when no such task exists (nothing armed with a deadline, whether
+ * because nothing is armed at all or every armed task is deadline-less).
+ *
+ * A PAST deadline still wins if it's the soonest one — deliberately, unlike
+ * `selectUpcomingDeparture` above, which drops anything more than
+ * `PAST_DEPARTURE_THRESHOLD_MS` stale. A departure that's already happened
+ * is a fact with nothing left to act on (see DepartureWidgetProvider's own
+ * expiry-rule comment); a task whose start-by moment has already blown past
+ * is the opposite — it's the single most urgent thing on the board, exactly
+ * what this widget exists to surface, so there is no threshold to filter it
+ * out with. "Ascending sort by deadline" already produces this for free: an
+ * overdue task's deadline is further in the past than any future one, so it
+ * sorts first and wins without any separate past/future branch.
+ *
+ * `now` is accepted (not used) for the same call shape `selectUpcomingDeparture`
+ * above has, and because a future revision that DOES want a staleness
+ * threshold here (there's no such request today — see this function's own
+ * "no threshold" reasoning) would already have the argument in place. Left
+ * genuinely unused rather than faked into relevance — `noUnusedParameters`
+ * needs the explicit `void now;` below to allow that honestly instead of
+ * quietly renaming the parameter to `_now` and losing the self-documenting
+ * name at every call site.
+ */
+export function selectWidgetTask(now: Date, tasks: WorkTask[]): WorkTask | null {
+  void now;
+  const eligible = tasks.filter(
+    (task) => (task.status === 'planned' || task.status === 'running') && task.deadlineAt !== null,
+  );
+  if (eligible.length === 0) return null;
+  return eligible.reduce((soonest, task) =>
+    new Date(task.deadlineAt as string).getTime() < new Date(soonest.deadlineAt as string).getTime()
+      ? task
+      : soonest,
+  );
+}
+
+/**
+ * "{N} armed · {M} to arm" — prebaked so `TaskWidgetProvider.java` never
+ * formats a number itself (this file's own ARCHITECTURE RULE). `null` when
+ * both counts are zero (nothing armed, nothing captured either) — an empty
+ * board has nothing to report on this line, same "nothing to show, don't
+ * render a hollow sentence" reasoning the other two widgets' blank-line
+ * fallbacks already use.
+ *
+ * Counting rule, spelled out because it's easy to misread: `armedCount` is
+ * the TOTAL count of 'planned'/'running' tasks — when `selectWidgetTask`
+ * above finds a headline task, that task IS one of the N being counted
+ * here, not excluded from it. "3 armed" under a shown headline task means
+ * "3 total, including the one above", never "3 more besides this one" — so
+ * the number always matches a plain count of Home's own upcoming-tasks
+ * list, with no off-by-one against what he'd see there.
+ */
+export function formatTaskCountsLine(armedCount: number, toArmCount: number): string | null {
+  if (armedCount === 0 && toArmCount === 0) return null;
+  return `${armedCount} armed · ${toArmCount} to arm`;
+}
+
+/** Builds TaskWidgetData for the given task pool — always returns a value
+ * (see TaskWidgetData's own doc comment for why this, unlike
+ * pruefung/departure, is never itself null). */
+function buildTaskWidgetData(now: Date, tasks: WorkTask[]): TaskWidgetData {
+  const armedCount = tasks.filter((task) => task.status === 'planned' || task.status === 'running').length;
+  const toArmCount = tasks.filter((task) => task.status === 'captured').length;
+  const countsLine = formatTaskCountsLine(armedCount, toArmCount);
+
+  const headline = selectWidgetTask(now, tasks);
+  if (!headline) return { task: null, countsLine };
+
+  // headline.deadlineAt is guaranteed non-null by selectWidgetTask's own
+  // filter — `as string` reflects that guarantee rather than re-checking it
+  // needlessly (mirrors the `as string` just above in selectWidgetTask's
+  // own sort).
+  const deadline = new Date(headline.deadlineAt as string);
+  const startBy = taskStartBy(headline);
+  // taskStartBy only returns null when deadlineAt is null, which can't be
+  // true here — the `!== null` check below is defensive typing, not a real
+  // branch this data can reach, same "guarded anyway" caution
+  // TaskRun.tsx's own handleReopen uses for an equivalently-impossible case.
+  const dueLine =
+    startBy !== null && startBy.getTime() > now.getTime()
+      ? `due ${formatTime(deadline)} · start by ${formatTime(startBy)}`
+      : `due ${formatTime(deadline)}`;
+
+  return {
+    task: { id: headline.id, nameLine: headline.name, dueLine },
+    countsLine,
+  };
+}
+
+/**
  * Builds the widget snapshot from data already loaded from Dexie (the
  * caller, src/native/widgets.ts, is the only place that touches Dexie for
  * this — this function stays pure and testable without a database).
@@ -202,6 +328,13 @@ function buildDepartureWidgetData(now: Date, departures: Departure[]): Departure
  * `departures` is every departure the caller could find with status
  * 'planned' or 'running' (src/native/widgets.ts mirrors Home's own Upcoming
  * query) — selectUpcomingDeparture above does the "which one, if any" work.
+ *
+ * `tasks` (anti-rot increment 3, 0.39.0) is every task the caller could find
+ * with status 'planned', 'running', or 'captured' — the three statuses
+ * `buildTaskWidgetData` above actually reads (armedCount/selectWidgetTask
+ * from the first two, toArmCount from the third); 'done'/'abandoned' tasks
+ * carry nothing this widget shows, so src/native/widgets.ts's query already
+ * excludes them rather than filtering here.
  */
 export function buildWidgetSnapshot(
   now: Date,
@@ -209,11 +342,13 @@ export function buildWidgetSnapshot(
   topics: Topic[],
   sprints: Sprint[],
   departures: Departure[],
+  tasks: WorkTask[],
 ): WidgetSnapshot {
   const departureData = buildDepartureWidgetData(now, departures);
+  const taskData = buildTaskWidgetData(now, tasks);
 
   if (!exam) {
-    return { pruefung: null, departure: departureData, generatedAtEpochMs: now.getTime() };
+    return { pruefung: null, departure: departureData, tasks: taskData, generatedAtEpochMs: now.getTime() };
   }
 
   const projection = examProjection(now, exam, topics, sprints);
@@ -245,6 +380,7 @@ export function buildWidgetSnapshot(
       stateThresholdDays: PRUEFUNG_STATE_THRESHOLD_DAYS,
     },
     departure: departureData,
+    tasks: taskData,
     generatedAtEpochMs: now.getTime(),
   };
 }

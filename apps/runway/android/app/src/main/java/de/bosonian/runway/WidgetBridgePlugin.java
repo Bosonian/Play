@@ -1,13 +1,14 @@
 package de.bosonian.runway;
 
-// ARCHITECTURE RULE (widgets increment, Runway 0.10.0 W1 / 0.11.0 W2): all
-// business math — pace, remaining hours, the ready-date projection, the
-// departure projection/plan lines — lives in TypeScript
+// ARCHITECTURE RULE (widgets increment, Runway 0.10.0 W1 / 0.11.0 W2 /
+// 0.39.0 W3): all business math — pace, remaining hours, the ready-date
+// projection, the departure projection/plan lines, and (W3) the tasks
+// widget's headline pick/due line/armed-to-arm counts — lives in TypeScript
 // (src/lib/examProjection.ts, src/lib/projection.ts,
 // src/lib/widgetSnapshot.ts). This plugin does none of that: it only moves
 // an already-computed JSON string from JS into Android SharedPreferences and
-// pokes both widget providers to redraw. No date arithmetic happens here at
-// all.
+// pokes all three widget providers to redraw. No date arithmetic happens
+// here at all.
 
 import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetProvider;
@@ -23,17 +24,17 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 /**
  * The JS↔native bridge for the home-screen widgets. One method,
  * `updateSnapshot`: write the latest snapshot JSON to a SharedPreferences
- * file, then ask both widget providers to redraw from it. See
+ * file, then ask all three widget providers to redraw from it. See
  * src/native/widgetBridge.ts for the JS side (the only file that calls
  * into this plugin).
  */
 @CapacitorPlugin(name = "WidgetBridge")
 public class WidgetBridgePlugin extends Plugin {
 
-    // Shared with PruefungWidgetProvider and DepartureWidgetProvider, which
-    // both read this same file and key — kept as package-visible constants
-    // here (not duplicated as string literals in either provider) so the
-    // three can't drift apart.
+    // Shared with PruefungWidgetProvider, DepartureWidgetProvider, and (W3)
+    // TaskWidgetProvider, which all read this same file and key — kept as
+    // package-visible constants here (not duplicated as string literals in
+    // any provider) so the four can't drift apart.
     static final String PREFS_NAME = "runway_widgets";
     static final String SNAPSHOT_KEY = "snapshot";
 
@@ -49,14 +50,16 @@ public class WidgetBridgePlugin extends Plugin {
         SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         prefs.edit().putString(SNAPSHOT_KEY, snapshot).apply();
 
-        // One snapshot write can change what either widget shows (a sprint
+        // One snapshot write can change what any widget shows (a sprint
         // ending moves pruefung; a departure save/leave/abandon moves
-        // departure) — poking both unconditionally is simpler and cheaper
-        // than parsing the JSON here just to decide which one actually
+        // departure; a task save/start/done/abandon/capture moves tasks —
+        // W3) — poking all three unconditionally is simpler and cheaper
+        // than parsing the JSON here just to decide which ones actually
         // changed, and requestWidgetRefresh already no-ops per-provider
         // when that provider has no placed instances.
         requestWidgetRefresh(context, PruefungWidgetProvider.class);
         requestWidgetRefresh(context, DepartureWidgetProvider.class);
+        requestWidgetRefresh(context, TaskWidgetProvider.class);
         call.resolve();
     }
 

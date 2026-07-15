@@ -21,6 +21,13 @@
     <string name="widget_pruefung_description">Projected exam ready date.</string>
     <string name="widget_departure_label">Next departure</string>
     <string name="widget_departure_description">Leave-by times for your next departure.</string>
+    <!-- Anti-rot increment 3 (0.39.0): the tasks widget's picker label —
+         "Runway Tasks", not just "Tasks", so it reads unambiguously in a
+         launcher-wide widget picker that also lists other apps' "Tasks"
+         widgets, same distinctness reasoning m1 already established for
+         the other two labels. -->
+    <string name="widget_task_label">Runway Tasks</string>
+    <string name="widget_task_description">Armed deadlines and captures waiting to be armed.</string>
     <string name="shortcut_arrived_short">I’ve arrived</string>
     <string name="shortcut_arrived_long">I’ve arrived — record arrival</string>
 </resources>

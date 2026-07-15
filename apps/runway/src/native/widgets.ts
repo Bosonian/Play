@@ -4,22 +4,23 @@ import { updateWidgetSnapshot } from './widgetBridge';
 
 /**
  * Rebuilds the widget snapshot from the latest Dexie data and pushes it to
- * both native widgets (Prüfung and, as of W2, departure).
+ * all three native widgets (Prüfung, departure as of W2, and — anti-rot
+ * increment 3, 0.39.0 — tasks).
  *
  * Called explicitly from a short, fixed list of write sites, rather than
  * wired to a generic Dexie hook that fires on every write — a hook would
- * also fire on writes that don't touch anything either widget shows (a
+ * also fire on writes that don't touch anything any widget shows (a
  * template edit, a settings toggle), and it would be one more layer to
  * trace through to answer "why did the widget just refresh". An explicit
  * call list is more code at each site, but it's traceable: every call site
  * below is here because it just changed something a widget snapshot reads
- * (exam anchor, topic estimates, logged sprint hours, or — W2 — a
- * departure's status/steps/travel time).
+ * (exam anchor, topic estimates, logged sprint hours, a departure's
+ * status/steps/travel time, or — W3 — a task's status/units/deadline).
  *
  * Current call sites:
- *   - main.tsx, once at startup (so neither widget is left showing stale
- *     data from before the app was last closed, even in a session where
- *     nothing else changes)
+ *   - main.tsx, once at startup (so no widget is left showing stale data
+ *     from before the app was last closed, even in a session where nothing
+ *     else changes)
  *   - Sprint.tsx, after a sprint's `endedAt` is written (logged hours
  *     changed)
  *   - ExamSetup.tsx, after saving the exam (windowStart/examDate — the
@@ -27,8 +28,8 @@ import { updateWidgetSnapshot } from './widgetBridge';
  *   - TopicEdit.tsx, after saving the topic list (estimatedHours, or which
  *     topics exist, may have changed)
  *   - MilestoneEdit.tsx, after saving a milestone (does not itself change
- *     anything either widget currently renders — no milestone data is in
- *     either W1/W2 snapshot — but is included per the increment spec so a
+ *     anything any widget currently renders — no milestone data is in any
+ *     widget's snapshot — but is included per the increment spec so a
  *     later widget revision that does show milestones doesn't need to
  *     rediscover this call site)
  *   - ExamOverview.tsx's zombie-sprint resolution handlers (resolving a
@@ -46,6 +47,16 @@ import { updateWidgetSnapshot } from './widgetBridge';
  *     planned/running" reasoning as handleLeave/handleAbandon above
  *   - useLiveTravel.ts's ≥3 min drift write (travelMinutes changed, which
  *     moves leaveBy and therefore the departure widget's planLine)
+ *   - TaskSetup.tsx's handleSave (create AND promote — a new/armed task may
+ *     now be the tasks widget's headline, or move its armedCount),
+ *     handleCapture (moves toArmCount), and handleDiscardCapture (moves
+ *     toArmCount back down) — W3
+ *   - TaskRun.tsx's toggleUnit and handleStart (a status transition out of
+ *     'planned', or into 'done', changes which task — if any — is the
+ *     headline), handleUnitBackdateConfirm (the backdated "done" path of
+ *     the same transition), handleAbandon (status leaves
+ *     'planned'/'running'), and handleReopen (status re-enters 'running',
+ *     already wired before W3 — see that handler's own comment) — W3
  *
  * Never throws: this always runs as a fire-and-forget side effect after a
  * Dexie write that has already succeeded on its own. A widget refresh
@@ -62,7 +73,14 @@ export async function refreshWidgets(): Promise<void> {
     // widgetSnapshot.ts's selectUpcomingDeparture then applies the
     // past-threshold filter and picks the soonest one, if any.
     const departures = await db.departures.where('status').anyOf(['planned', 'running']).sortBy('appointmentAt');
-    const snapshot = buildWidgetSnapshot(new Date(), exam, topics, sprints, departures);
+    // W3: the three statuses buildTaskWidgetData actually reads from —
+    // 'planned'/'running' for the headline task and armedCount,
+    // 'captured' for toArmCount. 'done'/'abandoned' tasks carry nothing the
+    // widget shows, so they're excluded at the query rather than filtered
+    // in widgetSnapshot.ts (same division of labour the departure query
+    // above already follows).
+    const tasks = await db.tasks.where('status').anyOf(['planned', 'running', 'captured']).toArray();
+    const snapshot = buildWidgetSnapshot(new Date(), exam, topics, sprints, departures, tasks);
     await updateWidgetSnapshot(JSON.stringify(snapshot));
   } catch (err) {
     console.warn('Runway: failed to refresh widgets', err);

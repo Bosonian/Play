@@ -26,7 +26,11 @@
                  and runway://new-departure (W1, tapped from the Prüfung
                  widget and the static app shortcuts below), plus
                  runway://departure/{id} and runway://home (W2, tapped from
-                 the departure widget). launchMode stays singleTask
+                 the departure widget's real-departure and fallback tap
+                 targets respectively). W3 (0.39.0) adds no new route — the
+                 tasks widget's tap target is always runway://home too (see
+                 TaskWidgetProvider's own header comment for why it never
+                 deep-links to a specific task). launchMode stays singleTask
                  (unchanged, verified above) — a deep link while the app is
                  already running is delivered to the existing Activity via
                  onNewIntent rather than spawning a second instance, which is
@@ -106,6 +110,23 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_departure_info" />
+        </receiver>
+
+        <!-- Anti-rot increment 3 (Runway 0.39.0): the "Runway Tasks"
+             home-screen widget provider. Same exported="true" reasoning as
+             PruefungWidgetProvider/DepartureWidgetProvider above — this is
+             the standard shape every AppWidgetProvider needs, not something
+             specific to this widget. Same m1 android:label reasoning too. -->
+        <receiver
+            android:name=".TaskWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_task_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_task_info" />
         </receiver>
 
         <!-- Car Bluetooth transit increment (0.36.0): fires on

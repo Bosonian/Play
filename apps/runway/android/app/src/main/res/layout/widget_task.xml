@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Anti-rot increment 3 (Runway 0.39.0, "Runway Tasks"): the tasks
+     home-screen widget's layout. Same "plain TextViews, no bars" shape as
+     widget_pruefung.xml/widget_departure.xml (see either file's own
+     comment) and the same widget_bg background. Three lines — nameLine
+     (bold, 16sp, same size as widget_departure.xml's own name line — this
+     widget's headline is a task NAME, not a big number, so it mirrors that
+     widget's proportions rather than widget_pruefung.xml's larger 18sp
+     ready-by date), dueLine (dim), countsLine (dim, blank when both counts
+     are zero) — or, with no armed deadline, TaskWidgetProvider collapses
+     line1 to "No armed deadlines." in a muted colour (set programmatically
+     — see that class's own comment on why this is the one line1 case that
+     isn't a real task name) with line2 blank, while line3 still renders
+     the counts line whenever either count is nonzero (armedCount/
+     toArmCount are independent of whether a headline task exists — see
+     widgetSnapshot.ts's formatTaskCountsLine).
+
+     m1: same "picker-preview only" reasoning as the other two widgets' own
+     comment — the android:text values below render ONLY in the widget
+     picker (no previewImage set — see widget_task_info.xml), and
+     TaskWidgetProvider.onUpdate ALWAYS overwrites every one of these
+     TextViews the moment the widget is actually placed on a home screen. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_task_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="start|center_vertical"
+    android:background="@drawable/widget_bg"
+    android:padding="14dp">
+
+    <TextView
+        android:id="@+id/widget_task_line1"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:textColor="#F1F5F9"
+        android:maxLines="1"
+        android:text="Befunden EEG" />
+
+    <TextView
+        android:id="@+id/widget_task_line2"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:textSize="13sp"
+        android:textColor="#94A3B8"
+        android:maxLines="1"
+        android:text="due 16:00 · start by 14:30" />
+
+    <TextView
+        android:id="@+id/widget_task_line3"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:textSize="13sp"
+        android:textColor="#94A3B8"
+        android:maxLines="1"
+        android:text="3 armed · 1 to arm" />
+
+</LinearLayout>

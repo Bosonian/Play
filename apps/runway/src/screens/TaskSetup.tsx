@@ -15,6 +15,8 @@ import { formatSlackLine, formatTime } from '../lib/format';
 import { nextOccurrenceOf } from '../lib/nextOccurrence';
 import { ensurePermissions, scheduleTaskAlarm } from '../native/notifications';
 import { logEvent } from '../lib/eventLog';
+import { refreshWidgets } from '../native/widgets';
+import { refreshDayGauge } from '../lib/dayGaugeRefresh';
 
 /** Same "defaults lean toward less, not more" reasoning (CLAUDE.md) behind
  * every other capped list in this app — 50 identical units is already a
@@ -222,6 +224,15 @@ export function TaskSetup({ onNavigate, capturedTaskId }: TaskSetupProps) {
       }
     }
 
+    // Anti-rot increment 3 (0.39.0): a saved task (create OR promote) may
+    // now be the tasks widget's headline, or move its armed/to-arm counts —
+    // audited as a missing call site during that increment (this path had
+    // no refreshWidgets/refreshDayGauge call at all before). Fire-and-forget
+    // and after everything else, same "already saved either way" reasoning
+    // the alarm-scheduling try/catch just above already uses.
+    void refreshWidgets();
+    void refreshDayGauge();
+
     onNavigate({ name: 'task', taskId: task.id });
   }
 
@@ -247,6 +258,10 @@ export function TaskSetup({ onNavigate, capturedTaskId }: TaskSetupProps) {
     };
     await db.tasks.add(task);
     void logEvent('task', `Task captured: ${task.name}.`);
+    // W3 audit (see handleSave's own comment): a new capture moves the
+    // tasks widget's toArmCount.
+    void refreshWidgets();
+    void refreshDayGauge();
     onNavigate({ name: 'home' });
   }
 
@@ -260,6 +275,10 @@ export function TaskSetup({ onNavigate, capturedTaskId }: TaskSetupProps) {
     if (!window.confirm(`Discard this capture? ${capturedTask.name} is deleted.`)) return;
     await db.tasks.delete(capturedTask.id);
     void logEvent('task', `Capture discarded: ${capturedTask.name}.`);
+    // W3 audit (see handleSave's own comment): a discarded capture moves
+    // the tasks widget's toArmCount back down.
+    void refreshWidgets();
+    void refreshDayGauge();
     onNavigate({ name: 'home' });
   }
 
