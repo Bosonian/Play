@@ -22,6 +22,14 @@ import { restoreBackup } from '../lib/restoreBackup';
 import { exportBackupFile } from '../native/backupFile';
 import { formatDateLong, formatTime } from '../lib/format';
 import { logEvent } from '../lib/eventLog';
+import { WATCHED_DEVICE_ADDRESS_SETTING, WATCHED_DEVICE_NAME_SETTING } from '../lib/transitSettings';
+import {
+  clearWatchedDevice,
+  ensureBluetoothPermission,
+  getBondedDevices,
+  setWatchedDevice,
+  type BondedDevice,
+} from '../native/bluetooth';
 
 interface SettingsProps {
   onNavigate: (screen: Screen) => void;
@@ -326,6 +334,65 @@ export function Settings({ onNavigate }: SettingsProps) {
     setBackupRestored(true);
   }
 
+  // Car Bluetooth transit increment (0.36.0). Watched-device address/name
+  // live in Dexie's settings table (src/lib/transitSettings.ts) so this
+  // screen (and anywhere else that ever needs "is a car configured") reads
+  // through useLiveQuery like every other settings row here, rather than a
+  // native round-trip on every render — see transitSettings.ts's own
+  // comment for why the address is ALSO mirrored into native
+  // SharedPreferences (that copy is what BluetoothTransitReceiver.java
+  // actually compares against; this one is read-only for the UI).
+  const watchedAddressSetting = useLiveQuery(() => db.settings.get(WATCHED_DEVICE_ADDRESS_SETTING), []);
+  const watchedNameSetting = useLiveQuery(() => db.settings.get(WATCHED_DEVICE_NAME_SETTING), []);
+  const watchedDeviceAddress = watchedAddressSetting?.value ?? '';
+  const watchedDeviceName = watchedNameSetting?.value ?? '';
+  const hasWatchedDevice = watchedDeviceAddress !== '';
+
+  // Chooser is local, transient UI state — not persisted, not shown again
+  // once a car is chosen or the flow is cancelled. `carChooserError` covers
+  // both "permission wasn't granted" and "nothing paired to choose from",
+  // shown as one quiet line rather than two separate error states — Deepak
+  // doesn't need to know which; he needs to know why the list didn't open.
+  const [carChooserOpen, setCarChooserOpen] = useState(false);
+  const [bondedDevices, setBondedDevices] = useState<BondedDevice[]>([]);
+  const [carChooserError, setCarChooserError] = useState<string | null>(null);
+
+  async function openCarChooser() {
+    setCarChooserError(null);
+    const granted = await ensureBluetoothPermission();
+    if (!granted) {
+      setCarChooserError('Bluetooth permission was not granted.');
+      return;
+    }
+    const devices = await getBondedDevices();
+    if (devices.length === 0) {
+      setCarChooserError('No paired Bluetooth devices found. Pair your car in Android Settings first.');
+      return;
+    }
+    setBondedDevices(devices);
+    setCarChooserOpen(true);
+  }
+
+  async function chooseCar(device: BondedDevice) {
+    // Native first (BluetoothTransitReceiver.java's own copy of the watched
+    // address, and the ring clear that goes with it — see
+    // BluetoothBridgePlugin.setWatchedDevice's own comment for why a car
+    // switch must never let the old car's drives blend into the new one's),
+    // then the two Dexie mirror rows the UI itself reads.
+    await setWatchedDevice(device.address);
+    await db.settings.put({ key: WATCHED_DEVICE_ADDRESS_SETTING, value: device.address });
+    await db.settings.put({ key: WATCHED_DEVICE_NAME_SETTING, value: device.name || device.address });
+    setCarChooserOpen(false);
+    void logEvent('transit', `Car Bluetooth watching enabled: ${device.name || device.address}.`);
+  }
+
+  async function stopWatchingCar() {
+    await clearWatchedDevice();
+    await db.settings.put({ key: WATCHED_DEVICE_ADDRESS_SETTING, value: '' });
+    await db.settings.put({ key: WATCHED_DEVICE_NAME_SETTING, value: '' });
+    void logEvent('transit', 'Car Bluetooth watching stopped.');
+  }
+
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-6 px-4 pb-12 pt-safe-top">
       <div className="pt-8">
@@ -445,6 +512,61 @@ export function Settings({ onNavigate }: SettingsProps) {
         <p className="text-sm text-slate-500">
           Steady noise under sprints and tasks. Moderate background stimulation makes boring work
           easier to hold — the job the unwatched video was doing, without the feed.
+        </p>
+      </section>
+
+      {/* Car Bluetooth transit increment (0.36.0). The user's own framing:
+          the car's Bluetooth session IS the transit time, start to finish —
+          no estimating involved. Three states, same shape as the Backup
+          section's export/import pair above: nothing chosen yet (a single
+          "Choose car" TextAction), the chooser open (a list of paired
+          devices to tap), or a car already watched (the "Watching: {name}."
+          line and "Stop watching"). */}
+      <section className="flex flex-col gap-3 border-t border-slate-800 pt-6">
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Car Bluetooth</h2>
+
+        {hasWatchedDevice && (
+          <div className="flex flex-col gap-2 rounded-xl border border-slate-800/60 bg-surface p-4">
+            <p className="text-slate-100">Watching: {watchedDeviceName || watchedDeviceAddress}.</p>
+            <TextAction onClick={() => void stopWatchingCar()} className="self-start">
+              Stop watching
+            </TextAction>
+          </div>
+        )}
+
+        {!hasWatchedDevice && carChooserOpen && (
+          <div className="flex flex-col gap-2 rounded-xl border border-slate-800/60 bg-surface p-4">
+            <p className="text-sm text-slate-400">Choose your car.</p>
+            <div className="flex flex-col gap-2">
+              {bondedDevices.map((device) => (
+                <button
+                  key={device.address}
+                  type="button"
+                  onClick={() => void chooseCar(device)}
+                  className="min-h-12 rounded-lg border border-slate-800/60 bg-raised px-3 py-2 text-left text-slate-100 transition-colors hover:border-slate-700"
+                >
+                  {device.name || device.address}
+                </button>
+              ))}
+            </div>
+            <TextAction onClick={() => setCarChooserOpen(false)} className="self-start">
+              Cancel
+            </TextAction>
+          </div>
+        )}
+
+        {!hasWatchedDevice && !carChooserOpen && (
+          <TextAction onClick={() => void openCarChooser()} className="self-start">
+            Choose car
+          </TextAction>
+        )}
+
+        {carChooserError && <p className="text-sm text-amber-400">{carChooserError}</p>}
+
+        <p className="text-sm text-slate-500">
+          Drives are measured from your car&apos;s Bluetooth connect to disconnect and refine
+          travel-time suggestions. Samsung may stop delivering Bluetooth events to apps it puts to
+          sleep — exclude Runway from battery optimization if drives stop appearing.
         </p>
       </section>
 

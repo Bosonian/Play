@@ -33,6 +33,9 @@ import { computeBufferSuggestions, computeSuggestions } from '../lib/learning';
 import type { BufferSuggestion, Suggestion } from '../lib/learning';
 import { applyAutoLearn } from '../lib/autoLearn';
 import { materializeScheduledDepartures, replaceUntouchedFutureAutoRows } from '../lib/materialize';
+import { flattenMeasurements, transitSuggestions } from '../lib/transit';
+import type { TransitMeasurementsByName, TransitSuggestion } from '../lib/transit';
+import { TRANSIT_MEASUREMENTS_SETTING } from '../lib/transitSettings';
 import { strandedArrivalLine, strandedInArrival } from '../lib/strandedArrival';
 import { useNow } from '../hooks/useNow';
 import { refreshWidgets } from '../native/widgets';
@@ -112,6 +115,13 @@ function suggestionKey(suggestion: Suggestion): string {
  * template. */
 function bufferSuggestionKey(suggestion: BufferSuggestion): string {
   return `buffer::${suggestion.templateId}`;
+}
+
+/** Car Bluetooth transit increment (0.36.0): same dismissal Set, its own
+ * key prefix ("transit::") so a dismissed transit suggestion can never
+ * collide with a step-time or buffer dismissal for the same template. */
+function transitSuggestionKey(suggestion: TransitSuggestion): string {
+  return `transit::${suggestion.templateId}`;
 }
 
 /** Key into the `settings` table (db/db.ts v2) for the first-run card's
@@ -509,6 +519,60 @@ export function Home({ onNavigate }: HomeProps) {
     // Same "reach the already-planned week" chain TemplateEdit's own save
     // path and autoLearn.ts's engine both run after a template edit that
     // future auto-created departures need to inherit.
+    await replaceUntouchedFutureAutoRows(suggestion.templateId);
+    await materializeScheduledDepartures();
+  }
+
+  // Car Bluetooth transit increment (0.36.0). Measured drives live in a
+  // single JSON settings row (src/lib/transitSettings.ts's
+  // TRANSIT_MEASUREMENTS_SETTING — see that file's own comment for why a
+  // keyed row, not a new Dexie table, is enough here), written by
+  // src/lib/transitSync.ts on every app open. `flattenMeasurements` turns
+  // that row back into the flat TransitMatch[] shape `transitSuggestions`
+  // consumes — see transit.ts's own comments for why the two stay separate
+  // pure functions instead of one that does both.
+  const transitMeasurementsSetting = useLiveQuery(() => db.settings.get(TRANSIT_MEASUREMENTS_SETTING), []);
+  const transitMatches = useMemo(() => {
+    if (!transitMeasurementsSetting) return [];
+    try {
+      return flattenMeasurements(JSON.parse(transitMeasurementsSetting.value) as TransitMeasurementsByName);
+    } catch {
+      return [];
+    }
+  }, [transitMeasurementsSetting]);
+
+  const transitSuggestionsList = useMemo(() => {
+    if (!templates || transitMatches.length === 0) return [];
+    void dismissTick; // same "the Set mutation isn't visible to useMemo" reasoning as the two suggestion lists above
+    return transitSuggestions(transitMatches, templates)
+      .filter((suggestion) => !dismissedSuggestions.has(transitSuggestionKey(suggestion)))
+      .slice(0, MAX_VISIBLE_SUGGESTIONS);
+  }, [templates, transitMatches, dismissTick]);
+
+  function dismissTransitSuggestion(suggestion: TransitSuggestion) {
+    dismissedSuggestions.add(transitSuggestionKey(suggestion));
+    setDismissTick((tick) => tick + 1);
+  }
+
+  // Offered, never silently applied (CLAUDE.md, binding) — same suggest-and-
+  // confirm shape as applySuggestion/applyBufferSuggestion above. Writes
+  // `travelMinutes` only; `estimateSource` (StepTemplate's own provenance
+  // field) has no travelMinutes equivalent to set, so nothing else on the
+  // template changes. Same "reach the already-planned week" chain a manual
+  // template edit and the other two suggestion Applies already run, since a
+  // travel-time change moves every future auto-created departure's leaveBy
+  // and alarms exactly like a buffer change does.
+  async function applyTransitSuggestion(suggestion: TransitSuggestion) {
+    const template = await db.templates.get(suggestion.templateId);
+    if (!template) return;
+    await db.templates.update(suggestion.templateId, {
+      travelMinutes: suggestion.medianMinutes,
+      updatedAt: new Date().toISOString(),
+    });
+    void logEvent(
+      'departure',
+      `Travel time updated from measured drives: ${suggestion.templateName}, ${suggestion.medianMinutes} min.`,
+    );
     await replaceUntouchedFutureAutoRows(suggestion.templateId);
     await materializeScheduledDepartures();
   }
@@ -1002,6 +1066,34 @@ export function Home({ onNavigate }: HomeProps) {
                   Add {suggestion.slipMinutes} min
                 </Button>
                 <Button variant="secondary" onClick={() => dismissBufferSuggestion(suggestion)} className="flex-1">
+                  Not now
+                </Button>
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
+
+      {/* Car Bluetooth transit increment (0.36.0) — same card pattern and
+          always-suggest-never-apply shape as the two sections above, its
+          own section so it never interleaves with either under one
+          heading-less block. */}
+      {transitSuggestionsList.length > 0 && (
+        <section className="flex flex-col gap-3">
+          {transitSuggestionsList.map((suggestion) => (
+            <div
+              key={transitSuggestionKey(suggestion)}
+              className="rounded-xl border border-sky-800/60 bg-sky-950/30 p-4"
+            >
+              <p className="text-sm text-slate-200">
+                You plan {suggestion.currentTravelMinutes} min travel for {suggestion.templateName}. Your last{' '}
+                {suggestion.runCount} measured drives came to a median of {suggestion.medianMinutes} min.
+              </p>
+              <div className="mt-3 flex gap-2">
+                <Button onClick={() => void applyTransitSuggestion(suggestion)} className="flex-1">
+                  Update to {suggestion.medianMinutes} min
+                </Button>
+                <Button variant="secondary" onClick={() => dismissTransitSuggestion(suggestion)} className="flex-1">
                   Not now
                 </Button>
               </div>

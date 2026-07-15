@@ -12,7 +12,11 @@ import com.getcapacitor.BridgeActivity;
  * ACTION_SEND rewrite trick documented on rewriteShareTargetIntent below.
  * Arrival-detection increment (0.23.0) adds WifiBridgePlugin the same way
  * again. Day-gauge increment (0.31.0) adds DayGaugePlugin the same way once
- * more.
+ * more. Car Bluetooth transit increment (0.36.0) adds BluetoothBridgePlugin
+ * the same way again — BluetoothTransitReceiver, the OTHER new class this
+ * increment ships, is a manifest-declared BroadcastReceiver, not a plugin,
+ * so it needs no registerPlugin() call here at all (see its own class doc
+ * comment and AndroidManifest.xml's <receiver> entry).
  *
  * The registerPlugin() call has to happen BEFORE super.onCreate() runs, not
  * after: BridgeActivity.onCreate() (see
@@ -80,6 +84,8 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(WifiBridgePlugin.class);
         // Day-gauge increment (0.31.0): DayGaugePlugin.java.
         registerPlugin(DayGaugePlugin.class);
+        // Car Bluetooth transit increment (0.36.0): BluetoothBridgePlugin.java.
+        registerPlugin(BluetoothBridgePlugin.class);
         super.onCreate(savedInstanceState);
     }
 

@@ -11,6 +11,7 @@ import { navigateToDeparture, navigateToScreen } from './lib/navigationRef';
 import { materializeScheduledDepartures, materializeStudyBlockAlarms } from './lib/materialize';
 import { syncPendingReports } from './lib/reportSync';
 import { logEvent, pruneEventLog } from './lib/eventLog';
+import { syncTransitEvents } from './lib/transitSync';
 
 // Registered here, before the first render, rather than inside App — this
 // is the earliest point in the app's lifecycle a listener can attach, which
@@ -96,6 +97,14 @@ void syncPendingReports();
 // the prune itself resolves asynchronously.
 void pruneEventLog();
 void logEvent('lifecycle', 'App started.');
+
+// Car Bluetooth transit increment (0.36.0): reads whatever
+// BluetoothTransitReceiver.java has recorded since the last sync, matches it
+// against departures, and merges new measurements into Dexie — same
+// fire-and-forget, run-on-every-open shape as the materializers above. A
+// no-op on web and on any phone with no watched car configured yet (see
+// transitSync.ts's own doc comment for why this never throws).
+void syncTransitEvents();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

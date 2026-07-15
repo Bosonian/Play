@@ -649,7 +649,11 @@ export type EventCategory =
   | 'gauge'
   | 'backup'
   | 'report'
-  | 'navigation';
+  | 'navigation'
+  // Car Bluetooth transit increment (0.36.0): a measured drive synced from
+  // the native connect/disconnect ring, matched or not — see
+  // src/lib/transitSync.ts.
+  | 'transit';
 
 /**
  * One row of the activity log. Deliberately flat — `category` plus one

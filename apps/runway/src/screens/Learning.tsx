@@ -7,6 +7,9 @@ import { learningReport } from '../lib/learning';
 import { biasFromPairs, globalBias, guessPairs } from '../lib/estimateBias';
 import type { Bias, GuessActualPair } from '../lib/estimateBias';
 import { measuredPaceHoursPerWeek } from '../lib/examProjection';
+import { transitMeasurementSummaries } from '../lib/transit';
+import type { TransitMeasurementsByName } from '../lib/transit';
+import { TRANSIT_MEASUREMENTS_SETTING } from '../lib/transitSettings';
 
 /** "on time" / "N min late" / "N min early" — the same three-way phrasing
  * this screen's own median-slip line below already uses (History.tsx and
@@ -129,7 +132,23 @@ export function Learning({ onNavigate }: LearningProps) {
   // was never learned.
   const pace = exam ? measuredPaceHoursPerWeek(new Date(), sprints) : null;
 
-  const isEmpty = report.length === 0 && medianSlip === null && pace === null;
+  // Car Bluetooth transit increment (0.36.0): the measured-drive store is a
+  // single JSON settings row (src/lib/transitSettings.ts), not a table this
+  // component has anywhere else to read from — see that file's own comment
+  // for why a keyed row is enough for one car's drive history. Parsed the
+  // same defensive way transitSync.ts's own reader does: a missing or
+  // corrupt row degrades to "nothing measured yet", never a crash.
+  const transitMeasurementsSetting = useLiveQuery(() => db.settings.get(TRANSIT_MEASUREMENTS_SETTING), []);
+  let transitSummaries: ReturnType<typeof transitMeasurementSummaries> = [];
+  if (transitMeasurementsSetting) {
+    try {
+      transitSummaries = transitMeasurementSummaries(JSON.parse(transitMeasurementsSetting.value) as TransitMeasurementsByName);
+    } catch {
+      transitSummaries = [];
+    }
+  }
+
+  const isEmpty = report.length === 0 && medianSlip === null && pace === null && transitSummaries.length === 0;
 
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-6 px-4 pb-12 pt-safe-top">
@@ -228,6 +247,23 @@ export function Learning({ onNavigate }: LearningProps) {
               {formatSlipPhrase(trend.late)}.
             </p>
           )}
+        </div>
+      )}
+
+      {/* Car Bluetooth transit increment (0.36.0): rendered only when
+          there's at least one measured drive — a transparency report of
+          everything transitSync.ts has matched so far, same "narrower floor
+          for a report than for an actionable suggestion" shape the rest of
+          this screen already uses (a step with 1-2 runs still gets a row
+          above, just no learned estimate yet). */}
+      {transitSummaries.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Transit</h2>
+          {transitSummaries.map((summary) => (
+            <p key={summary.name} className="tabular-nums text-slate-400">
+              {summary.name}: median {summary.medianMinutes} min over {summary.runCount} drives.
+            </p>
+          ))}
         </div>
       )}
 

@@ -108,6 +108,37 @@
                 android:resource="@xml/widget_departure_info" />
         </receiver>
 
+        <!-- Car Bluetooth transit increment (0.36.0): fires on
+             ACL_CONNECTED/ACL_DISCONNECTED for a paired Bluetooth device —
+             see BluetoothTransitReceiver.java's own class doc comment for
+             why this pair is exempt from Android 8+'s general clampdown on
+             implicit broadcasts reaching a killed app's manifest receiver.
+             exported="true": ACL_CONNECTED/ACL_DISCONNECTED are NOT on
+             Android's <protected-broadcast> list (unlike, say,
+             BOOT_COMPLETED), so in principle another app could construct and
+             send this receiver a spoofed Intent carrying an arbitrary
+             EXTRA_DEVICE. The impact of accepting one is bounded to
+             "record a fake connect/disconnect timestamp pair for whatever
+             device address the sender chose" — the receiver never grants
+             access to anything, reads no sensitive OS state as a result of
+             a spoofed intent, and the watched-address check means a spoof
+             only ever affects THIS app's own drive-time history, never
+             exposes it. exported="true" is also the only way this receiver
+             can actually receive a REAL system-sent ACL broadcast at all —
+             an unexported receiver cannot receive broadcasts sent by
+             another UID (here, the system_server process), same reasoning
+             PruefungWidgetProvider/DepartureWidgetProvider's own
+             exported="true" already documents for AppWidgetManager's
+             broadcasts below. Chosen deliberately, not defaulted to. -->
+        <receiver
+            android:name=".BluetoothTransitReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.bluetooth.device.action.ACL_CONNECTED" />
+                <action android:name="android.bluetooth.device.action.ACL_DISCONNECTED" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -179,4 +210,22 @@
          "wifi" one) rather than assuming this manifest entry implies it's
          been granted. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!-- Car Bluetooth transit increment (0.36.0): BluetoothBridgePlugin
+         reads bonded devices and BluetoothTransitReceiver listens for
+         ACL connect/disconnect. BLUETOOTH_CONNECT is the modern (API 31+)
+         runtime permission for both; the legacy BLUETOOTH permission covers
+         the same access on API 30 and below, where it's a NORMAL,
+         install-time permission with no runtime dialog.
+         maxSdkVersion="30" on the legacy one keeps it from shadowing the
+         runtime permission on newer OSes — standard practice for a
+         permission split across an SDK boundary like this, same shape
+         Android's own migration guidance for Bluetooth permissions
+         describes. Neither line needs BLUETOOTH_SCAN: this feature never
+         scans for new devices, only watches ACL events for a device
+         already paired through Android's own Bluetooth settings, and reads
+         the existing bonded-device list — see the CHANGELOG for why "no
+         background scanning" is worth stating explicitly. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
 </manifest>
