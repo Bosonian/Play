@@ -6,10 +6,11 @@ import type {
   ScheduleOptions,
 } from '@capacitor/local-notifications';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import type { Departure, Exam, Milestone, Sprint } from '../db/types';
+import type { Departure, Exam, Milestone, Sprint, WorkTask } from '../db/types';
 import { computeAlarmTimes } from '../lib/alarmTimes';
 import { formatTime } from '../lib/format';
 import { HORIZON_DAYS, calendarDates, occurrenceDates } from '../lib/recurrence';
+import { taskStartBy } from '../lib/taskProjection';
 import { logEvent } from '../lib/eventLog';
 
 // The ONLY file in this app that imports @capacitor/local-notifications
@@ -564,6 +565,118 @@ export async function scheduleStudyBlockAlarms(exam: Exam): Promise<void> {
 }
 
 /**
+ * Deterministic notification id for a task's single start-by alarm
+ * (anti-rot increment, 0.37.0) — same reuse rationale as
+ * `sprintNotificationId`/`milestoneNotificationId`/`studyBlockNotificationId`
+ * above: `notificationId('task-${taskId}', 0)`, no disjoint numeric range
+ * (see `sprintNotificationId`'s doc comment for the full "why not a new
+ * range" argument). Namespaced on a `task-` prefix rather than the bare id
+ * — the same pattern `studyBlockNotificationId` uses its `study-` prefix
+ * for — even though nothing else in this file currently computes
+ * `notificationId(taskId, 0)` for a different purpose: cheap insurance
+ * against a future second per-task alarm needing its own disjoint id
+ * without a rename, at zero cost today.
+ */
+export function taskStartByNotificationId(taskId: string): number {
+  return notificationId(`task-${taskId}`, 0);
+}
+
+/**
+ * Cancels a task's pending start-by alarm, if one exists. Same "safe to
+ * call unconditionally" reasoning as `cancelDepartureAlarms`/
+ * `cancelSprintEndAlarm`/`cancelMilestoneAlarm` above: `cancel()` silently
+ * ignores an id that was never scheduled, already fired, or already
+ * cancelled — which is exactly what lets every TaskRun.tsx lifecycle
+ * transition (start, done, abandon) call this unconditionally without
+ * first checking whether an alarm actually happened to be pending.
+ *
+ * Takes `(taskId, name)` rather than a whole `WorkTask`, mirroring
+ * `cancelDepartureAlarms`'s own `(departureId, name)` shape — every real
+ * call site already has both in scope without needing the rest of the row.
+ */
+export async function cancelTaskAlarm(taskId: string, name: string): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  await LocalNotifications.cancel({ notifications: [{ id: taskStartByNotificationId(taskId) }] });
+  void logEvent('alarm', `Task alarm cancelled: ${name}.`);
+}
+
+/**
+ * Schedules a task's one start-by alarm — the anti-rot increment (0.37.0),
+ * built from the user's own framing: reminders need to be "robuster" so a
+ * task stops rotting unstarted. A departure gets four staged alarms because
+ * getting ready happens away from the phone, ahead of time, with nothing
+ * necessarily watching a countdown (see `scheduleDepartureAlarms`'s own doc
+ * comment); a task begins at a desk with TaskRun.tsx already open, so it
+ * doesn't need a ladder — one alarm, at the one moment that actually
+ * matters (start now, or miss the deadline), is deliberately simpler, not
+ * an oversight. CLAUDE.md's "defaults lean toward less, not more" rule
+ * applies directly here: a second, earlier heads-up alarm is a real option
+ * if real use asks for it, not something to build speculatively now.
+ *
+ * No-ops:
+ *  - off native (web/dev), same as every other function in this file;
+ *  - `task.status !== 'planned'` — a running/done/abandoned task has
+ *    already passed the moment this alarm exists to catch (TaskRun.tsx's
+ *    start/done/abandon/reopen handlers call `cancelTaskAlarm` instead, not
+ *    this function);
+ *  - `task.deadlineAt === null` — nothing to compute a start-by moment
+ *    against (`taskStartBy` itself already encodes this, but the check is
+ *    repeated here so the "why no-op" reasoning lives beside every other
+ *    no-op condition in one place, rather than half in this file and half
+ *    in taskProjection.ts).
+ *
+ * Unlike `scheduleDepartureAlarms`/`scheduleMilestoneAlarm`/
+ * `scheduleStudyBlockAlarms`, this deliberately does NOT cancel-then-
+ * reschedule: it follows `scheduleSprintEndAlarm`'s pattern instead,
+ * because — like a sprint's end alarm — this is only ever invoked once,
+ * from TaskSetup's create-only save path (TaskSetup.tsx has no edit path
+ * at all, see its own doc comment) or from `restoreBackup`'s re-arm sweep
+ * for a task that's freshly restored and has never been scheduled on this
+ * device. `LocalNotifications.schedule()` called with an id that already
+ * has a pending notification replaces it outright (the same fact
+ * `scheduleSnoozeAlarm` below already relies on to "reschedule" a tapped
+ * alarm in place) — so there is nothing an explicit cancel-first step would
+ * add here.
+ *
+ * Skips scheduling (returns without arming anything) if `taskStartBy`'s
+ * result has already passed by the time this runs — an alarm firing
+ * instantly, the moment the task is saved, for a task that's already too
+ * tight to start "on time" is noise, not help. The projection UI
+ * (TaskSetup's preview line, TaskRun's live slack line) already tells that
+ * story honestly; a useless past-tense alarm wouldn't add anything to it.
+ */
+export async function scheduleTaskAlarm(task: WorkTask): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  if (task.status !== 'planned' || task.deadlineAt === null) return;
+  await ensureChannels();
+
+  const startBy = taskStartBy(task);
+  if (startBy === null || startBy.getTime() <= Date.now()) return;
+
+  await LocalNotifications.schedule({
+    notifications: [
+      {
+        id: taskStartByNotificationId(task.id),
+        title: 'Runway',
+        body: `Start now to finish by ${formatTime(new Date(task.deadlineAt))}. ${task.name}`,
+        channelId: STAGED_CHANNEL_ID,
+        schedule: { at: startBy, allowWhileIdle: true },
+        extra: { taskId: task.id },
+        // Same snooze action type a departure's slot-0 alarm gets — "not
+        // yet, ten more minutes" is exactly as legitimate a response to a
+        // task's start-by alarm as to a departure's "Start getting ready."
+        // scheduleSnoozeAlarm (below) reschedules whatever notification was
+        // tapped using ITS OWN id/extra, so a snoozed task alarm keeps its
+        // `extra.taskId` (and therefore still routes to the task on a later
+        // tap) with no task-specific snooze code needed.
+        actionTypeId: START_ACTION_TYPE_ID,
+      },
+    ],
+  });
+  void logEvent('alarm', `Task alarm armed: ${task.name}.`);
+}
+
+/**
  * Whether Android's per-app "use exact alarms" toggle is on. Always
  * 'granted' on web/dev (there's no such setting to check, and we don't want
  * a banner to ever show outside native). See checkExactNotificationSetting
@@ -603,6 +716,13 @@ export async function openExactAlarmSettings(): Promise<void> {
  * that takes no argument says that plainly instead of a `string | null`
  * `handler` would have to branch on internally.
  *
+ * `onTaskTap` (anti-rot increment, 0.37.0) is a third callback, shaped like
+ * `handler` rather than like `onStudyBlockTap` — a tapped task alarm DOES
+ * have an id to hand back (`extra.taskId`), it's just a task id instead of
+ * a departure id, so main.tsx wires this straight to
+ * `navigateToScreen({ name: 'task', taskId })` rather than needing its own
+ * queue-or-navigate plumbing the way `navigateToDeparture` already has.
+ *
  * Cold-start caveat (increment-4 spec §4): @capacitor/local-notifications
  * has no getLaunchNotification()-style API — unlike
  * @capacitor/push-notifications, this plugin's definitions.d.ts exposes no
@@ -623,6 +743,7 @@ export async function openExactAlarmSettings(): Promise<void> {
 export async function registerNotificationNavigation(
   handler: (departureId: string) => void,
   onStudyBlockTap: () => void,
+  onTaskTap: (taskId: string) => void,
 ): Promise<() => void> {
   if (!Capacitor.isNativePlatform()) return () => {};
 
@@ -656,6 +777,23 @@ export async function registerNotificationNavigation(
       // silently not matching the other's shape.
       if (action.notification.extra?.studyBlock === true) {
         onStudyBlockTap();
+        return;
+      }
+      // Anti-rot increment (0.37.0): checked before the departure branch
+      // below for the same reason the study-block check above is — a
+      // task alarm's `extra` has no `departureId` to fall through on
+      // either. Disambiguation order note: `extra.studyBlock`,
+      // `extra.taskId`, and `extra.departureId` are never set on the same
+      // notification (each alarm this file schedules sets exactly one of
+      // the three), so the ORDER of these three checks can't send a tap to
+      // the wrong destination — it's kept study-block, then task, then
+      // departure purely so the departure branch reads last, as the
+      // original catch-all it always was, rather than being interrupted
+      // mid-file by the two narrower checks added after it.
+      const taskId = action.notification.extra?.taskId;
+      if (typeof taskId === 'string') {
+        void logEvent('navigation', 'Notification tap: task.');
+        onTaskTap(taskId);
         return;
       }
       const departureId = action.notification.extra?.departureId;

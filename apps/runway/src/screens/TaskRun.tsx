@@ -23,11 +23,14 @@ import { taskDoneMessage, taskStartMessage } from '../lib/witness';
 import { shareWitnessText } from '../native/shareText';
 import { refreshWidgets } from '../native/widgets';
 import { refreshDayGauge } from '../lib/dayGaugeRefresh';
+import { cancelTaskAlarm } from '../native/notifications';
 import { logEvent } from '../lib/eventLog';
 
-/** Distinct from Runway's departure-abandon copy — a task has no alarms to
- * cancel (tasks increment: no scheduled notifications in v1, see README's
- * "Tasks" section), so the honest consequence to state here is simpler. */
+/** Distinct from Runway's departure-abandon copy — a task carries at most
+ * ONE alarm (the anti-rot increment's start-by alarm, 0.37.0), not a
+ * four-slot ladder, so the honest consequence to state here stays simpler
+ * even though "no alarms to cancel" (this comment's pre-0.37.0 wording) is
+ * no longer true — handleAbandon below does call cancelTaskAlarm now. */
 const ABANDON_CONFIRM = 'Abandon this task? It moves off Home; its progress stays on record.';
 
 interface TaskRunProps {
@@ -56,9 +59,14 @@ const STATE_BORDER: Record<Exclude<TaskProjection['state'], null> | 'none', stri
 
 /**
  * Task mode's live screen — the instrument a task is deliberately started
- * FROM (see README's "Tasks" section: no scheduled notifications, because a
- * task begins at a desk with this screen already open, unlike a departure's
- * "wake me up to start getting ready" moment). Mirrors Runway.tsx's live
+ * FROM (see README's "Tasks" section: a task begins at a desk with this
+ * screen already open, unlike a departure's "wake me up to start getting
+ * ready" moment — the live screen is the entire instrument here, not a
+ * fallback for when an alarm doesn't fire). It still carries one alarm,
+ * as of the anti-rot increment (0.37.0): a deadline-bearing planned task
+ * gets a single start-by alarm, cancelled the moment this screen actually
+ * starts it — see the cancelTaskAlarm calls in handleStart/toggleUnit/
+ * handleUnitBackdateConfirm/handleAbandon below. Mirrors Runway.tsx's live
  * structure closely — same useNow/keep-awake/transactional-modify/
  * step-focus patterns — with travel, buffer, arrival phase and plan
  * compression all absent, because a task has none of those (db/types.ts's
@@ -211,9 +219,24 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
         becameDone = true;
       }
     });
-    if (wasPlanned) void logEvent('task', `Task started: ${task.name}.`);
+    // Anti-rot increment (0.37.0): a planned task's alarm targets the
+    // never-started case, so the moment `wasPlanned` flips (checking a unit
+    // starts the task, same shortcut the comment above this function
+    // describes) is exactly the moment that alarm's job is done — it fires
+    // here even when the SAME check-off also resolves the task straight to
+    // 'done' (a single-unit task), which is why the `becameDone` branch
+    // below calls cancelTaskAlarm too: cancel() is safe to call twice
+    // (its own doc comment), and a task that skips 'running' entirely still
+    // needs its alarm cancelled exactly once, from whichever branch notices.
+    if (wasPlanned) {
+      void logEvent('task', `Task started: ${task.name}.`);
+      void cancelTaskAlarm(task.id, task.name);
+    }
     void logEvent('task', `Task unit ${checking ? 'checked' : 'unchecked'}: ${task.name}.`);
-    if (becameDone) void logEvent('task', `Task done: ${task.name}.`);
+    if (becameDone) {
+      void logEvent('task', `Task done: ${task.name}.`);
+      void cancelTaskAlarm(task.id, task.name);
+    }
     // Explicit and immediate, on top of the mount-effect's own cleanup
     // (which will also notice `task.status` changed once the live query
     // re-emits) - see that effect's own comment for why both exist.
@@ -229,7 +252,12 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
         t.startedAt = t.startedAt ?? new Date().toISOString();
       }
     });
-    if (wasPlanned) void logEvent('task', `Task started: ${task.name}.`);
+    // Anti-rot increment (0.37.0): same "the alarm's job is done — he
+    // started" reasoning as toggleUnit's own cancelTaskAlarm call above.
+    if (wasPlanned) {
+      void logEvent('task', `Task started: ${task.name}.`);
+      void cancelTaskAlarm(task.id, task.name);
+    }
   };
 
   // Witness increment (0.34.0): composes the start-of-task message and
@@ -277,7 +305,17 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
       }
     });
     void logEvent('task', `Task unit backdated: ${task.name}.`);
-    if (becameDone) void logEvent('task', `Task done: ${task.name}.`);
+    // Anti-rot increment (0.37.0): no start-cancel needed here (this
+    // handler only ever runs on an already-'running' task — see this
+    // function's own doc comment above — whose alarm was already cancelled
+    // when it started), but a done-cancel is still needed: cancelTaskAlarm
+    // is safe to call even when nothing is pending (its own doc comment),
+    // so this costs nothing and closes the same belt-and-suspenders gap
+    // toggleUnit's becameDone branch closes.
+    if (becameDone) {
+      void logEvent('task', `Task done: ${task.name}.`);
+      void cancelTaskAlarm(task.id, task.name);
+    }
     if (becameDone) stopFocusSound();
     setUnitBackdateOpen(false);
   };
@@ -289,6 +327,13 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
     stopFocusSound();
     await db.tasks.update(task.id, { status: 'abandoned' });
     void logEvent('task', `Task abandoned: ${task.name}.`);
+    // Anti-rot increment (0.37.0): unconditional, unlike the start/done
+    // cancels above — Abandon is reachable straight from 'planned' (this
+    // screen's TextAction row renders it for both 'planned' and 'running',
+    // see the return below), so a task abandoned before it was ever started
+    // may still have its start-by alarm pending. cancelTaskAlarm is safe to
+    // call regardless (its own doc comment).
+    void cancelTaskAlarm(task.id, task.name);
     onNavigate({ name: 'home' });
   };
 
@@ -369,6 +414,14 @@ export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
         const u = t.units.find((x) => x.id === unitId);
         if (!u) return;
         u.checkedAt = null;
+        // Lands on 'running', deliberately NOT 'planned' — and therefore
+        // deliberately does NOT re-arm a start-by alarm (anti-rot
+        // increment, 0.37.0). scheduleTaskAlarm only ever arms for a
+        // 'planned' task (its own no-op guard) because the alarm's whole
+        // purpose is catching the never-started case; a reopened task is
+        // already being worked (that's the entire point of Reopen — undo
+        // one accidental check-off, not restart the task), so there is no
+        // "forgot to start" gap left for an alarm to guard against.
         t.status = 'running';
       });
       void logEvent('task', `Task reopened: ${taskName}.`);

@@ -5,6 +5,7 @@ import {
   taskDeadlineResult,
   taskFinishedAt,
   taskProjection,
+  taskStartBy,
 } from './taskProjection';
 import type { WorkTask } from '../db/types';
 
@@ -171,6 +172,53 @@ describe('taskProjection', () => {
 
     expect(remainingUnits).toBe(1);
     expect(unitsThatFit).toBe(1);
+  });
+});
+
+describe('taskStartBy', () => {
+  it('computes deadlineAt minus the sum of every unit\'s plannedMinutes', () => {
+    const task = makeTask({ deadlineAt: '2026-07-09T08:45:00.000Z' }); // default: 3 x 15 = 45 min
+    expect(taskStartBy(task)!.toISOString()).toBe('2026-07-09T08:00:00.000Z');
+  });
+
+  it('returns null when the task has no deadline', () => {
+    const task = makeTask({ deadlineAt: null });
+    expect(taskStartBy(task)).toBeNull();
+  });
+
+  it('sums minutes across units of different lengths, not units.length * one value', () => {
+    const task = makeTask({
+      units: [
+        { id: 'u1', name: 'Befunden EEG', plannedMinutes: 20, checkedAt: null },
+        { id: 'u2', name: 'Befunden EEG', plannedMinutes: 5, checkedAt: null },
+        { id: 'u3', name: 'Befunden EEG', plannedMinutes: 10, checkedAt: null },
+      ],
+      deadlineAt: '2026-07-09T09:00:00.000Z',
+    });
+    // 20 + 5 + 10 = 35 min -> 09:00 - 35 min = 08:25.
+    expect(taskStartBy(task)!.toISOString()).toBe('2026-07-09T08:25:00.000Z');
+  });
+
+  it('sums ALL units, including already-checked ones — the full planned total, not taskProjection\'s remaining-only sum', () => {
+    const task = makeTask({
+      units: [
+        { id: 'u1', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-09T07:00:00.000Z' },
+        { id: 'u2', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: null },
+      ],
+      deadlineAt: '2026-07-09T09:00:00.000Z',
+    });
+    // Both units count (30 min total) even though u1 is already checked.
+    expect(taskStartBy(task)!.toISOString()).toBe('2026-07-09T08:30:00.000Z');
+  });
+
+  it('returns the computed instant even when it is already in the past — the SCHEDULER decides past-ness, not this pure fn', () => {
+    const task = makeTask({
+      deadlineAt: '2020-01-01T00:30:00.000Z',
+      units: [{ id: 'u1', name: 'Befunden EEG', plannedMinutes: 45, checkedAt: null }],
+    });
+    const startBy = taskStartBy(task);
+    expect(startBy).not.toBeNull();
+    expect(startBy!.toISOString()).toBe('2019-12-31T23:45:00.000Z');
   });
 });
 

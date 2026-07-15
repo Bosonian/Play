@@ -23,9 +23,15 @@ import { syncTransitEvents } from './lib/transitSync';
 // destination — SprintSetup, prefilled via `autoSuggest` — routed through
 // the same navigateToScreen queue-or-navigate helper the deep-link handler
 // below already uses, rather than a departure id `registerNotificationNavigation`
-// has none of for this kind of alarm.
-void registerNotificationNavigation(navigateToDeparture, () =>
-  navigateToScreen({ name: 'sprintSetup', autoSuggest: true }),
+// has none of for this kind of alarm. The third callback (anti-rot
+// increment, 0.37.0) is a tapped task start-by alarm's destination — the
+// task id it DOES carry (`extra.taskId`), handed to the same
+// navigateToScreen helper rather than needing its own queue like
+// navigateToDeparture, since navigateToScreen already covers any Screen.
+void registerNotificationNavigation(
+  navigateToDeparture,
+  () => navigateToScreen({ name: 'sprintSetup', autoSuggest: true }),
+  (taskId) => navigateToScreen({ name: 'task', taskId }),
 );
 
 // Widgets increment: a tap on the Prüfung widget or a static home-screen

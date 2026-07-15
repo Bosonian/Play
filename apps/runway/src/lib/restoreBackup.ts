@@ -1,6 +1,6 @@
 import { db } from '../db/db';
-import type { Departure } from '../db/types';
-import { ensurePermissions, scheduleDepartureAlarms } from '../native/notifications';
+import type { Departure, WorkTask } from '../db/types';
+import { ensurePermissions, scheduleDepartureAlarms, scheduleTaskAlarm } from '../native/notifications';
 import { refreshWidgets } from '../native/widgets';
 import { SECRET_SETTING_KEYS, type RunwayBackup } from './backup';
 import { refreshDayGauge } from './dayGaugeRefresh';
@@ -126,6 +126,36 @@ export async function restoreBackup(backup: RunwayBackup): Promise<void> {
     }
   } catch (err) {
     console.warn('Runway: failed to re-arm departure alarms after restore', err);
+  }
+
+  try {
+    // Anti-rot increment (0.37.0): same shape as the departure re-arm block
+    // just above, own try/catch so a task-alarm failure can't stop the
+    // departure re-arm (already run) or anything below it. Eligible mirrors
+    // the departure filter's own two conditions, translated to a task's
+    // fields: still 'planned' (a 'running'/'done'/'abandoned' task has no
+    // start-by alarm to restore — see scheduleTaskAlarm's own no-op guard)
+    // and a deadline still in the future (a past deadline means
+    // scheduleTaskAlarm would no-op anyway; filtering here avoids a wasted
+    // ensurePermissions() call for a backup with zero eligible tasks).
+    const now = Date.now();
+    const eligibleTasks = (backup.tables.tasks ?? []).filter(
+      (task: WorkTask) => task.status === 'planned' && task.deadlineAt !== null && new Date(task.deadlineAt).getTime() > now,
+    );
+    if (eligibleTasks.length > 0) {
+      const granted = await ensurePermissions();
+      if (granted) {
+        for (const task of eligibleTasks) {
+          try {
+            await scheduleTaskAlarm(task);
+          } catch (err) {
+            console.warn('Runway: failed to schedule alarm for restored task', task.id, err);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Runway: failed to re-arm task alarms after restore', err);
   }
 
   try {

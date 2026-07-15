@@ -79,6 +79,41 @@ export function taskProjection(now: Date, task: Pick<WorkTask, 'units' | 'deadli
 }
 
 /**
+ * The single instant a deadline-bearing task needs to be STARTED by to
+ * finish exactly on time, assuming every remaining unit takes exactly its
+ * planned minutes: deadlineAt minus the sum of EVERY unit's plannedMinutes
+ * — the full plan, not `taskProjection`'s `remainingMinutes` (which only
+ * sums unchecked units). That's deliberate, not an inconsistency between
+ * the two: `notifications.ts`'s `scheduleTaskAlarm` (the only real caller)
+ * only ever runs once, at creation, before any unit could possibly be
+ * checked — "full plan" and "remaining plan" are the same number at that
+ * moment, and reusing `taskProjection` here would mean silently depending
+ * on that coincidence instead of stating the actual computation this
+ * function performs.
+ *
+ * `null` when there's no deadline to work backwards from — mirrors every
+ * other "nothing to measure against" `null` in this file.
+ *
+ * Deliberately does NOT decide whether the returned instant has already
+ * passed — that judgment call belongs to the SCHEDULER
+ * (`notifications.ts`'s `scheduleTaskAlarm`, which treats an already-past
+ * startBy as "arm nothing," not "arm it for right now"), not to this pure
+ * function. A past startBy is still an honest, correct answer to "when did
+ * this need to start" — a future "you're already behind" surface has just
+ * as much reason to read it as the scheduler has reason to refuse to act
+ * on it.
+ */
+export function taskStartBy(task: Pick<WorkTask, 'units' | 'deadlineAt'>): Date | null {
+  // `== null`, not `=== null` — same undefined-as-null discipline as
+  // taskDeadlineResult directly above: a row restored from a backup (or any
+  // future source that strips absent fields) must read as "no deadline",
+  // never as a schedulable NaN date.
+  if (task.deadlineAt == null) return null;
+  const totalMinutes = task.units.reduce((sum, unit) => sum + unit.plannedMinutes, 0);
+  return new Date(new Date(task.deadlineAt).getTime() - totalMinutes * 60_000);
+}
+
+/**
  * Reconstructs how long each checked-off unit actually took, from
  * check-off timestamps alone — task mode's equivalent of
  * calibration.ts's `deriveStepActuals`. Not a second copy of that chain-

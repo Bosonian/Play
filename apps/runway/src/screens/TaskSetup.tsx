@@ -12,6 +12,7 @@ import { stepNameLibrary } from '../lib/learning';
 import { taskProjection } from '../lib/taskProjection';
 import { formatSlackLine, formatTime } from '../lib/format';
 import { nextOccurrenceOf } from '../lib/nextOccurrence';
+import { ensurePermissions, scheduleTaskAlarm } from '../native/notifications';
 import { logEvent } from '../lib/eventLog';
 
 /** Same "defaults lean toward less, not more" reasoning (CLAUDE.md) behind
@@ -140,6 +141,26 @@ export function TaskSetup({ onNavigate }: TaskSetupProps) {
     };
     await db.tasks.add(task);
     void logEvent('task', `Task created: ${task.name}.`);
+
+    // Anti-rot increment (0.37.0): mirrors DepartureSetup's own save path —
+    // request notification permission lazily, only now that there's
+    // actually something to schedule (a deadline-less task has nothing for
+    // scheduleTaskAlarm to arm, so there's nothing worth an Android
+    // permission prompt for). Failure here is deliberately non-blocking:
+    // the task is already saved and navigation still happens either way —
+    // Home's notification-permission banner is the non-blocking surface for
+    // "alerts won't fire", not this form.
+    if (deadlineAt !== null) {
+      try {
+        const granted = await ensurePermissions();
+        if (granted) {
+          await scheduleTaskAlarm(task);
+        }
+      } catch (err) {
+        console.warn('Runway: failed to schedule task alarm', err);
+      }
+    }
+
     onNavigate({ name: 'task', taskId: task.id });
   }
 
