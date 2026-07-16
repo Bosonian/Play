@@ -4,6 +4,55 @@ A de-identified, physician-in-the-loop Parkinson's dosing companion. Patients
 log levodopa doses, motor state, and meals; the treating neurologist reviews the
 patterns and adjusts the prescription. The app never prescribes.
 
+## 0.7.0 — Activity log (Phase A of activity log + field reporting)
+
+Diagnostic plumbing so a reported problem comes with evidence. This is the
+first of two coupled halves under 0.7.0: **Phase A — the activity log** (here);
+**Phase B — field reporting** (the report form + offline queue + GitHub filing)
+lands next under this same version and reuses the log via an opt-in attachment.
+
+- **The app's own account of what it did.** A local, capped `activityLog` table
+  ({id, at, category, message}) recording one exact sentence per state
+  transition — a dose/motor/meal logged, an undo, a regimen edit, app open,
+  patient bootstrap. The module states THE RULE at its head and it's enforced
+  at review: the log answers "what did the app *do*", never "what did the user
+  *see*". No renders, no queries, no screen visits.
+- **Logging can never break a feature.** `logEvent` is fire-and-forget,
+  double-guarded (sync try/catch + promise catch), never thrown from, never
+  awaited. A logging failure silently loses at most one line. Instrumentation
+  lives at the write *handlers* (logMotor, logDose, saveItem, …), not the
+  store's `addEvent` — because `addEvent` is intent-ambiguous (it serves
+  first-log, undo, refine, and time-shift), so only the handler knows the true
+  one-sentence intent. One known blind spot is closed deliberately: `logEvent`
+  must never run inside a Dexie transaction (the log table isn't in scope and
+  the write would be silently rejected), so the patient-bootstrap logs *after*
+  its transaction commits — with a regression test pinning that a logging
+  failure never aborts the real write.
+- **Bounded, self-correcting.** Newest ~2000 rows kept; pruned in one cheap pass
+  per app open (not per write), and the prune is itself logged only when it
+  removed something.
+- **Doctor-side viewer** (behind the passcode): reverse-chronological, local-day
+  headers, monospace, plus "Share log" (last ~500 lines via the OS share sheet,
+  clipboard fallback on desktop with a calm inline confirmation). This viewer
+  and the Phase B report attachment are the *only* two paths by which log rows
+  ever leave the device.
+- **Clinical-honesty note carried forward:** log lines name drugs, doses, and
+  motor states. Sharing or (Phase B) attaching a log to a public repository
+  publishes de-identified clinical data — the copy will warn at every point it
+  matters once reporting lands.
+
+Schema moves to Dexie `version(3)` (additive, migration-tested v2→v3); it
+declares *both* the `activityLog` and the (Phase-B) `fieldReports` tables now, so
+the report system needs no further schema change. `APP_VERSION` is a
+hand-maintained constant (bumped with package.json) — no compiler enforcement,
+stated honestly.
+
+Suite is 134 tests (was 123): +11 covering the v2→v3 migration, `logEvent`
+never-throws (including inside a transaction), the 3000→2000 prune (newest
+kept), and the log formatting/capture. Activity-log flow also driven in
+Chromium (events recorded with exact messages, viewer renders, Share copies),
+11/11. Typecheck and web build clean; APK compile is CI-only as before.
+
 ## 0.6.0 — Patient dose logging against the regimen
 
 The load-bearing patient-side loop closes: the regimen the doctor authored

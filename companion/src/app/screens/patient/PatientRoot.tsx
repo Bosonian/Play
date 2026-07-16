@@ -7,8 +7,9 @@ import { useLiveQuery } from 'dexie-react-hooks';
 // hand-rolled "refetch after every write" bookkeeping, and adds ~1kB.
 import { db, addEvent, deleteEvent, getRegimenForPatient } from '../../db/store';
 import { usePatient } from '../../patient/usePatient';
-import { buildMotorEvent, buildMealEvent, refineDyskinesia, shiftEventTime } from '../../patient/log';
-import { buildDoseEvent, extraDoseChoices } from '../../patient/doses';
+import { buildMotorEvent, buildMealEvent, refineDyskinesia, shiftEventTime, eventLabel, formatTimeHM } from '../../patient/log';
+import { buildDoseEvent, extraDoseChoices, doseLabel } from '../../patient/doses';
+import { logEvent } from '../../activity/activityLog';
 import type { PrimaryTap, DyskinesiaRefinement } from '../../../domain/motor';
 import type { DrugId } from '../../../domain/drugs';
 import type { MotorEvent, PatientEvent } from '../../../domain/types';
@@ -73,10 +74,18 @@ export function PatientRoot() {
     void fn();
   }
 
+  // Activity-log instrumentation lives in these per-intent handlers, not in
+  // store.ts's addEvent: addEvent is intent-ambiguous (it's the same call
+  // for a first log, an undo-restore, a refine-overwrite, and a time-shift
+  // overwrite), so it can't produce a distinct log sentence on its own. The
+  // handlers are the choke point where intent is actually known. This also
+  // keeps store.ts thin and keeps logEvent free of any React dependency
+  // (see activityLog.ts's module header — it must never import React).
   async function logMotor(primary: PrimaryTap) {
     if (!patient) return;
     const ev = buildMotorEvent(patient.code, primary, new Date().toISOString());
     await addEvent(db, ev);
+    void logEvent('motor', `Logged motor state: ${eventLabel(ev)}`);
     setLastAction({ kind: 'logged', event: ev, label: 'State logged' });
     if (primary === 'on-dyskinesia') {
       // Stay on State (it shows the refine sub-screen); remember the event
@@ -95,6 +104,7 @@ export function PatientRoot() {
     }
     const refined = refineDyskinesia(target, refinement);
     await addEvent(db, refined); // put = overwrite, same id as the unspecified event
+    void logEvent('motor', `Refined motor state: ${eventLabel(refined)}`);
     // Keep lastAction in sync with the refined event (same id either way) so
     // a subsequent Undo deletes the refined version, not the unspecified one.
     setLastAction({ kind: 'logged', event: refined, label: 'State logged' });
@@ -106,6 +116,7 @@ export function PatientRoot() {
     if (!patient) return;
     const ev = buildMealEvent(patient.code, protein, new Date().toISOString());
     await addEvent(db, ev);
+    void logEvent('meal', `Logged meal: ${protein} protein`);
     setLastAction({ kind: 'logged', event: ev, label: 'Meal logged' });
     setScreen({ name: 'home' });
   }
@@ -120,6 +131,10 @@ export function PatientRoot() {
     if (!patient) return;
     const ev = buildDoseEvent(patient.code, drug, doseMg, new Date().toISOString(), scheduledTime);
     await addEvent(db, ev);
+    void logEvent(
+      'dose',
+      `Logged dose: ${doseLabel(drug, doseMg)}, ${scheduledTime === undefined ? 'unscheduled' : `${scheduledTime} slot`}`,
+    );
     setLastAction({ kind: 'logged', event: ev, label: 'Dose logged' });
   }
 
@@ -132,8 +147,10 @@ export function PatientRoot() {
     // stale duplicate tap.
     if (lastAction.kind === 'logged') {
       await deleteEvent(db, lastAction.event.id);
+      void logEvent(lastAction.event.kind, `Undo removed ${lastAction.event.kind} entry`);
     } else {
       await addEvent(db, lastAction.event);
+      void logEvent(lastAction.event.kind, `Undo restored ${lastAction.event.kind} entry`);
     }
     setLastAction(null);
   }
@@ -141,10 +158,12 @@ export function PatientRoot() {
   async function changeTime(event: PatientEvent, delta: number) {
     const shifted = shiftEventTime(event, delta, new Date().toISOString());
     await addEvent(db, shifted); // put overwrites in place
+    void logEvent(event.kind, `Shifted ${event.kind} entry to ${formatTimeHM(shifted.at)}`);
   }
 
   async function deleteFromDetail(event: PatientEvent) {
     await deleteEvent(db, event.id);
+    void logEvent(event.kind, `Deleted ${event.kind} entry`);
     setLastAction({ kind: 'deleted', event });
     setScreen({ name: 'home' });
   }

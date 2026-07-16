@@ -235,4 +235,98 @@ describe('store — regimen items', () => {
     expect(regimen.map((i) => i.id)).toEqual(['r1']);
     v2db.close();
   });
+
+  it('migration: a v1+v2-only database opened under the v3 schema keeps old rows and gains activityLog + fieldReports', async () => {
+    // Local class declaring ONLY the version-1+version-2 stores, simulating a
+    // device that has never seen the v3 schema — proves the v2->v3 migration
+    // path is additive and non-destructive (SPEC RISK A).
+    class V2Database extends Dexie {
+      patients!: EntityTable<Patient, 'code'>;
+      events!: EntityTable<PatientEvent, 'id'>;
+      patientModels!: EntityTable<PatientModel, 'patient'>;
+      consent!: EntityTable<Consent, 'patient'>;
+      regimenItems!: EntityTable<RegimenItem, 'id'>;
+
+      constructor(name: string) {
+        super(name);
+        this.version(1).stores({
+          patients: '&code, createdAt',
+          events: '&id, patient, at, kind, [patient+at]',
+          patientModels: '&patient',
+          consent: '&patient',
+        });
+        this.version(2).stores({
+          regimenItems: '&id, patient',
+        });
+      }
+    }
+
+    const dbName = `test-companion-migration-v3-${Date.now()}`;
+    const v2db = new V2Database(dbName);
+    await v2db.patients.put({ code: 'P-01', createdAt: '2026-07-16T00:00:00Z' });
+    await v2db.events.put(dose('legacy-event', '2026-07-16T08:00:00Z'));
+    await v2db.regimenItems.put(regimenItem('legacy-r1', 'P-01'));
+    v2db.close();
+
+    const v3db = makeDb(dbName);
+    const events = await getEventsInRange(
+      v3db,
+      'P-01',
+      '2026-07-16T00:00:00Z',
+      '2026-07-16T23:59:59Z',
+    );
+    expect(events.map((e) => e.id)).toEqual(['legacy-event']);
+    const regimen = await getRegimenForPatient(v3db, 'P-01');
+    expect(regimen.map((i) => i.id)).toEqual(['legacy-r1']);
+
+    // New v3 tables accept writes.
+    await v3db.activityLog.put({
+      id: 'a1',
+      at: '2026-07-16T00:00:00Z',
+      category: 'lifecycle',
+      message: 'test',
+    });
+    expect(await v3db.activityLog.count()).toBe(1);
+
+    await v3db.fieldReports.put({
+      id: 'f1',
+      createdAt: '2026-07-16T00:00:00Z',
+      status: 'pending',
+      description: 'test',
+      metadata: { appVersion: '0.7.0', screen: 'list', at: '2026-07-16T00:00:00Z' },
+    });
+    expect(await v3db.fieldReports.count()).toBe(1);
+
+    v3db.close();
+  });
+
+  it('fieldReports.status index: where(status).equals(pending) returns exactly the pending rows', async () => {
+    const db = freshDb();
+    await db.fieldReports.bulkPut([
+      {
+        id: 'pending-1',
+        createdAt: '2026-07-16T00:00:00Z',
+        status: 'pending',
+        description: 'a',
+        metadata: { appVersion: '0.7.0', screen: 'list', at: '2026-07-16T00:00:00Z' },
+      },
+      {
+        id: 'synced-1',
+        createdAt: '2026-07-16T00:00:00Z',
+        status: 'synced',
+        description: 'b',
+        metadata: { appVersion: '0.7.0', screen: 'list', at: '2026-07-16T00:00:00Z' },
+      },
+      {
+        id: 'failed-1',
+        createdAt: '2026-07-16T00:00:00Z',
+        status: 'failed',
+        description: 'c',
+        metadata: { appVersion: '0.7.0', screen: 'list', at: '2026-07-16T00:00:00Z' },
+      },
+    ]);
+    const pending = await db.fieldReports.where('status').equals('pending').toArray();
+    expect(pending.map((r) => r.id)).toEqual(['pending-1']);
+    db.close();
+  });
 });

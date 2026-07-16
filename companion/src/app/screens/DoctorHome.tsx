@@ -4,10 +4,17 @@ import { db, putRegimenItem, deleteRegimenItem } from '../db/store';
 import { usePatient } from '../patient/usePatient';
 import { safeUuid } from '../lib/uuid';
 import { sortRegimenItems, sortTimes, type RegimenItem } from '../../domain/regimen';
+import { doseLabel } from '../patient/doses';
+import { logEvent } from '../activity/activityLog';
 import { RegimenList } from './doctor/RegimenList';
 import { RegimenItemForm, type RegimenItemDraft } from './doctor/RegimenItemForm';
+import { ActivityLogScreen } from './doctor/ActivityLogScreen';
 
-type DoctorScreen = { name: 'list' } | { name: 'add' } | { name: 'edit'; item: RegimenItem };
+type DoctorScreen =
+  | { name: 'list' }
+  | { name: 'add' }
+  | { name: 'edit'; item: RegimenItem }
+  | { name: 'activityLog' };
 
 // Doctor-mode container: authors the patient's prescribed regimen. This
 // increment's writes are all here — RegimenList and RegimenItemForm are pure
@@ -35,7 +42,8 @@ export function DoctorHome() {
 
   async function saveItem(draft: RegimenItemDraft) {
     if (!patient) return;
-    const existingId = screen.name === 'edit' ? screen.item.id : safeUuid();
+    const isEdit = screen.name === 'edit';
+    const existingId = isEdit ? screen.item.id : safeUuid();
     const item: RegimenItem = {
       id: existingId,
       patient: patient.code,
@@ -45,12 +53,17 @@ export function DoctorHome() {
       updatedAt: new Date().toISOString(),
     };
     await putRegimenItem(db, item);
+    void logEvent(
+      'regimen',
+      `${isEdit ? 'Updated' : 'Added'} regimen item: ${doseLabel(item.drug, item.doseMg)}`,
+    );
     setScreen({ name: 'list' });
     setLastRemoved(null);
   }
 
   async function removeItem(item: RegimenItem) {
     await deleteRegimenItem(db, item.id);
+    void logEvent('regimen', `Removed regimen item: ${doseLabel(item.drug, item.doseMg)}`);
     setLastRemoved(item);
   }
 
@@ -59,6 +72,7 @@ export function DoctorHome() {
     // Same id -> idempotent restore. updatedAt is deliberately NOT refreshed
     // here: an undo restores the item exactly as it was, not as a new edit.
     await putRegimenItem(db, lastRemoved);
+    void logEvent('regimen', `Restored regimen item: ${doseLabel(lastRemoved.drug, lastRemoved.doseMg)}`);
     setLastRemoved(null);
   }
 
@@ -86,15 +100,31 @@ export function DoctorHome() {
     );
   }
 
+  if (screen.name === 'activityLog') {
+    return <ActivityLogScreen onBack={() => setScreen({ name: 'list' })} />;
+  }
+
   return (
-    <RegimenList
-      patientCode={patient.code}
-      items={sortRegimenItems(items ?? [])}
-      lastRemoved={lastRemoved}
-      onAdd={() => setScreen({ name: 'add' })}
-      onEdit={(item) => setScreen({ name: 'edit', item })}
-      onRemove={(item) => void removeItem(item)}
-      onUndoRemove={() => void undoRemove()}
-    />
+    <>
+      <RegimenList
+        patientCode={patient.code}
+        items={sortRegimenItems(items ?? [])}
+        lastRemoved={lastRemoved}
+        onAdd={() => setScreen({ name: 'add' })}
+        onEdit={(item) => setScreen({ name: 'edit', item })}
+        onRemove={(item) => void removeItem(item)}
+        onUndoRemove={() => void undoRemove()}
+      />
+      {/* Phase A footer: only the Activity log link. Settings / Report a
+          problem links are Phase B — do not add them here without a spec
+          update. */}
+      <button
+        type="button"
+        onClick={() => setScreen({ name: 'activityLog' })}
+        className="mt-6 text-label text-fg-muted underline underline-offset-2"
+      >
+        Activity log
+      </button>
+    </>
   );
 }

@@ -14,6 +14,8 @@
 import Dexie, { type EntityTable } from 'dexie';
 import type { Patient, PatientEvent, PatientModel, Consent, ISODateTime } from '../../domain/types';
 import type { RegimenItem } from '../../domain/regimen';
+import type { ActivityRow } from '../activity/types';
+import type { FieldReport } from '../report/types';
 
 // The companion's Dexie database. Modeled on the root Head-in app's
 // src/db/db.ts pattern (see that file for the versioning-comment rationale).
@@ -27,6 +29,8 @@ export class CompanionDatabase extends Dexie {
   patientModels!: EntityTable<PatientModel, 'patient'>;
   consent!: EntityTable<Consent, 'patient'>;
   regimenItems!: EntityTable<RegimenItem, 'id'>;
+  activityLog!: EntityTable<ActivityRow, 'id'>;
+  fieldReports!: EntityTable<FieldReport, 'id'>;
 
   constructor(name = 'pd-companion') {
     super(name);
@@ -51,6 +55,15 @@ export class CompanionDatabase extends Dexie {
     // store.test.ts (an existing v1 row survives opening under this v2 schema).
     this.version(2).stores({
       regimenItems: '&id, patient',
+    });
+
+    // Additive only, same rule as version(2): no changes to any earlier table,
+    // no .upgrade() needed. BOTH new tables are declared here in one block even
+    // though fieldReports is unused until the report system lands — one shipped
+    // version(3), never edited after (see SPEC RISK A / this file's SPEC RISK #1).
+    this.version(3).stores({
+      activityLog: '&id, at',
+      fieldReports: '&id, status, createdAt',
     });
 
     // When a future schema bump opens a new DB version in another tab, let
