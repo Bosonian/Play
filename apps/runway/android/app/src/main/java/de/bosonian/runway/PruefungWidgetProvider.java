@@ -56,8 +56,27 @@ import org.json.JSONObject;
  * `todayLine`, the one function CLAUDE.md's honesty constraint on
  * `Exam.dailyTarget` binds), never decided here. Unlike the progress bar,
  * this line's colour is set via a direct `setTextColor(int)` call rather
- * than a two-view visibility toggle — see `applyTodayLine`'s own comment
- * for why that's safe here even though it wasn't for the bar.
+ * than a two-view visibility toggle — see `applyHeadline`'s own comment
+ * (0.41.1's replacement for this paragraph's original `applyTodayLine`) for
+ * why that's safe here even though it wasn't for the bar.
+ *
+ * Headline swap (0.41.1): field feedback on 0.41.0, verbatim — "even after
+ * edit it didn't change". A 12sp Today row under the bar left the bold 18sp
+ * "Ready by ..." still leading, the same big-number paralysis 0.41.0 was
+ * meant to fix, just moved to a different screen. `widget_line1` and
+ * `widget_line_today` now swap roles depending on `headlineMode`
+ * (widgetSnapshot.ts's prebaked field, re-derived here rather than trusted
+ * blindly — see `applyHeadline`'s own comment on why): with a live
+ * `todayLine`, `widget_line1` goes bold with the Today count and
+ * `widget_line_today` is repurposed to hold whatever text/colour would
+ * otherwise have been `widget_line1`'s (the "Ready by ..." / "Ready: never
+ * at current pace" / "No topics yet." line, unchanged wording and colour
+ * logic); with no `todayLine`, `widget_line_today` stays exactly what it
+ * was pre-0.41.1: hidden, `widget_line1` renders the ready-by text as
+ * before. RemoteViews has no reordering primitive, so this two-slot
+ * repurposing — never a third view — is the only way to change which fact
+ * is bold without touching the layout file at all (see `applyHeadline`'s
+ * own comment for the full idiom).
  */
 public class PruefungWidgetProvider extends AppWidgetProvider {
 
@@ -95,11 +114,15 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
     private static final int COLOR_TIGHT = 0xFFFBBF24;
     private static final int COLOR_CALM = 0xFFF1F5F9;
 
-    // Daily shape (0.41.0): the Today line's two colours. COLOR_TODAY_DEFAULT
-    // matches widget_line_today's own XML default (#94A3B8, slate-400) —
-    // set explicitly anyway (see applyTodayLine's own comment on why) rather
-    // than left to fall through to the layout's static value.
-    private static final int COLOR_TODAY_DEFAULT = 0xFF94A3B8;
+    // Headline swap (0.41.1): the Today headline's "met" colour — emerald,
+    // the app's one acknowledgment accent (ExamOverview.tsx's own
+    // `dailyHeadline` uses the same hex, `emerald-300`). The "not met"
+    // colour is deliberately just COLOR_CALM above, not a separate slate-400
+    // constant the way 0.41.0's small under-bar line used — a daily target
+    // reads as a plain fact, same neutral `widget_line1` already uses for
+    // its own calm state, not a dimmer "less than" tone (mirrors
+    // ExamOverview.tsx's `dailyHeadline` colour comment: "a target is not a
+    // state").
     private static final int COLOR_TODAY_MET = 0xFF6EE7B7;
 
     @Override
@@ -206,7 +229,7 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
         // flow further down — a daily sprint target is decoupled from the
         // topic/pace projection (db/types.ts's DailyTarget doc comment), so
         // it must render even when emptyExam short-circuits everything
-        // else. See applyTodayLine's own comment for what this Calendar is
+        // else. See applyHeadline's own comment for what this Calendar is
         // compared against.
         Calendar todayMidnightCal = Calendar.getInstance();
         todayMidnightCal.set(Calendar.HOUR_OF_DAY, 0);
@@ -228,13 +251,16 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
         if (emptyExam) {
             // Same shape as renderNoExam (one line, calm colour, lines 2-3
             // blank) — see EMPTY_EXAM_LINE1's own comment for why the
-            // sentence must differ from NO_EXAM_LINE1's.
-            views.setTextViewText(R.id.widget_line1, EMPTY_EXAM_LINE1);
-            views.setTextColor(R.id.widget_line1, COLOR_CALM);
+            // sentence must differ from NO_EXAM_LINE1's. What used to be an
+            // unconditional widget_line1 assignment is now routed through
+            // applyHeadline (0.41.1) — EMPTY_EXAM_LINE1/COLOR_CALM still land
+            // on widget_line1 whenever there's no live todayLine to promote,
+            // exactly as before; see applyHeadline's own comment for the
+            // "today" branch.
             views.setTextViewText(R.id.widget_line2, "");
             views.setTextViewText(R.id.widget_line3, "");
             views.setViewVisibility(R.id.widget_progress_row, View.GONE);
-            applyTodayLine(views, pruefung, todayMidnightMs);
+            applyHeadline(views, pruefung, todayMidnightMs, EMPTY_EXAM_LINE1, COLOR_CALM);
             return;
         }
 
@@ -245,14 +271,22 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
 
         views.setTextViewText(R.id.widget_line2, anchorLabel);
 
+        // Headline swap (0.41.1): readyText/readyColor are exactly what
+        // widget_line1 was unconditionally assigned pre-0.41.1 in both
+        // branches below — collected into local variables now instead of
+        // written straight to the view, because applyHeadline (called once,
+        // after this if/else) needs to decide WHICH view they land on.
+        String readyText;
+        int readyColor;
+
         if (neverReady) {
             // Mirrors examProjection.ts's readyDate === null case exactly
             // (zero measured pace, or an overflowed projection) — see
             // PruefungWidgetData.neverReady's doc comment in
             // widgetSnapshot.ts. readyDayEpochMs/generatedDayEpochMs are
             // meaningless here and are not read.
-            views.setTextViewText(R.id.widget_line1, "Ready: never at current pace");
-            views.setTextColor(R.id.widget_line1, COLOR_LATE);
+            readyText = "Ready: never at current pace";
+            readyColor = COLOR_LATE;
         } else {
             // m3: readyDayEpochMs/generatedDayEpochMs are both already local
             // midnight of their respective calendar days (see
@@ -294,14 +328,18 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
                 color = COLOR_CALM;
             }
 
-            views.setTextViewText(R.id.widget_line1, "Ready by " + formatDisplayDate(displayReadyDay));
-            views.setTextColor(R.id.widget_line1, color);
+            readyText = "Ready by " + formatDisplayDate(displayReadyDay);
+            readyColor = color;
         }
 
-        // Daily shape (0.41.0): rendered here, between the ready-by branch
-        // above and the stale-week guard below, matching widget_pruefung.xml's
-        // own top-to-bottom order (bar, Today line, week line, anchor line).
-        applyTodayLine(views, pruefung, todayMidnightMs);
+        // Headline swap (0.41.1): decides whether readyText/readyColor land
+        // on widget_line1 (unchanged, no live daily target) or get pushed
+        // down onto the repurposed widget_line_today row while the Today
+        // count takes the bold slot instead — see applyHeadline's own
+        // comment for the full idiom. Replaces the old unconditional
+        // applyTodayLine call, which only ever owned widget_line_today's own
+        // text/visibility and never touched widget_line1.
+        applyHeadline(views, pruefung, todayMidnightMs, readyText, readyColor);
 
         // Stale-week guard: once the real device clock has moved past the
         // week this weekLine was computed for, it no longer describes "this
@@ -358,52 +396,81 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
     }
 
     /**
-     * Daily shape (0.41.0): "Today: N of target sprints." / "Rest day."
-     * between the weekly bar and "This week: ...". Called from BOTH the
-     * emptyExam early return and the ordinary ready-date flow above — a
-     * daily sprint target has nothing to do with whether the exam has
-     * topics yet (db/types.ts's `DailyTarget` doc comment: deliberately
-     * decoupled from the pace/topic projection), so it must not be hidden
-     * just because `emptyExam` short-circuits everything else this method
-     * renders.
+     * Headline swap (0.41.1, replacing 0.41.0's applyTodayLine): decides
+     * which of two facts — today's sprint count, or the ready-by projection
+     * — gets `widget_line1`'s bold 18sp treatment, and pushes the other one
+     * down onto the repurposed `widget_line_today` row. Called from BOTH the
+     * emptyExam early return and the ordinary ready-date/neverReady flow
+     * above, same as 0.41.0's applyTodayLine was — a daily sprint target has
+     * nothing to do with whether the exam has topics yet (db/types.ts's
+     * `DailyTarget` doc comment: deliberately decoupled from the
+     * pace/topic projection), so which fact leads must not depend on
+     * `emptyExam` short-circuiting everything else this method's callers
+     * render.
      *
-     * Text tinting via `setTextColor(int)` directly, unlike the progress
-     * bar's two-pre-coloured-view toggle above — `setTextColor` is a plain
-     * `@RemotableViewMethod` on `TextView`, reliable across every API level
-     * this app's minSdk spans, unlike `RemoteViews` retinting a
-     * `ProgressDrawable`'s tint (see this class's own header comment on the
-     * bar for why THAT needed the two-view workaround instead of just
-     * recolouring one view). Both branches below set the colour explicitly
-     * — never left to the XML default — because a recycled `RemoteViews`
-     * object can carry a stale tint from a PREVIOUS render: an emerald
-     * "met" colour from an earlier redraw must not silently persist onto a
-     * later, not-yet-met one.
+     * `readyText`/`readyColor`: whatever the caller would have put on
+     * `widget_line1` before this swap existed — "Ready by ...", "Ready:
+     * never at current pace", or "No topics yet.", each with its own
+     * existing colour logic (state-band or plain `COLOR_CALM`), computed by
+     * the caller exactly as before. In "ready" mode these are `widget_line1`
+     * unchanged; in "today" mode they move onto `widget_line_today` instead.
+     *
+     * RemoteViews has no view-reordering primitive — a `TextView`'s position
+     * in the layout is fixed once inflated — so "the day-sized number leads"
+     * can't be implemented by moving a view up the tree the way
+     * ExamOverview.tsx's JSX can just render a different element first. The
+     * idiom here is the RemoteViews-native equivalent: two ALREADY-existing,
+     * fixed-position slots (`widget_line1` above the bar, `widget_line_today`
+     * below it) that both always exist in the layout, with `setTextViewText`/
+     * `setTextColor`/`setViewVisibility` deciding per-render which fact each
+     * one shows — content and colour move between slots, the slots
+     * themselves never do. Both branches below set text/colour explicitly on
+     * both views, never left to a stale value — a recycled `RemoteViews`
+     * object can otherwise carry EITHER a stale headline from a previous
+     * render (a "today" render's bold Today text bleeding into a later
+     * "ready" render) OR a stale repurposed-row value in the other
+     * direction, same "always set, never assume" discipline 0.41.0's
+     * applyTodayLine already used for its one row.
      *
      * `todayMidnightMs`: the widget's own idea of local midnight "today",
      * computed once by the caller. Compared against the snapshot's own
      * `generatedDayEpochMs` (optionally read here, tolerant of a missing
      * key — same schema-upgrade idiom `emptyExam`/`weekProgressPercent`
      * already use) so a snapshot that's sat unrefreshed since a PREVIOUS
-     * calendar day never shows yesterday's sprint count under today's
-     * label — the one-day analogue of `weekIsCurrent`'s own seven-day
-     * staleness guard just below this method's call sites.
+     * calendar day falls back to "ready" mode rather than headlining
+     * yesterday's sprint count in bold — the one-day staleness guard
+     * 0.41.0 already applied to the small under-bar line, extended here to
+     * cover the HEADLINE too: this is the more important half of the guard,
+     * not a lesser one — a bold, wrong "Today: 3 of 3 sprints." is a much
+     * louder lie than the same sentence in 12sp would have been. Same
+     * lie-class rule as `weekIsCurrent`'s own seven-day guard just below
+     * this method's call sites.
      */
-    private void applyTodayLine(RemoteViews views, JSONObject pruefung, long todayMidnightMs) {
+    private void applyHeadline(RemoteViews views, JSONObject pruefung, long todayMidnightMs, String readyText, int readyColor) {
         long generatedDayEpochMs = pruefung.optLong("generatedDayEpochMs", -1);
         boolean current = generatedDayEpochMs == todayMidnightMs;
+        String todayLineText = pruefung.isNull("todayLine") ? null : pruefung.optString("todayLine", null);
 
-        if (!current || pruefung.isNull("todayLine")) {
+        if (!current || todayLineText == null) {
+            // Ready mode: widget_line1 keeps its ordinary text/colour
+            // (unchanged from pre-0.41.1 behaviour); the repurposed row has
+            // nothing to show — either no daily target was ever set, or a
+            // stale snapshot is falling back per the staleness guard above.
+            views.setTextViewText(R.id.widget_line1, readyText);
+            views.setTextColor(R.id.widget_line1, readyColor);
             views.setTextViewText(R.id.widget_line_today, "");
             views.setViewVisibility(R.id.widget_line_today, View.GONE);
             return;
         }
 
-        String todayLineText = pruefung.optString("todayLine", "");
         boolean todayMet = pruefung.optBoolean("todayMet", false);
 
+        views.setTextViewText(R.id.widget_line1, todayLineText);
+        views.setTextColor(R.id.widget_line1, todayMet ? COLOR_TODAY_MET : COLOR_CALM);
+
         views.setViewVisibility(R.id.widget_line_today, View.VISIBLE);
-        views.setTextViewText(R.id.widget_line_today, todayLineText);
-        views.setTextColor(R.id.widget_line_today, todayMet ? COLOR_TODAY_MET : COLOR_TODAY_DEFAULT);
+        views.setTextViewText(R.id.widget_line_today, readyText);
+        views.setTextColor(R.id.widget_line_today, readyColor);
     }
 
     /** Whole days between two instants, floor-divided — mirrors

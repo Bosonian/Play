@@ -39,12 +39,32 @@
      0.41.0 (daily shape): widget_line_today sits between the progress row
      and widget_line3 — "Today: 1 of 3 sprints." / "Rest day.", hidden
      (GONE) entirely when no dailyTarget is set. Coloured via a direct
-     setTextColor(int) call in PruefungWidgetProvider.applyTodayLine, NOT
-     the two-pre-coloured-view toggle the progress bar above uses — a plain
-     TextView's text colour is a @RemotableViewMethod RemoteViews can set
-     reliably on any API level this app's minSdk spans, unlike retinting a
-     ProgressDrawable, which is what forced the bar's two-view workaround in
-     the first place (see PruefungWidgetProvider's own comment on that). -->
+     setTextColor(int) call, NOT the two-pre-coloured-view toggle the
+     progress bar above uses — a plain TextView's text colour is a
+     @RemotableViewMethod RemoteViews can set reliably on any API level this
+     app's minSdk spans, unlike retinting a ProgressDrawable, which is what
+     forced the bar's two-view workaround in the first place (see
+     PruefungWidgetProvider's own comment on that).
+
+     Headline swap (0.41.1): widget_line_today is now DUAL-PURPOSE, not
+     single-purpose the way it was at 0.41.0 — RemoteViews has no
+     view-reordering primitive, so "the day-sized number becomes the
+     headline when a daily target is set" (ExamOverview.tsx's same swap,
+     mirrored here) can't be done by moving a view up the layout; it's done
+     by moving CONTENT between two already-existing, fixed-position slots
+     instead. With a live daily target: widget_line1 above goes bold with
+     the Today count (and picks up its own colour, set programmatically —
+     see PruefungWidgetProvider.applyHeadline), and THIS view is repurposed
+     to hold whatever text widget_line1 would otherwise have shown (the
+     ready-by projection), at this view's own existing 12sp size, state-
+     coloured the same way widget_line1's ready-by text always was. With no
+     daily target (or a stale snapshot — see applyHeadline's own staleness-
+     guard comment), this view goes back to being exactly what 0.41.0 built:
+     hidden, and widget_line1 shows the ready-by text as it always did. The
+     id keeps its 0.41.0 name (widget_line_today) rather than being renamed
+     to something mode-neutral — renaming here would touch this file and
+     PruefungWidgetProvider.java for a cosmetic gain only; this comment is
+     the source of truth for what the view actually does now. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_root"
     android:layout_width="match_parent"

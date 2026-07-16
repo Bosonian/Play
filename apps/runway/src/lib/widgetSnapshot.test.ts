@@ -258,6 +258,34 @@ describe('buildWidgetSnapshot', () => {
     expect(snapshot.pruefung?.todayLine).toBe('Rest day.');
     expect(snapshot.pruefung?.todayMet).toBe(true);
   });
+
+  // Headline swap (0.41.1): the mode PruefungWidgetProvider.java's
+  // applyHeadline uses to decide which slot gets the bold treatment — see
+  // PruefungWidgetData.headlineMode's own doc comment for why this is
+  // prebaked at all (the native side re-derives the same choice at render
+  // time rather than trusting this field blindly, to fold in the one-day
+  // staleness guard, but the snapshot-build-time decision itself needs to
+  // be testable without standing up RemoteViews/Java, which is what these
+  // pin).
+  it('headlineMode is "ready" when no dailyTarget is set', () => {
+    const snapshot = buildWidgetSnapshot(NOW, makeExam(), [makeTopic({ estimatedHours: 10 })], [], [], []);
+    expect(snapshot.pruefung?.headlineMode).toBe('ready');
+  });
+
+  it('headlineMode is "today" once a dailyTarget produces a todayLine', () => {
+    const exam = makeExam({ dailyTarget: { sprints: 2, restDay: null } });
+    const snapshot = buildWidgetSnapshot(NOW, exam, [makeTopic({ estimatedHours: 10 })], [], [], []);
+    expect(snapshot.pruefung?.headlineMode).toBe('today');
+  });
+
+  it('headlineMode is "today" on a rest day too — a rest day still has a todayLine to headline', () => {
+    // NOW (2026-07-09) is a Thursday, ISO weekday 4 — same fixture as the
+    // "Rest day." test above.
+    const exam = makeExam({ dailyTarget: { sprints: 3, restDay: 4 } });
+    const snapshot = buildWidgetSnapshot(NOW, exam, [makeTopic({ estimatedHours: 10 })], [], [], []);
+    expect(snapshot.pruefung?.todayLine).toBe('Rest day.');
+    expect(snapshot.pruefung?.headlineMode).toBe('today');
+  });
 });
 
 describe('buildWidgetSnapshot — departure', () => {

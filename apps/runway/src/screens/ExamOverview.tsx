@@ -17,7 +17,7 @@ import {
   zombieSprints,
 } from '../lib/examProjection';
 import type { ExamProjectionResult } from '../lib/examProjection';
-import { todayLine } from '../lib/dailyShape';
+import { isoWeekday, todayLine } from '../lib/dailyShape';
 import { nextMove } from '../lib/nextMove';
 import type { NextMove } from '../lib/nextMove';
 import { PRUEFUNG_GUIDED_DONE_KEY, isGuidedPassActive, markGuidedPassDone } from '../lib/guidedPass';
@@ -150,6 +150,28 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
   // never touches `projection` above.
   const daily = todayLine(now, exam.dailyTarget ?? null, sprints);
 
+  // Headline swap (0.41.1): CLAUDE.md's follow-up on 0.41.0, verbatim —
+  // "even after edit it didn't change". Putting "Today: 1 of 3 sprints." in
+  // small grey text under the weekly bar left the giant red "Ready by ..."
+  // still leading, which is exactly the big-number paralysis 0.41.0 was
+  // meant to fix. `dailyHeadline` is what actually promotes to the
+  // text-huge centerpiece below (and, correspondingly, what the old small
+  // Today line under the bar stops rendering for) — `null` whenever there's
+  // nothing to promote (no target set) OR the state is 'done': finishing
+  // every topic's own estimate already gets its own acknowledgment line
+  // ("All topics at their estimated hours.") and isn't a day this count
+  // should visually outrank. 'empty' needs no explicit exclusion here — its
+  // branch below is checked first and never reads this at all.
+  const dailyHeadline = projection.state === 'done' ? null : daily;
+
+  // Same isoWeekday/restDay comparison Sprint.tsx's PostSprintView already
+  // uses to know it's a rest day (`isRestDay`, that file's own local const)
+  // — reused here rather than string-matching dailyHeadline?.text ===
+  // 'Rest day.' against dailyShape.ts's literal, which would silently break
+  // if that copy ever changed.
+  const isRestDay =
+    exam.dailyTarget != null && exam.dailyTarget.restDay !== null && isoWeekday(now) === exam.dailyTarget.restDay;
+
   // Next-move card's suggestion (guided-layer increment §1) — see
   // showNextMoveArea below, where this combines with `liveSprint` (defined
   // further down) to decide whether the card actually renders.
@@ -256,6 +278,27 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
           // list is a setup step, not a projection result, and shouldn't
           // borrow that result's visual weight.
           <p className="text-2xl font-medium text-slate-400">No topics yet.</p>
+        ) : dailyHeadline ? (
+          // Headline swap (0.41.1, see `dailyHeadline`'s own comment
+          // above): same type scale/classes the "Ready by ..." headline
+          // below uses — this isn't a smaller or lighter treatment, the
+          // day-sized number gets exactly the visual weight the date used
+          // to get. 'Rest day.' reads slate-400 — a rest day is
+          // unconditionally `met: true` (dailyShape.ts's todayLine) but
+          // isn't an achievement to celebrate the way meeting a real target
+          // is, so it stays plain rather than borrowing the emerald
+          // acknowledgment tone. Not-met stays slate-100, not a warning
+          // colour — a daily target is a floor to reach, not a deadline to
+          // miss (CLAUDE.md's honesty-about-tradeoffs rule, applied to
+          // colour instead of copy: red here would imply lateness that
+          // isn't real).
+          <p
+            className={`text-huge font-bold tracking-tight tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${
+              isRestDay ? 'text-slate-400' : dailyHeadline.met ? 'text-emerald-300' : 'text-slate-100'
+            }`}
+          >
+            {dailyHeadline.text}
+          </p>
         ) : projection.readyDate ? (
           <p
             className={`text-huge font-bold tracking-tight tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${textAccent}`}
@@ -292,6 +335,39 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
               <p className="text-base font-medium text-emerald-300 motion-safe:transition-colors motion-safe:duration-300">
                 All topics at their estimated hours.
               </p>
+            ) : dailyHeadline ? (
+              // Compressed projection line (0.41.1): the truth the giant
+              // headline used to state, at the same visual weight as the
+              // anchor line just above it, now that the Today count has
+              // taken that slot. Not a new sentence — `formatDateMedium` and
+              // `formatExamMarginLine` are the exact same calls the old
+              // headline + margin line made, on the exact same `textAccent`
+              // colour (red-400 late, amber-400 tight, slate-100 calm),
+              // just recomposed onto one line so the projection reads as a
+              // single calm fact rather than two. The null-readyDate
+              // ("Never") case has no margin figure to attach to a combined
+              // line — `formatExamMarginLine` is only ever called alongside
+              // a non-null readyDate elsewhere on this screen too — so it
+              // keeps its original two-line shape ("Never" + the pace
+              // sentence), just sized down to match; combining those two
+              // into one line read like it was hiding the "no projection is
+              // possible" caveat inside a date-shaped sentence that has no
+              // date. Judgment call, flagged per the increment brief.
+              projection.readyDate ? (
+                <p className={`text-base font-medium tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${textAccent}`}>
+                  Ready by {formatDateMedium(projection.readyDate, now)} ·{' '}
+                  {formatExamMarginLine(projection.slackDays as number)}
+                </p>
+              ) : (
+                <>
+                  <p className={`text-base font-medium tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${textAccent}`}>
+                    Never
+                  </p>
+                  <p className="text-base text-slate-400">
+                    At the current pace of {projection.pace} h/week, no projection is possible.
+                  </p>
+                </>
+              )
             ) : (
               // slackDays is only null alongside a null readyDate (the
               // "Never" case above already explains itself) — nothing more
@@ -343,16 +419,20 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
             </div>
           )}
 
-          {/* Daily shape (this increment): directly under the weekly bar,
-              not up near the "Ready by"/margin headline above — the truth
-              stays the headline, this actionable line sits with the other
-              tactical, day-to-day surfaces (the bar, "This week: …", the
-              study-blocks schedule below). Same emerald-vs-slate tone rule
-              as the weekly bar just above it (met ⇒ the app's one emerald
-              "acknowledgment" accent, same as `weekAtTarget`'s colour
-              there) — never gated on or blended with `projection.state`,
-              per DailyTarget's own CRITICAL HONESTY CONSTRAINT. */}
-          {daily && (
+          {/* Daily shape (0.41.0), demoted to 'done' only (0.41.1): this
+              line used to render for every state — it's now the headline
+              above for calm/tight/late instead (`dailyHeadline`'s own
+              comment up top), so rendering it again here in those states
+              would just repeat the centerpiece in miniature underneath
+              itself. 'done' is the one state `dailyHeadline` deliberately
+              excludes from the swap (finishing every topic's estimate gets
+              its own acknowledgment line instead), so this is where the
+              Today count still lives for that state — same position,
+              same styling, unchanged from 0.41.0. Still never gated on or
+              blended with `projection.state` beyond this one exclusion, per
+              DailyTarget's own CRITICAL HONESTY CONSTRAINT: a 'done' exam
+              doesn't make today's sprint count any less real. */}
+          {daily && projection.state === 'done' && (
             <p
               className={`text-sm tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${
                 daily.met ? 'text-emerald-300' : 'text-slate-400'

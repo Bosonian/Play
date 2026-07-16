@@ -144,6 +144,24 @@ export interface PruefungWidgetData {
    * mirrors ExamOverview's weekly-bar colour decision — `false` (not
    * meaningful) whenever `todayLine` is `null`. */
   todayMet: boolean;
+  /**
+   * Headline swap (0.41.1): `'today'` when this snapshot was built with a
+   * `todayLine` (a `dailyTarget` is set), `'ready'` otherwise — mirrors
+   * `ExamOverview.tsx`'s own `dailyHeadline` decision at snapshot-build
+   * time. Not itself read by `PruefungWidgetProvider.java` — the native
+   * side re-derives the SAME choice from `todayLine != null`, because it
+   * also has to fold in the one-day staleness guard (`applyHeadline`'s own
+   * comment there), which only makes sense at RENDER time: a snapshot can
+   * sit unrefreshed for days, so "was a target set when this snapshot was
+   * built" and "should the widget show it as the headline right now" are
+   * two different questions, and only the native side can answer the
+   * second one. This field exists purely so the snapshot-build-time
+   * decision is unit-testable here (`widgetSnapshot.test.ts`) without
+   * standing up RemoteViews/Java — per the increment brief's instruction to
+   * prebake a testable field rather than leave the mode choice living only
+   * in Java visibility toggles.
+   */
+  headlineMode: 'today' | 'ready';
 }
 
 /** The departure widget's data (W2) — mirrors PruefungWidgetData's shape:
@@ -467,6 +485,13 @@ export function buildWidgetSnapshot(
       weekAtTarget: computeWeekAtTarget(loggedThisWeek, projection.requiredPaceHoursPerWeek),
       todayLine: daily ? daily.text : null,
       todayMet: daily ? daily.met : false,
+      // Headline swap (0.41.1): unlike ExamOverview.tsx's `dailyHeadline`,
+      // this has no 'done'-state exclusion — the widget has never had a
+      // distinct 'done' rendering to preserve (examProjection's 'done'
+      // state just flows through the ordinary readyDayEpochMs/colour-band
+      // path here, ExamOverview's own 'done' branch is a live-screen-only
+      // concept), so there is nothing for `headlineMode` to carve out.
+      headlineMode: daily ? 'today' : 'ready',
     },
     departure: departureData,
     tasks: taskData,
