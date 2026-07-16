@@ -215,7 +215,78 @@ For the Increment 2 (logging) and later engine/dashboard specs:
 
 ---
 
-## 6. Sources
+## 6. Objective sensor module (roadmap — a later increment)
+
+The phone gyroscope/accelerometer is **not** a UI control (a tremulous/dyskinetic
+hand can't drive tilt — anti-pattern). But phone sensors as **measurement** are
+high-yield: optional, short "check-in" tests producing timestamped objective
+signal that overlays on the doctor's day-ribbon → an *objective* wearing-off
+curve independent of whether the patient remembered to log OFF.
+
+**Design filter:** for a medication-timing tool, favour measures that swing
+fast *within a dose cycle* and cost almost nothing while OFF. That reorders the
+usual "digital UPDRS" list.
+
+**Build order (yield ÷ burden):**
+1. **Finger-tapping** (touchscreen, **no sensor, no permission**, identical
+   Android/iOS) → bradykinesia (the sign that fluctuates hardest/fastest with
+   levodopa). Compute: tap rate, inter-tap-interval CV, amplitude, **decrement
+   slope**, mis-taps. ~15 s/hand. Highest yield, lowest friction — build first.
+2. **Rest/postural tremor** (`@capacitor/motion` DeviceMotion, accel+gyro) →
+   4–6 Hz band power, peak frequency, RMS amplitude. ~20 s. Second axis
+   (tremor/dyskinesia). Build second.
+3. Spiral (touch, confirmatory), 4. Gait (accel, higher burden/fall-safety),
+   5. Voice (mic, **privacy-sensitive**) — **deferred**.
+
+**Feasibility (honest):** tapping/spiral = plain touch events, green light.
+Tremor = DeviceMotion at ~60 Hz nominal but **irregular** — 60 Hz oversamples a
+4–6 Hz signal 5–10×, so amplitude/frequency are recoverable, *but* you must
+**resample to a uniform grid** (using `event.interval`) before the FFT and
+discard epochs where effective rate < ~40 Hz. No native high-rate plugin needed
+for v1 (a 100–200 Hz IMU plugin is a v1.5 fidelity spike only). **iOS gotcha:**
+`DeviceMotionEvent.requestPermission()` must fire from a real user gesture over
+HTTPS — so a tremor test always starts from an explicit "Begin" tap (which we
+want anyway). Android has no such prompt.
+
+**Privacy (crisp):** **no GPS/location ever** (directly identifying; not needed —
+gait uses the accelerometer); **store computed features, not raw streams** (a
+tremor epoch ≈ 1,200 samples → persist ~6 scalars; a battery, storage, sync, and
+privacy win — raw traces can re-identify, scalars can't); **voice opt-in with
+on-device extraction and immediate raw-audio discard** (default off / defer).
+
+**Dashboard mapping + framing:** plot each test as a timestamped marker on the
+day-ribbon (tap-speed line, tremor-amplitude line vs dose markers). Objective
+signal is **flagged for the physician to interpret — never a UPDRS number, never
+an ON/OFF verdict, never a diagnosis** (keeps the "never prescribes" posture;
+CloudUPDRS-class tools reach only ~70–79% rater agreement — informs, doesn't
+replace).
+
+**Adherence is the binding risk, not feasibility.** Unsupervised completion
+decays over weeks. Scope these as an *enrichment layer whose absence never
+degrades the core diary*; success = "captured a few good OFF-state epochs around
+dose times," not daily compliance. If check-ins ever feel nagging, make them
+rarer, not louder.
+
+**Data-model addition (later increment):** a fourth `PatientEvent` variant —
+`SensorTestEvent { kind:'sensortest'; test:'tap'|'tremor'|'spiral'|'gait'|
+'voice'; hand?; durationMs; effectiveHz?; features: Record<string,number>;
+quality?:'ok'|'low'|'discarded'; appVersion?; device? (coarse model only) }`.
+Features is an open scalar record (add features without migration; dashboard
+reads known keys, ignores unknown); `appVersion` pins the extraction code so
+old/new tests stay comparable; **no raw-stream field exists — that omission is
+the privacy guarantee.** Flows through `SyncBundle`/`mergeEvents` unchanged.
+
+Sensor sources: [mPower (Scientific Data 2016)](https://www.nature.com/articles/sdata201611) ·
+[Lee 2016 tapping (DOI 10.1371/journal.pone.0158852)](https://doi.org/10.1371/journal.pone.0158852) ·
+[Barrantes 2017 tremor](https://journals.plos.org/plosone/article?id=10.1371%2Fjournal.pone.0183843) ·
+[3D accel tremor vs MDS-UPDRS (PMC9104023)](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9104023/) ·
+[Su 2021 smartphone gait (PMC7935653)](https://pmc.ncbi.nlm.nih.gov/articles/PMC7935653/) ·
+[Parkinson@Home fluctuations (JMIR 2020)](https://www.jmir.org/2020/10/e19068) ·
+[CloudUPDRS agreement (npj PD 2020)](https://www.nature.com/articles/s41531-020-00135-w) ·
+[@capacitor/motion](https://capacitorjs.com/docs/apis/motion) ·
+[Generic Sensor API](https://developer.chrome.com/docs/capabilities/web-apis/generic-sensor).
+
+## 7. Sources
 
 Patient UI: [Nunes 2016 PD smartphone UI guidelines (DOI 10.1007/s10209-015-0440-1)](https://doi.org/10.1007/s10209-015-0440-1) ·
 [WCAG 2.5.5 Target Size 44px](https://www.w3.org/WAI/WCAG21/Understanding/target-size.html) ·
