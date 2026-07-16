@@ -4,6 +4,41 @@ A de-identified, physician-in-the-loop Parkinson's dosing companion. Patients
 log levodopa doses, motor state, and meals; the treating neurologist reviews the
 patterns and adjusts the prescription. The app never prescribes.
 
+## 0.2.0 — Data model, drug catalog, LEDD, local persistence (no UI)
+
+The data foundation for logging. No screens yet — this increment makes the app
+*able to hold and reason about* a patient's regimen, unit-tested, so the UI in
+the next increment just renders it. Informed by `docs/RESEARCH.md`.
+
+- **Motor states:** the five validated Hauser categories are canonical (OFF, ON,
+  ON+non-troublesome dyskinesia, ON+troublesome dyskinesia, Asleep), plus an
+  `on-dyskinesia-unspecified` fallback. A `mapPatientTap()` helper turns the
+  patient's three big buttons (+ optional dyskinesia refinement) into a canonical
+  state — clinical richness for the doctor, a two-tap loop for the patient.
+- **Drug catalog:** the nine drugs (levodopa, benserazide, carbidopa, rotigotine,
+  Madopar LT, entacapone, safinamide, opicapone, baclofen), each carrying its
+  class, formulation, **PK/PD engine-handling** decision (own-curve / fast-ka /
+  modifies-levodopa-clearance per-dose or all-day / modifies-effect / parallel-
+  agonist / ddci-baseline / log-only) and **LED factor** — straight from the
+  cited drug research. Baclofen is log-only and hard-excluded from LEDD.
+- **LEDD calculator:** total levodopa-equivalent daily dose, handling per-dose
+  (reference, per-mg) and once-per-day (fixed, fraction-of-day's-levodopa)
+  factors, with baclofen excluded.
+- **Local persistence (Dexie):** patients / events / models / consent, with a
+  compound-index date-range query. The domain layer stays free of Dexie and of
+  the engine (verified) so it remains pure and portable.
+
+### Not verified in this environment
+- The APK **compile** is CI-only (no Android SDK in the sandbox). Web build,
+  typecheck, and the full suite were verified locally.
+- **Known limitation (recorded, not fixed):** event ordering uses lexicographic
+  compare on the ISO `at` string; timestamps written under *different* timezone
+  offsets (e.g. travel) wouldn't string-sort perfectly by instant. On a single
+  device the offset is consistent, so this is a non-issue for v1; the doctor-side
+  aggregation can re-sort by parsed instant if it ever matters.
+- **At-rest encryption** of the local store is a deliberate later hardening, not
+  implemented here (data is de-identified and on-device).
+
 ## 0.1.0 — App skeleton, two modes, doctor passcode, CI APK
 
 The first installable shell. No patient data is logged yet — this increment puts

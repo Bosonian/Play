@@ -29,16 +29,14 @@ export interface Patient {
 }
 
 // ---------------------------------------------------------------------------
-// Drugs (v1: levodopa/carbidopa only; model extends to agonists/COMT/MAO-B)
+// Drugs — the 9-drug catalog (dopamine precursors, DDCIs, agonist, COMT/MAO-B
+// inhibitors, and baclofen) now lives in ./drugs.ts, alongside LEDD and
+// PK/PD-engine metadata per drug. Re-exported here so existing call sites
+// don't need to know the catalog moved out of this file.
 // ---------------------------------------------------------------------------
-export type DrugId =
-  | 'levodopa-carbidopa-ir' // immediate release
-  | 'levodopa-carbidopa-cr'; // controlled/extended release
-
-export const DRUGS: Record<DrugId, { label: string; formulation: 'IR' | 'CR' }> = {
-  'levodopa-carbidopa-ir': { label: 'Levodopa/carbidopa (IR)', formulation: 'IR' },
-  'levodopa-carbidopa-cr': { label: 'Levodopa/carbidopa (CR/ER)', formulation: 'CR' },
-};
+export type { DrugId } from './drugs';
+export { DRUG_CATALOG } from './drugs';
+import type { DrugId } from './drugs';
 
 // ---------------------------------------------------------------------------
 // Events — the patient's log. A discriminated union on `kind`.
@@ -47,26 +45,49 @@ interface EventBase {
   id: string; // globally unique (uuid) — the idempotent merge key
   patient: string; // patient code
   at: ISODateTime;
+  // Who logged this event. Most events are 'self' (the patient, in the
+  // moment). 'caregiver' events are entered on the patient's behalf and may
+  // carry a retroactive `at` — `at` is already a plain ISO string, so
+  // backdating a caregiver entry needs no extra field, just an earlier `at`.
+  //
+  // JUDGMENT CALL: kept OPTIONAL rather than required. The spec's own
+  // acceptance gate says the baseline types.test.ts (explicitly DO-NOT-TOUCH)
+  // must keep passing, but its `ev()` test helper builds MotorEvents without
+  // a `source` field. Required would fail that file's typecheck. Optional
+  // satisfies both: existing/omitted call sites are untyped-safe, and new
+  // code can start setting it. Flagged for the orchestrator to reconcile —
+  // if `source` should truly be mandatory, types.test.ts needs an update too.
+  source?: 'self' | 'caregiver';
 }
 
 // A dose taken.
 export interface DoseEvent extends EventBase {
   kind: 'dose';
   drug: DrugId;
-  doseMgLevodopa: number; // levodopa component in mg
+  // For levodopa products (levodopa, madopar-lt), this is the levodopa
+  // component in mg. For every other drug, it's that drug's OWN mg — e.g.
+  // rotigotine's `doseMg` is the patch's mg/24h rating, not a levodopa
+  // equivalent. LEDD conversion (see ./ledd.ts) is what turns this into a
+  // comparable number across drugs.
+  doseMg: number;
 }
 
 // A motor state the patient reports (event-based diary — logged when it
-// happens, per the adherence decision).
-export type MotorState = 'on' | 'off' | 'on-dyskinesia';
+// happens, per the adherence decision). The validated 5-state Hauser model
+// (plus the 'on-dyskinesia-unspecified' fallback and canonical 'asleep') now
+// lives in ./motor.ts, along with the 3-tap → MotorState mapping.
+export type { MotorState } from './motor';
+import type { MotorState } from './motor';
 export interface MotorEvent extends EventBase {
   kind: 'motor';
   state: MotorState;
   note?: string;
 }
 
-// A meal — protein load matters for levodopa absorption, so we capture a coarse
-// protein level rather than full diet.
+// A meal — protein load matters for levodopa absorption, so we capture a
+// coarse protein level rather than full diet. 'low' | 'high' are the primary
+// values a patient actually taps; 'unknown' is a fallback for when they log a
+// meal without specifying (or can't recall).
 export interface MealEvent extends EventBase {
   kind: 'meal';
   protein: 'low' | 'high' | 'unknown';

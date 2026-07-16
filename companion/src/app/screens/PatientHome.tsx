@@ -1,4 +1,4 @@
-import { DRUGS } from '../../domain/types';
+import { DRUG_CATALOG } from '../../domain/types';
 
 // Placeholder for the patient's home screen. Real logging (doses, motor
 // state, meals) is the next increment; this just proves the mode is wired up
@@ -11,7 +11,7 @@ export function PatientHome() {
         Logging comes in the next increment. Nothing is recorded yet.
       </p>
       <p className="mt-2 text-caption text-fg-muted">
-        Tracks {DRUGS['levodopa-carbidopa-ir'].label} doses, motor state, and meals.
+        Tracks {DRUG_CATALOG['levodopa'].generic} doses, motor state, and meals.
       </p>
     </div>
   );
