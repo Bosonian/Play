@@ -1,7 +1,7 @@
 {
   "name": "pd-dosing-companion",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "Portable, de-identified Parkinson's dosing companion. Patient and doctor modes over a shared domain model + transparent levodopa PK/PD engine.",
   "scripts": {

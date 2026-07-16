@@ -4,6 +4,66 @@ A de-identified, physician-in-the-loop Parkinson's dosing companion. Patients
 log levodopa doses, motor state, and meals; the treating neurologist reviews the
 patterns and adjusts the prescription. The app never prescribes.
 
+## 0.5.0 — Medication regimen: data model + doctor-mode editor
+
+The doctor side gets its first real content: the neurologist authors the
+patient's prescribed regimen on-device. This is the enabler for patient dose
+logging (next increment) — you can't tap "took my 08:00 dose" until there's an
+08:00 dose to tap. Single-device for now (doctor and patient modes share one
+local store); cross-device sync is its own later increment.
+
+- **A regimen data model** — `RegimenItem`: one drug at one strength taken at
+  fixed local clock times (`"HH:MM"`, timezone-free on purpose — "08:00" means
+  08:00 wherever the patient wakes). Uneven regimens (100-100-50) are just
+  multiple items of the same drug. New Dexie table on a **schema v2 upgrade
+  that is additive and migration-tested** — a real v1-only database is opened
+  under v2 in the test suite and its existing data is proven to survive.
+- **The doctor regimen editor** (replaces the placeholder) — view, add, edit,
+  remove medications. Normal clinician form controls (dropdown, number, time
+  inputs) — the no-typing/huge-target rules are the *patient's* constraint, not
+  the doctor's. Remove is undo-not-confirm, consistent with the rest of the app.
+- **Prescribing is by generic levodopa component, not tablet strength.** This is
+  the load-bearing clinical decision: "Madopar 125" is entered as **100 mg**
+  (the levodopa part) — the benserazide/carbidopa component is never entered and
+  the DDCIs aren't even in the drug picker. Explicit helper text at the dose
+  field states the conversion so it can't be got backwards on autopilot. This
+  matches the dose model and the LEDD reference base exactly.
+- **A live Total LEDD readout** — reuses the already-tested `computeLedd`
+  unchanged (one type-only narrowing so it accepts `{drug, doseMg}`). The
+  regimen is expanded into a prototypical day's doses — one entry per clock time
+  — so the shipped once-per-day dedup for `fixed`/`fraction` factors (safinamide,
+  entacapone, opicapone) stays clinically correct. Baclofen is excluded, and the
+  readout says so. Labelled "a comparison number, not a target."
+- **Non-blocking clinical warnings** — two COMT inhibitors together (entacapone +
+  opicapone), or a once-daily drug listed at multiple times, surface as notices.
+  They inform; they never block a save. The app never prescribes — the doctor
+  decides. (This is the "later validation increment" `ledd.ts` itself pointed
+  to.)
+
+Verified here: doctor-mode flow driven in headless Chromium through the passcode
+gate — set passcode, empty state, add levodopa (LEDD 400), add opicapone
+(LEDD 600), COMT warning on entacapone, edit dose (LEDD recomputes to 1098),
+remove + undo, and persistence across a reload — 20/20 checks. Suite is 104
+tests (was 79): +21 pure regimen/LEDD unit tests, +4 store tests including the
+v1→v2 migration proof. Typecheck and web build clean.
+
+### Deliberately deferred (flagged, not silently dropped)
+- **Free-text product label / German-market strength quick-picks** (e.g.
+  "Madopar 125 tabl." as a display hint, or one-tap common strengths). Additive
+  on top of the generic-mg entry; left out to keep this increment tight. Easy to
+  add once the editor's been used in anger.
+- **Regimen change-history.** This increment stores the *current* regimen only
+  (each item carries `updatedAt`). A versioned adjustment log — for a
+  "prescription changed on date X" annotation on the doctor's timeline — is
+  deferred; once dose logging ships, the logged doses are the permanent record
+  of what was actually taken, so analysis never depends on regimen history.
+
+### Not verified in this environment
+- The APK **compile** is CI-only (no Android SDK in the sandbox), as before.
+- The COMT-inhibitor fraction LEDD still uses the whole day's levodopa base as
+  its denominator (a documented approximation carried over from 0.2.0's
+  `computeLedd` — per-dose co-administration tracking is a later increment).
+
 ## 0.4.0 — Patient logging loop: motor state + meals
 
 The first screens that actually record something. On first run the app silently

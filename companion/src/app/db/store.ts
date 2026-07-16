@@ -13,6 +13,7 @@
 
 import Dexie, { type EntityTable } from 'dexie';
 import type { Patient, PatientEvent, PatientModel, Consent, ISODateTime } from '../../domain/types';
+import type { RegimenItem } from '../../domain/regimen';
 
 // The companion's Dexie database. Modeled on the root Head-in app's
 // src/db/db.ts pattern (see that file for the versioning-comment rationale).
@@ -25,17 +26,31 @@ export class CompanionDatabase extends Dexie {
   events!: EntityTable<PatientEvent, 'id'>;
   patientModels!: EntityTable<PatientModel, 'patient'>;
   consent!: EntityTable<Consent, 'patient'>;
+  regimenItems!: EntityTable<RegimenItem, 'id'>;
 
   constructor(name = 'pd-companion') {
     super(name);
     // Index strings: `&` = unique/primary key; plain field = secondary index;
     // `[a+b]` = compound index. `[patient+at]` supports the range query below
     // as a single index scan rather than a full-table filter.
+    //
+    // SPEC RISK #1: version(1) stays byte-identical, forever — Dexie versions
+    // are cumulative, so editing an already-shipped version block (rather
+    // than adding a new one) would corrupt the upgrade path for anyone who
+    // already has a version-1 database on their device.
     this.version(1).stores({
       patients: '&code, createdAt',
       events: '&id, patient, at, kind, [patient+at]',
       patientModels: '&patient',
       consent: '&patient',
+    });
+
+    // Additive only: a new table, no changes to any version-1 table, so no
+    // .upgrade() callback is needed — Dexie carries every version-1 table
+    // forward automatically. Proven non-destructive by the migration test in
+    // store.test.ts (an existing v1 row survives opening under this v2 schema).
+    this.version(2).stores({
+      regimenItems: '&id, patient',
     });
 
     // When a future schema bump opens a new DB version in another tab, let
@@ -141,4 +156,24 @@ export async function getConsent(
 
 export async function putConsent(database: CompanionDatabase, consent: Consent): Promise<void> {
   await database.consent.put(consent);
+}
+
+// ---------------------------------------------------------------------------
+// Regimen items
+// ---------------------------------------------------------------------------
+export async function putRegimenItem(database: CompanionDatabase, item: RegimenItem): Promise<void> {
+  await database.regimenItems.put(item);
+}
+
+export async function deleteRegimenItem(database: CompanionDatabase, id: string): Promise<void> {
+  await database.regimenItems.delete(id);
+}
+
+// Unsorted — sorting is the domain layer's job (see regimen.ts's
+// sortRegimenItems), keeping this store function a thin, dumb read.
+export async function getRegimenForPatient(
+  database: CompanionDatabase,
+  patient: string,
+): Promise<RegimenItem[]> {
+  return database.regimenItems.where('patient').equals(patient).toArray();
 }

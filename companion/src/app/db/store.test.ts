@@ -8,6 +8,7 @@
 import 'fake-indexeddb/auto';
 
 import { describe, it, expect } from 'vitest';
+import Dexie, { type EntityTable } from 'dexie';
 import {
   makeDb,
   upsertPatient,
@@ -20,9 +21,13 @@ import {
   putPatientModel,
   getConsent,
   putConsent,
+  putRegimenItem,
+  deleteRegimenItem,
+  getRegimenForPatient,
   type CompanionDatabase,
 } from './store';
-import type { DoseEvent, Patient } from '../../domain/types';
+import type { DoseEvent, Patient, PatientEvent, PatientModel, Consent } from '../../domain/types';
+import type { RegimenItem } from '../../domain/regimen';
 
 // Each test gets its own uniquely-named database so tests never share state
 // or race each other (fake-indexeddb keeps separate DBs fully isolated, same
@@ -142,5 +147,92 @@ describe('store — patient model + consent round trips', () => {
     const consent = await getConsent(db, 'P-01');
     expect(consent?.version).toBe('1');
     db.close();
+  });
+});
+
+const regimenItem = (
+  id: string,
+  patient: string,
+  overrides: Partial<RegimenItem> = {},
+): RegimenItem => ({
+  id,
+  patient,
+  drug: 'levodopa',
+  doseMg: 100,
+  times: ['08:00', '12:00'],
+  updatedAt: '2026-07-16T00:00:00Z',
+  ...overrides,
+});
+
+describe('store — regimen items', () => {
+  it('CRUD round trip: put two items for P-01, one for P-02 -> getRegimenForPatient(P-01) returns exactly the two', async () => {
+    const db = freshDb();
+    await putRegimenItem(db, regimenItem('r1', 'P-01'));
+    await putRegimenItem(db, regimenItem('r2', 'P-01', { drug: 'rotigotine', doseMg: 8, times: ['08:00'] }));
+    await putRegimenItem(db, regimenItem('r3', 'P-02'));
+    const forP01 = await getRegimenForPatient(db, 'P-01');
+    expect(forP01.map((i) => i.id).sort()).toEqual(['r1', 'r2']);
+    db.close();
+  });
+
+  it('deleteRegimenItem removes the row', async () => {
+    const db = freshDb();
+    await putRegimenItem(db, regimenItem('to-delete', 'P-01'));
+    await deleteRegimenItem(db, 'to-delete');
+    const forP01 = await getRegimenForPatient(db, 'P-01');
+    expect(forP01).toHaveLength(0);
+    db.close();
+  });
+
+  it('put with same id overwrites (edit semantics, no duplicate row)', async () => {
+    const db = freshDb();
+    await putRegimenItem(db, regimenItem('r1', 'P-01', { doseMg: 100 }));
+    await putRegimenItem(db, regimenItem('r1', 'P-01', { doseMg: 150 }));
+    const forP01 = await getRegimenForPatient(db, 'P-01');
+    expect(forP01).toHaveLength(1);
+    expect(forP01[0].doseMg).toBe(150);
+    db.close();
+  });
+
+  it('migration: a v1-only database opened under the v2 schema keeps old rows and gains the regimen table', async () => {
+    // Local class declaring ONLY the version-1 stores, simulating a device
+    // that has never seen the v2 schema — proves the migration path is
+    // additive and non-destructive (SPEC RISK #1).
+    class V1Database extends Dexie {
+      patients!: EntityTable<Patient, 'code'>;
+      events!: EntityTable<PatientEvent, 'id'>;
+      patientModels!: EntityTable<PatientModel, 'patient'>;
+      consent!: EntityTable<Consent, 'patient'>;
+
+      constructor(name: string) {
+        super(name);
+        this.version(1).stores({
+          patients: '&code, createdAt',
+          events: '&id, patient, at, kind, [patient+at]',
+          patientModels: '&patient',
+          consent: '&patient',
+        });
+      }
+    }
+
+    const dbName = `test-companion-migration-${Date.now()}`;
+    const v1db = new V1Database(dbName);
+    await v1db.patients.put({ code: 'P-01', createdAt: '2026-07-16T00:00:00Z' });
+    await v1db.events.put(dose('legacy-event', '2026-07-16T08:00:00Z'));
+    v1db.close();
+
+    const v2db = makeDb(dbName);
+    const events = await getEventsInRange(
+      v2db,
+      'P-01',
+      '2026-07-16T00:00:00Z',
+      '2026-07-16T23:59:59Z',
+    );
+    expect(events.map((e) => e.id)).toEqual(['legacy-event']);
+
+    await putRegimenItem(v2db, regimenItem('r1', 'P-01'));
+    const regimen = await getRegimenForPatient(v2db, 'P-01');
+    expect(regimen.map((i) => i.id)).toEqual(['r1']);
+    v2db.close();
   });
 });

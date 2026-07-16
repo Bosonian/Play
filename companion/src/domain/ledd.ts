@@ -15,6 +15,13 @@ export interface LeddResult {
   byDrug: Partial<Record<DrugId, number>>;
 }
 
+// Narrowed input type: computeLedd only ever reads `drug` and `doseMg`, so
+// any caller that has those two fields (e.g. a regimen expanded into a
+// prototypical day's doses, which has no event `id`/`at`) can reuse this
+// function without first fabricating a full DoseEvent. Every DoseEvent
+// already satisfies this shape, so this is a non-breaking, type-only change.
+export type LeddDose = Pick<DoseEvent, 'drug' | 'doseMg'>;
+
 // Compute LEDD from a list of dose events (domain rule, per SPEC RISK #2/#3,
 // orchestrator-approved):
 //  - `reference` and `per-mg` LED contributions are summed PER DOSE — every
@@ -26,7 +33,7 @@ export interface LeddResult {
 //    contribution is a flat daily-dose equivalent, not a per-tablet one, and
 //    entacapone/opicapone's contribution is a fraction of the day's total
 //    levodopa exposure, not of each individual levodopa tablet.
-export function computeLedd(doses: DoseEvent[]): LeddResult {
+export function computeLedd(doses: LeddDose[]): LeddResult {
   // Step 1: the day's total reference-levodopa base — the sum of every dose
   // whose LED kind is 'reference' (levodopa + madopar-lt today). This is the
   // denominator `fraction` factors apply to.
