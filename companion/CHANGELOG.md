@@ -4,6 +4,36 @@ A de-identified, physician-in-the-loop Parkinson's dosing companion. Patients
 log levodopa doses, motor state, and meals; the treating neurologist reviews the
 patterns and adjusts the prescription. The app never prescribes.
 
+## 0.3.0 — Steady Read: gyro screen stabilization for tremor (prototype)
+
+An accessibility experiment, reachable as a discreet tool (not part of the
+clinical logging path). It counters hand tremor the way a camera's electronic
+image stabilization works, pointed at the screen instead of the sensor: the
+gyroscope measures the phone's rotation and the content is counter-shifted so
+it appears to hold still while you read.
+
+- **Pure, tested stabilizer core** — a leaky-integrator high-pass per axis:
+  passes the fast 4–8 Hz tremor (so it can be cancelled) with a *bounded* DC
+  response, so it neither drifts nor fights deliberate slow reorientation. Seven
+  unit tests drive it with synthetic tremor and verify counter-phase, no-drift,
+  overscan clamp, and axis separation.
+- **On-device controls** — an always-visible On/Off toggle (a genuine safety
+  control) and Strength / Zoom / Cutoff sliders to tune the feel per device.
+- **Honest scope, stated in-app:** it steadies *only* what this app renders, not
+  other apps or the system. It cancels *rotational* tremor only (a gyroscope
+  can't recover pure translation without unbounded drift). It is a plausible
+  aid, not a proven therapy.
+
+### Not verified in this environment
+- **The actual stabilization feel is untestable in the sandbox** — a headless
+  browser can't drive a real gyroscope. The math, types, and build are verified
+  here; whether the counter-shift feels right, and whether the **axis signs /
+  mapping** are correct for the phone's orientation, can only be judged on the
+  APK. Both are deliberately isolated (`AXIS_SIGN` and one line in the hook) so a
+  flip is a one-character fix.
+- **Latency** (the make-or-break for stabilization) is only measurable on-device.
+- APK compile is CI-only, as before.
+
 ## 0.2.0 — Data model, drug catalog, LEDD, local persistence (no UI)
 
 The data foundation for logging. No screens yet — this increment makes the app
