@@ -184,4 +184,14 @@ describe('eventLabel', () => {
     expect(eventLabel({ ...base, kind: 'meal', protein: 'low' })).toBe('Meal · low protein');
     expect(eventLabel({ ...base, kind: 'meal', protein: 'high' })).toBe('Meal · high protein');
   });
+
+  it('labels a levodopa DoseEvent as "Levodopa 100 mg"', () => {
+    expect(eventLabel({ ...base, kind: 'dose', drug: 'levodopa', doseMg: 100 })).toBe('Levodopa 100 mg');
+  });
+
+  it('labels a madopar-lt DoseEvent using the catalog generic name', () => {
+    expect(eventLabel({ ...base, kind: 'dose', drug: 'madopar-lt', doseMg: 125 })).toBe(
+      'Levodopa/benserazide (dispersible) 125 mg',
+    );
+  });
 });

@@ -4,6 +4,72 @@ A de-identified, physician-in-the-loop Parkinson's dosing companion. Patients
 log levodopa doses, motor state, and meals; the treating neurologist reviews the
 patterns and adjusts the prescription. The app never prescribes.
 
+## 0.6.0 — Patient dose logging against the regimen
+
+The load-bearing patient-side loop closes: the regimen the doctor authored
+(0.5.0) now drives an actual "Today's doses" checklist the patient taps
+against. One tap logs a dose at the real moment it was taken; the slab flips
+to a calm taken row. Dose events flow through the existing Today timeline,
+Event Detail, and Undo unchanged — this increment adds the checklist and the
+logging path, nothing about how a logged event is displayed or edited
+elsewhere.
+
+- **Taken vs pending is never stored — only computed.** A `DoseEvent` gains an
+  optional `scheduledTime` ("HH:MM", same timezone-free semantics as
+  `RegimenItem.times`) recorded at tap time, because the patient tapped the
+  slot itself — intent is known, not inferred. Whether a slot shows as taken
+  is a pure display-side match (`markTakenSlots` in the new
+  `app/patient/doses.ts`) on drug + scheduledTime, greedy over the day's slots
+  in order, each logged event consumed at most once. Dose strength is
+  deliberately *not* part of the match key: if the doctor edits a slot's mg
+  after the patient already logged it, a strength-inclusive key would flip the
+  slot back to pending and invite a double dose.
+- **Actual time is never overwritten by scheduled time.** `at` is always the
+  real intake moment (`new Date().toISOString()` at the tap); `scheduledTime`
+  is the plan. A taken row shows both — "Taken · 08:12" next to the scheduled
+  08:00 — so the delta between plan and actual is visible, not silently
+  discarded. Once-daily patch doses (rotigotine) show "Applied" instead of
+  "Taken", driven off the catalog's formulation field, not a hardcoded drug id.
+- **"Log another dose"** — a minimal picker for unscheduled/rescue doses: one
+  slab per distinct (drug, mg) already in the regimen, tap = logged now with
+  no scheduledTime, so it shows in the timeline but never ticks a slot.
+  Honest limitation: a drug *not* in the regimen can't be logged this way in
+  v1 — that would need typing/a drug picker, the exact core-loop anti-pattern
+  `docs/RESEARCH.md` §1 rules out.
+- **No regimen, no clutter.** An empty regimen renders one calm line ("No
+  medications set up yet.") and hides the "Log another dose" row entirely,
+  rather than an empty checklist with a dangling extra-dose button.
+- **Zero changes to the timeline/detail/undo paths.** `eventLabel`'s dose
+  branch now returns a real label ("Levodopa 100 mg") instead of the old
+  defensive placeholder ("Dose"); dose events ride the existing Today
+  timeline, Event Detail's ±5-minute time stepper and delete, and Undo exactly
+  as motor/meal events already do — verified by reading those paths, not by
+  touching them.
+
+Suite is 123 tests (was 104): +17 new pure tests for `doses.ts` (schedule
+expansion, greedy exact-key matching including the strength-edited-midday and
+two-nearby-slots cases, the extra-dose picker's dedup) and +2 for `eventLabel`
+covering a dose event. Typecheck and web build clean.
+
+### Deliberately deferred (flagged, not silently dropped)
+- **A doctor mid-day time edit orphans an already-logged tick.** If the doctor
+  changes a slot's clock time after the patient logged against the old time,
+  the event's `scheduledTime` no longer matches any current slot: the slot
+  shows pending again and the logged dose reads as an "extra" in the timeline.
+  This is the accepted flip side of not storing taken/pending — accurate to
+  what's known (the regimen changed), not a data-loss bug, and consistent with
+  how a strength edit is handled *without* losing the tick (mg isn't in the
+  match key; time is, because time is the thing the slot IS).
+- **No missed-dose analytics, streaks, or adherence scoring** — out of scope
+  per `docs/RESEARCH.md` §1's anti-pattern list ("gamification / streaks / you
+  missed a day guilt"), and per the increment's own NON-goals.
+
+### Not verified in this environment
+- The APK **compile** is CI-only (no Android SDK in the sandbox), as before.
+- On-device *feel* of tapping a dose slab mid-OFF is only judgeable on the
+  phone — the sandbox verifies the logic and the DOM flow, not touch
+  ergonomics, same caveat as 0.4.0's motor/meal logging.
+
 ## 0.5.0 — Medication regimen: data model + doctor-mode editor
 
 The doctor side gets its first real content: the neurologist authors the

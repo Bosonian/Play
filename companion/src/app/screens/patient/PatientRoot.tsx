@@ -5,20 +5,25 @@ import { useLiveQuery } from 'dexie-react-hooks';
 // observability hook — built on Dexie's internal change tracking, not any
 // extra browser API — so it works anywhere Dexie itself works, needs no
 // hand-rolled "refetch after every write" bookkeeping, and adds ~1kB.
-import { db, addEvent, deleteEvent } from '../../db/store';
+import { db, addEvent, deleteEvent, getRegimenForPatient } from '../../db/store';
 import { usePatient } from '../../patient/usePatient';
 import { buildMotorEvent, buildMealEvent, refineDyskinesia, shiftEventTime } from '../../patient/log';
+import { buildDoseEvent, extraDoseChoices } from '../../patient/doses';
 import type { PrimaryTap, DyskinesiaRefinement } from '../../../domain/motor';
+import type { DrugId } from '../../../domain/drugs';
 import type { MotorEvent, PatientEvent } from '../../../domain/types';
+import type { RegimenItem } from '../../../domain/regimen';
 import { Home, type LastAction } from './Home';
 import { State } from './State';
 import { Meal } from './Meal';
+import { Dose } from './Dose';
 import { EventDetail } from './EventDetail';
 
 type PatientScreen =
   | { name: 'home' }
   | { name: 'state' }
   | { name: 'meal' }
+  | { name: 'dose' }
   | { name: 'detail'; eventId: string };
 
 // Patient-mode router. Plain useState switch, no routing library — this app
@@ -44,6 +49,16 @@ export function PatientRoot() {
   // ref (not state) because flipping it must not cause a re-render — it's
   // read/written synchronously inside the same tick as the tap handler, and
   // a state update here would just be wasted render work.
+  // Read-only regimen query, mirroring DoctorHome's exactly (SPEC RISK #3):
+  // no bootstrap write here — usePatient() already owns the one
+  // StrictMode-guarded write this screen depends on (creating the local
+  // patient record, done once elsewhere); useLiveQuery only reads. Feeds
+  // Home's Today's-doses section; nothing here ever writes a RegimenItem.
+  const regimenItems = useLiveQuery(
+    () => (patient ? getRegimenForPatient(db, patient.code) : Promise.resolve<RegimenItem[]>([])),
+    [patient?.code],
+  );
+
   const busyRef = useRef(false);
   function withDebounce(fn: () => void | Promise<void>) {
     if (busyRef.current) return;
@@ -95,6 +110,19 @@ export function PatientRoot() {
     setScreen({ name: 'home' });
   }
 
+  // Logs a dose. Deliberately does NOT setScreen — unlike logMotor/logMeal,
+  // both of this handler's call sites need different navigation: tapping a
+  // pending slot on Home stays on Home (the banner renders in place), while
+  // the "Log another dose" picker navigates back to Home itself, at the call
+  // site below. `scheduledTime` is undefined for the extra-dose path — see
+  // the "Log another dose" wiring below, which omits the third argument.
+  async function logDose(drug: DrugId, doseMg: number, scheduledTime?: string) {
+    if (!patient) return;
+    const ev = buildDoseEvent(patient.code, drug, doseMg, new Date().toISOString(), scheduledTime);
+    await addEvent(db, ev);
+    setLastAction({ kind: 'logged', event: ev, label: 'Dose logged' });
+  }
+
   async function undo() {
     if (!lastAction) return;
     // Both branches are idempotent at the Dexie layer: deleteEvent on a
@@ -136,10 +164,13 @@ export function PatientRoot() {
         <Home
           patientCode={patient.code}
           lastAction={lastAction}
+          regimenItems={regimenItems}
           onUndo={() => withDebounce(undo)}
           onLogState={() => setScreen({ name: 'state' })}
           onLogMeal={() => setScreen({ name: 'meal' })}
           onOpenEvent={(id) => setScreen({ name: 'detail', eventId: id })}
+          onTakeDose={(slot) => withDebounce(() => logDose(slot.drug, slot.doseMg, slot.time))}
+          onLogAnotherDose={() => setScreen({ name: 'dose' })}
         />
       )}
       {screen.name === 'state' && (
@@ -155,6 +186,18 @@ export function PatientRoot() {
       )}
       {screen.name === 'meal' && (
         <Meal onLog={(protein) => withDebounce(() => logMeal(protein))} onBack={() => setScreen({ name: 'home' })} />
+      )}
+      {screen.name === 'dose' && (
+        <Dose
+          choices={extraDoseChoices(regimenItems ?? [])}
+          onLog={(c) =>
+            withDebounce(() => {
+              void logDose(c.drug, c.doseMg);
+              setScreen({ name: 'home' });
+            })
+          }
+          onBack={() => setScreen({ name: 'home' })}
+        />
       )}
       {screen.name === 'detail' && (
         <EventDetailContainer

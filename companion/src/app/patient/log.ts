@@ -5,6 +5,7 @@
 import type { MealEvent, MotorEvent, PatientEvent, ISODateTime } from '../../domain/types';
 import { mapPatientTap, type PrimaryTap, type DyskinesiaRefinement } from '../../domain/motor';
 import { safeUuid } from '../lib/uuid';
+import { doseLabel } from './doses';
 
 // Builds a motor event from a primary tap. Deliberately has NO refinement
 // parameter: the tap logs immediately (RESEARCH §1 — one tap, timestamp
@@ -149,7 +150,9 @@ export function eventLabel(ev: PatientEvent): string {
     // path. Defensive label, not in the spec's table.
     return 'Meal';
   }
-  // ev.kind === 'dose' — defensive only, no dose-logging path exists yet in
-  // this increment (dose logging + regimen are a LATER increment).
-  return 'Dose';
+  // ev.kind === 'dose' — "Levodopa 100 mg" etc. Shared with the dose slot
+  // rows and the extra-dose picker via doseLabel (doses.ts), so the timeline,
+  // Event Detail, and Today's-doses section never show three different
+  // strings for the same event.
+  return doseLabel(ev.drug, ev.doseMg);
 }

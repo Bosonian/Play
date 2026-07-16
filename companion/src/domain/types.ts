@@ -70,6 +70,13 @@ export interface DoseEvent extends EventBase {
   // equivalent. LEDD conversion (see ./ledd.ts) is what turns this into a
   // comparable number across drugs.
   doseMg: number;
+  // Local "HH:MM" of the regimen slot the patient tapped to log this dose —
+  // patient-asserted intent ("this was my 08:00 dose"), recorded at log time.
+  // Absent = an unscheduled/extra dose. Same timezone-free clock-time semantics
+  // as RegimenItem.times (see regimen.ts). The actual intake moment is always
+  // `at`; the at-vs-scheduledTime delta is the adherence signal. Display-side
+  // slot matching keys on drug + scheduledTime (see app/patient/doses.ts).
+  scheduledTime?: string;
 }
 
 // A motor state the patient reports (event-based diary — logged when it
