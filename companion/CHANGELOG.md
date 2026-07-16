@@ -4,16 +4,39 @@ A de-identified, physician-in-the-loop Parkinson's dosing companion. Patients
 log levodopa doses, motor state, and meals; the treating neurologist reviews the
 patterns and adjusts the prescription. The app never prescribes.
 
-## 0.8.0 — Dose-per-time regimen model (Phase A of the CPOE prescription redesign)
+## 0.8.0 — CPOE-style prescription entry (German 1-1-1-1 grid)
 
-Groundwork for a German-Medikationsplan-style prescription entry. The chosen
-design was decided by simulation, not assertion: eight normal + edge PD cases
-run through two candidate data models scored the dose-per-time model 32/32 vs
-29/32 — it's the only shape that holds an uneven levodopa schedule
-(125-125-62.5) as a single clean line, the way the BMP prints it, without
-false-firing the duplicate-drug warning. This is **Phase A** — the model change,
-migration, and consumers; **Phase B** rebuilds the entry form into the actual
-1-1-1-1 grid.
+The doctor's medication entry is redesigned to work like standard hospital
+prescribing (Epic/Orbis) and the German Medikationsplan. The underlying data
+model was chosen by simulation, not assertion: eight normal + edge PD cases run
+through two candidate models scored dose-per-time 32/32 vs 29/32 — it's the only
+shape that holds an uneven levodopa schedule (125-125-62.5) as a single clean
+line, the way the BMP prints it, without false-firing the duplicate-drug
+warning. Built in two phases; both shipped here.
+
+### The grid form (Phase B)
+
+- **The German 1-1-1-1 grid** — Morgens / Mittags / Abends / Nachts quantity
+  boxes (fixed BMP order, German labels with English sub-captions), each a
+  quantity × a per-tablet strength, with a per-slot clock time defaulting to
+  08 / 12 / 18 / 22 and freely editable. Uneven schedules are entered the way
+  you'd write them: `1-1-½-0`.
+- **Fraction-aware input** — accepts `½`, `1½`, `¼`, `0,5` (German comma), `1/2`.
+- **Strength quick-picks** and **frequency presets** (`1× morgens`, `2×`, `3×`,
+  `4×`, `zur Nacht`) to fill the grid in one tap.
+- **Live Sig preview** — a plain-language order sentence echoed back before you
+  save (`Levodopa 100 mg — 1-1-½-0 — 08:00 · 12:00 · 18:00`), so a fat-fingered
+  slot is caught by eye.
+- **mg mode** for a drug with no tablet strength (and every migrated row): the
+  slot holds milligrams directly.
+- **Free-text mode** — the escape hatch for schedules the grid can't hold
+  (tapers, alternating days), mutually exclusive with the grid per the BMP rule.
+- **Patch mode** — rotigotine bypasses the tablet grid: a single application
+  time and mg/24h rating, with a rotate-the-site note.
+- **Custom-times fallback** — a schedule that doesn't fit the four day-parts
+  (e.g. 6×/day) edits as a plain list of times, still one line.
+
+### Dose-per-time model + migration (Phase A)
 
 - **Dose-per-time model.** A `RegimenItem`'s `times` moves from `["08:00", …]`
   (one dose shared across all times) to `[{time, doseMg}, …]` — each
@@ -37,14 +60,13 @@ migration, and consumers; **Phase B** rebuilds the entry form into the actual
   (`Levodopa 125 mg — 1-1-½-0 — 08:00 · 12:00 · 18:00`) now shown in the
   regimen list and the activity log.
 
-Suite is 210 tests (was 160): +50 across the reshaped domain, the new
-migration, and the two new pure modules. Doctor→patient flow re-driven in
-Chromium on the new model (7/7). Typecheck and web build clean; APK compile is
-CI-only.
-
-Phase A keeps the existing (simple) entry form — no visible UX change yet; it
-just emits the new shape. The grid, strength quick-picks, presets, Sig preview,
-free-text mode, and patch handling land in Phase B.
+Suite is 210 tests (was 160): +50 across the reshaped domain, the v3→v4
+migration, and the two new pure modules (`quantity.ts` fraction parser,
+`grid.ts` round-trip contract). The grid form itself is pure UI over those
+tested modules; it was verified by driving all six modes in Chromium (tablet
+grid → Sig → LEDD, preset fill, mg-mode >20 dose, free-text, patch, and the
+uneven-schedule edit round-trip), 17/17, plus the doctor→patient flow on the new
+model, 7/7. Typecheck and web build clean; APK compile is CI-only.
 
 ## 0.7.0 — Activity log + field reporting
 
