@@ -4,6 +4,24 @@ A de-identified, physician-in-the-loop Parkinson's dosing companion. Patients
 log levodopa doses, motor state, and meals; the treating neurologist reviews the
 patterns and adjusts the prescription. The app never prescribes.
 
+## 0.9.1 — Remove Steady Read
+
+The Steady Read gyroscope screen-stabilization tool (added in 0.3.0 as a
+prototype) is removed — the implementation was too naive to be worth shipping.
+Deleted `src/app/steady/` (the stabilizer core, its tests, the DeviceMotion
+hook, and the screen) and the discreet header link that launched it; the header
+is now just the Patient / Doctor toggle. No other feature touches it, so nothing
+else changes. If a genuinely robust stabilizer is wanted later, the prior
+prototype remains in git history as a starting point.
+
+Also fixes a version drift this surfaced: `APP_VERSION` (used in field-report
+metadata) had been left at 0.8.1 when 0.9.0 bumped package.json, so 0.9.0
+reports would have mislabelled the app version. All three version references
+(package.json, `version.ts`, the report test's pin) are back in sync at 0.9.1.
+
+Test suite drops the 7 stabilizer unit tests (217 → 210); typecheck and web
+build clean.
+
 ## 0.9.0 — Day-part tinted dose groups on Patient Home
 
 "Today's doses" is now grouped under Morning / Midday / Evening / Night
