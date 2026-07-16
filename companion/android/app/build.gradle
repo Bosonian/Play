@@ -1,5 +1,13 @@
 apply plugin: 'com.android.application'
 
+// Resolve version inputs into plain locals BEFORE the android block. Doing the
+// `.toInteger()` chain inline on `versionCode (...)` trips a Groovy command-
+// parsing gotcha: `versionCode (expr).toString()` binds as
+// `versionCode(expr).toString()` — the setter is called first (returns null)
+// and the chain then runs on null ("Value is null"). Resolving here avoids it.
+def resolvedVersionCode = (project.findProperty('companionVersionCode') ?: '1').toString().toInteger()
+def resolvedVersionName = (project.findProperty('companionVersionName') ?: '0.0.0-local').toString()
+
 android {
     namespace "app.dosing.companion"
     compileSdk rootProject.ext.compileSdkVersion
@@ -30,11 +38,11 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         // versionCode must strictly increase across builds for Android to
         // accept an update. CI passes -PcompanionVersionCode=<run number>;
-        // a local build with no property falls back to 1.
-        versionCode (project.findProperty('companionVersionCode') ?: '1').toString().toInteger()
+        // a local build with no property falls back to 1. (Resolved above.)
+        versionCode resolvedVersionCode
         // Cosmetic; CI passes the package.json version. Falls back to a
         // marker so a local build is obviously not a CI build.
-        versionName project.findProperty('companionVersionName') ?: '0.0.0-local'
+        versionName resolvedVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
