@@ -4,7 +4,18 @@ A de-identified, physician-in-the-loop Parkinson's dosing companion. Patients
 log levodopa doses, motor state, and meals; the treating neurologist reviews the
 patterns and adjusts the prescription. The app never prescribes.
 
-## 0.8.0 — CPOE-style prescription entry (German 1-1-1-1 grid)
+## 0.8.1 — English UI labels throughout
+
+The prescription grid's day-part labels, frequency presets, and patch text are
+now English (Morning / Midday / Evening / Night; `1× morning`, `2×
+(morning–evening)`, `At night`; `Patch, daily`; `Schedule`), replacing the
+earlier German-language labels — the app's UI is English per its own default.
+Internal identifiers and the BMP day-part order are unchanged; the input still
+accepts a German decimal comma (`0,5`) even though the caption now shows `0.5`.
+Copy-only; 210 tests green, all six grid modes re-driven in Chromium (19/19,
+including an explicit no-German-words check).
+
+## 0.8.0 — CPOE-style prescription entry (1-1-1-1 grid)
 
 The doctor's medication entry is redesigned to work like standard hospital
 prescribing (Epic/Orbis) and the German Medikationsplan. The underlying data
@@ -16,8 +27,8 @@ warning. Built in two phases; both shipped here.
 
 ### The grid form (Phase B)
 
-- **The German 1-1-1-1 grid** — Morgens / Mittags / Abends / Nachts quantity
-  boxes (fixed BMP order, German labels with English sub-captions), each a
+- **The 1-1-1-1 grid** — Morning / Midday / Evening / Night quantity
+  boxes (the BMP's fixed day-part order, English labels), each a
   quantity × a per-tablet strength, with a per-slot clock time defaulting to
   08 / 12 / 18 / 22 and freely editable. Uneven schedules are entered the way
   you'd write them: `1-1-½-0`.

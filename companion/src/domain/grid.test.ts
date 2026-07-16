@@ -196,12 +196,12 @@ describe('sigLine', () => {
     expect(sigLine(item)).toBe('Levodopa — 08:00 137 mg');
   });
 
-  it('patch (rotigotine, one time): "Rotigotine 6 mg/24h — Pflaster, täglich 08:00"', () => {
+  it('patch (rotigotine, one time): "Rotigotine 6 mg/24h — Patch, daily 08:00"', () => {
     const item: Pick<RegimenItem, 'drug' | 'times' | 'strengthMg' | 'freeText'> = {
       drug: 'rotigotine',
       times: [{ time: '08:00', doseMg: 6 }],
     };
-    expect(sigLine(item)).toBe('Rotigotine 6 mg/24h — Pflaster, täglich 08:00');
+    expect(sigLine(item)).toBe('Rotigotine 6 mg/24h — Patch, daily 08:00');
   });
 
   it('freeText: "Levodopa — Reduce by 50 mg weekly until off."', () => {

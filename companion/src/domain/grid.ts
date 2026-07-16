@@ -29,11 +29,14 @@ export interface SlotDef {
 // column order, which is why the labels stay German even though the rest of
 // the app's copy is English for v1 (see CLAUDE.md's language note — this is
 // a domain convention, not app UI chrome).
+// The `id`s stay as the original German day-part keys — they're internal
+// identifiers (used by slotForTime/itemToGrid and the tests), never shown.
+// The user-facing `label`s are English (the UI is English; see CLAUDE.md).
 export const SLOT_DEFS: readonly SlotDef[] = [
-  { id: 'morgens', label: 'morgens', helper: 'morning', defaultTime: '08:00' },
-  { id: 'mittags', label: 'mittags', helper: 'midday', defaultTime: '12:00' },
-  { id: 'abends', label: 'abends', helper: 'evening', defaultTime: '18:00' },
-  { id: 'nachts', label: 'nachts', helper: 'night', defaultTime: '22:00' },
+  { id: 'morgens', label: 'Morning', helper: 'morning', defaultTime: '08:00' },
+  { id: 'mittags', label: 'Midday', helper: 'midday', defaultTime: '12:00' },
+  { id: 'abends', label: 'Evening', helper: 'evening', defaultTime: '18:00' },
+  { id: 'nachts', label: 'Night', helper: 'night', defaultTime: '22:00' },
 ];
 
 // Which BMP slot a clock time falls into. Windows are an APP CONVENTION, not
@@ -140,16 +143,16 @@ export function itemToGrid(item: Pick<RegimenItem, 'times' | 'strengthMg'>): Gri
 
 export interface FrequencyPreset {
   id: string;
-  label: string; // German, exact copy (BMP convention, same as SLOT_DEFS)
+  label: string; // English UI label (see SLOT_DEFS)
   slots: SlotId[];
 }
 
 export const FREQUENCY_PRESETS: readonly FrequencyPreset[] = [
-  { id: 'od-morning', label: '1× morgens', slots: ['morgens'] },
-  { id: 'bid', label: '2× (morgens–abends)', slots: ['morgens', 'abends'] },
-  { id: 'tid', label: '3× (morgens–mittags–abends)', slots: ['morgens', 'mittags', 'abends'] },
-  { id: 'qid', label: '4× (morgens–mittags–abends–nachts)', slots: ['morgens', 'mittags', 'abends', 'nachts'] },
-  { id: 'night', label: 'zur Nacht', slots: ['nachts'] },
+  { id: 'od-morning', label: '1× morning', slots: ['morgens'] },
+  { id: 'bid', label: '2× (morning–evening)', slots: ['morgens', 'abends'] },
+  { id: 'tid', label: '3× (morning–midday–evening)', slots: ['morgens', 'mittags', 'abends'] },
+  { id: 'qid', label: '4× (morning–midday–evening–night)', slots: ['morgens', 'mittags', 'abends', 'nachts'] },
+  { id: 'night', label: 'At night', slots: ['nachts'] },
 ];
 
 // Applies a frequency preset: qty=1 in the preset's slots, 0 elsewhere.
@@ -182,7 +185,7 @@ export function sigLine(
   const isPatch = DRUG_CATALOG[item.drug].formulation === 'transdermal-patch';
   if (isPatch && item.times.length === 1) {
     const [dt] = item.times;
-    return `${generic} ${dt.doseMg} mg/24h — Pflaster, täglich ${dt.time}`;
+    return `${generic} ${dt.doseMg} mg/24h — Patch, daily ${dt.time}`;
   }
 
   const mapping = itemToGrid(item);

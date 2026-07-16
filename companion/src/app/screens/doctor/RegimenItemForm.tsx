@@ -514,7 +514,7 @@ export function RegimenItemForm({ initial, onSave, onCancel }: RegimenItemFormPr
             </p>
           )}
 
-          <p className="mt-4 text-label text-fg-muted">Schema</p>
+          <p className="mt-4 text-label text-fg-muted">Schedule</p>
           <div className="mt-1 flex flex-wrap gap-2">
             {FREQUENCY_PRESETS.map((preset) => (
               <Chip key={preset.id} label={preset.label} onClick={() => applyPresetToGrid(preset)} />
@@ -524,8 +524,10 @@ export function RegimenItemForm({ initial, onSave, onCancel }: RegimenItemFormPr
           <div className="mt-4 grid grid-cols-4 gap-2">
             {SLOT_DEFS.map((def) => (
               <div key={def.id}>
+                {/* label is the English day-part (Morning/Midday/Evening/Night);
+                    the redundant English sub-caption was dropped when labels
+                    switched from the German words to English. */}
                 <p className="text-label text-fg">{def.label}</p>
-                <p className="text-caption text-fg-muted">{def.helper}</p>
                 <input
                   type="text"
                   inputMode="decimal"
@@ -548,7 +550,7 @@ export function RegimenItemForm({ initial, onSave, onCancel }: RegimenItemFormPr
           <p className="mt-1 text-caption text-fg-muted">
             {gridStrengthInput.trim() === ''
               ? 'Dose per intake, in mg.'
-              : `Quantity per intake, in tablets of ${gridStrengthInput.trim()} mg. Fractions: ½, ¼, 1½ or 0,5.`}
+              : `Quantity per intake, in tablets of ${gridStrengthInput.trim()} mg. Fractions: ½, ¼, 1½ or 0.5.`}
           </p>
 
           <button type="button" onClick={switchToCustomFromGrid} className={`mt-2 ${secondaryButtonClass}`}>
