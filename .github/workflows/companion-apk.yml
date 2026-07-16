@@ -8,8 +8,10 @@ on:
       - '.github/workflows/companion-apk.yml'
   workflow_dispatch:
 
+# contents: write is needed so the build can publish the APK as a Release
+# asset (a public, direct-download link), not just a login-gated artifact zip.
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: companion-apk-${{ github.ref }}
@@ -46,3 +48,27 @@ jobs:
           name: companion-debug-apk
           path: companion/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      # Publish the same APK as a Release asset on a moving tag, so there is a
+      # stable, public, direct-download URL (no GitHub login, no zip):
+      #   https://github.com/Bosonian/Play/releases/download/companion-latest/app-debug.apk
+      # The tag is force-updated to the built commit on every run, so the link
+      # always serves the newest build. Marked prerelease — it's a debug build.
+      - name: Publish APK to the companion-latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: companion-latest
+          name: Companion (latest debug APK)
+          prerelease: true
+          body: |
+            Latest **debug** APK of the Parkinson's dosing companion, rebuilt on
+            every push to `claude/pd-dosing-companion`.
+
+            Direct download: **app-debug.apk** below. On Android: open this on the
+            phone, download it, and allow install from your browser when prompted
+            (debug builds are unsigned for Play, so "install unknown apps" must be
+            allowed for that browser).
+
+            Built from commit ${{ github.sha }}.
+          files: companion/android/app/build/outputs/apk/debug/app-debug.apk
+          target_commitish: ${{ github.sha }}
