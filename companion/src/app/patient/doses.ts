@@ -8,6 +8,7 @@ import { DRUG_CATALOG } from '../../domain/drugs';
 import type { RegimenItem } from '../../domain/regimen';
 import type { DoseEvent, PatientEvent, ISODateTime } from '../../domain/types';
 import { safeUuid } from '../lib/uuid';
+import { slotForTime, SLOT_DEFS, type SlotId } from '../../domain/grid';
 
 export interface DoseSlot {
   itemId: string; // provenance (RegimenItem.id) — NOT part of the match key
@@ -37,6 +38,7 @@ export function expandSchedule(items: RegimenItem[]): DoseSlot[] {
 export interface SlotStatus {
   slot: DoseSlot;
   takenAt: ISODateTime | null; // matched event's ACTUAL at; null = pending
+  eventId: string | null; // matched event id; null=pending. Lets the UI open the matched event and exclude consumed events from Recent activity.
 }
 
 // Pure display-side matching (SPEC RISK #1 — the crux of this increment).
@@ -78,11 +80,58 @@ export function markTakenSlots(slots: DoseSlot[], todaysEvents: PatientEvent[]):
       const ev = candidates[i];
       if (ev.drug === slot.drug && ev.scheduledTime === slot.time) {
         consumed.add(i);
-        return { slot, takenAt: ev.at };
+        return { slot, takenAt: ev.at, eventId: ev.id };
       }
     }
-    return { slot, takenAt: null };
+    return { slot, takenAt: null, eventId: null };
   });
+}
+
+// Groups a slot checklist by day-part (SPEC §4). Reuses slotForTime's
+// windows so a dose's day-part grouping and its BMP grid slot are always the
+// same rule — no second definition of "what counts as morning" to drift out
+// of sync with grid.ts. Day-parts with no slots today are OMITTED (not
+// returned as empty groups) so Home never renders a heading with nothing
+// under it.
+export interface DaypartGroup {
+  slotId: SlotId;
+  label: string;
+  statuses: SlotStatus[];
+}
+
+// 0 for the "late" half of the night window (21:00-23:59), 1 for the "early"
+// half (00:00-03:59) — used only to rank nachts entries late-before-early.
+function lateNightRank(time: string): 0 | 1 {
+  return time >= '21:00' ? 0 : 1;
+}
+
+export function groupSlotsByDaypart(statuses: SlotStatus[]): DaypartGroup[] {
+  const bySlot = new Map<SlotId, SlotStatus[]>();
+  for (const status of statuses) {
+    const slotId = slotForTime(status.slot.time);
+    const bucket = bySlot.get(slotId);
+    if (bucket) bucket.push(status);
+    else bySlot.set(slotId, [status]);
+  }
+
+  const groups: DaypartGroup[] = [];
+  for (const def of SLOT_DEFS) {
+    const bucket = bySlot.get(def.id);
+    if (!bucket || bucket.length === 0) continue;
+    // Every day-part preserves input order (already time-sorted by
+    // expandSchedule) EXCEPT 'nachts', which wraps midnight: its members can
+    // be a mix of "late" (21:00-23:59) and "early" (00:00-03:59) clock times.
+    // A plain string/time sort would put "00:30" before "22:00" even though
+    // 22:00 comes first in the night — so rank "late" times ahead of "early"
+    // ones and let Array.prototype.sort's stability (guaranteed by the
+    // ECMAScript spec) preserve each half's original relative order.
+    const ordered =
+      def.id === 'nachts'
+        ? [...bucket].sort((a, b) => lateNightRank(a.slot.time) - lateNightRank(b.slot.time))
+        : bucket;
+    groups.push({ slotId: def.id, label: def.label, statuses: ordered });
+  }
+  return groups;
 }
 
 // Mirrors buildMotorEvent/buildMealEvent in log.ts: source 'self', id

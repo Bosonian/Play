@@ -31,6 +31,16 @@
      always paired with explanatory text, never colour alone. */
   --warn: #c4661f;
 
+  /* Day-part tints for the patient dose checklist. Soft washes + a stronger
+     per-day-part accent (group header text, checklist ring). Colour is a
+     SECONDARY cue here: the header word, the ring shape, and the "Taken · HH:MM"
+     text carry meaning on their own. Verified fg-on-tint ≥7:1, fg-muted-on-tint
+     ≥4.5:1, accent-on-bg and accent-on-tint ≥4.5:1, both themes. */
+  --tint-morning: #f6efdc; --tint-morning-accent: #7a5e12;
+  --tint-midday: #e2edf7; --tint-midday-accent: #2e6899;
+  --tint-evening: #f9e8de; --tint-evening-accent: #9c4a20;
+  --tint-night: #eae7f6; --tint-night-accent: #57509e;
+
   color-scheme: light;
 }
 
@@ -47,6 +57,11 @@
   --accent-soft: #1b2c3d;
 
   --warn: #e08a45;
+
+  --tint-morning: #2a2414; --tint-morning-accent: #d3ab52;
+  --tint-midday: #182839; --tint-midday-accent: #7fb0dd;
+  --tint-evening: #2e2015; --tint-evening-accent: #e0916a;
+  --tint-night: #232038; --tint-night-accent: #a79ce0;
 
   color-scheme: dark;
 }

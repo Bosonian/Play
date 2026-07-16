@@ -4,6 +4,35 @@ A de-identified, physician-in-the-loop Parkinson's dosing companion. Patients
 log levodopa doses, motor state, and meals; the treating neurologist reviews the
 patterns and adjusts the prescription. The app never prescribes.
 
+## 0.9.0 — Day-part tinted dose groups on Patient Home
+
+"Today's doses" is now grouped under Morning / Midday / Evening / Night
+headings, each with a soft tinted card background and a checklist ring
+(hollow = pending, filled + check = taken) instead of a flat undifferentiated
+list. Taken cards are now tappable too, opening the matched event's detail the
+same way a Recent-activity row does. The bottom timeline is renamed "Recent
+activity" and no longer repeats doses already shown as a tick above it — a new
+`SlotStatus.eventId` (set by `markTakenSlots`, null when pending) lets the
+screen derive exactly which events are "consumed" by the checklist and exclude
+only those; rescue doses, orphaned scheduled doses, duplicate logs, and all
+motor/meal events still show up. "Log another dose" is now a quiet underlined
+link rather than a full card, matching "Report a problem"'s treatment.
+
+Colour is a secondary cue throughout: the day-part header word, the ring shape,
+and the "Taken · HH:MM" text each carry the same information the tint does, so
+nothing here depends on colour perception. Four new `--tint-*`/`--tint-*-accent`
+CSS custom-property pairs (light and dark) hold contrast at or above 7:1
+(text/tint), 4.9:1 (muted text/tint), and 4.97:1 (accent/background,
+accent/tint) in both themes — verified with a throwaway contrast script, not
+just eyeballed. Pure `groupSlotsByDaypart` reuses `slotForTime`'s existing
+day-part windows so the checklist grouping and the doctor-side BMP grid can
+never define "morning" two different ways; its one non-obvious rule is that
+the night group re-orders 21:00–23:59 ahead of 00:00–03:59 (a plain string
+sort would otherwise put 00:30 before 22:00). No schema change, no new
+dependencies, no gamification. 217 tests green (210 + 7 new); Chromium
+verification (both themes, all four day-parts, dedup edge cases) is the
+orchestrator's per the usual split.
+
 ## 0.8.1 — English UI labels throughout
 
 The prescription grid's day-part labels, frequency presets, and patch text are

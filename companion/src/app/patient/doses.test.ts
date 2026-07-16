@@ -2,7 +2,16 @@
 // only from src/domain/*, ../lib/uuid (SPEC RISK #5), so nothing here should
 // ever need a Dexie/IndexedDB shim.
 import { describe, it, expect } from 'vitest';
-import { expandSchedule, markTakenSlots, buildDoseEvent, extraDoseChoices, doseLabel, takenVerb } from './doses';
+import {
+  expandSchedule,
+  markTakenSlots,
+  buildDoseEvent,
+  extraDoseChoices,
+  doseLabel,
+  takenVerb,
+  groupSlotsByDaypart,
+  type SlotStatus,
+} from './doses';
 import type { RegimenItem } from '../../domain/regimen';
 import type { DoseEvent, MotorEvent, PatientEvent } from '../../domain/types';
 
@@ -141,22 +150,25 @@ describe('markTakenSlots', () => {
     ]);
     const statuses = markTakenSlots(slots, []);
     expect(statuses.every((s) => s.takenAt === null)).toBe(true);
+    expect(statuses.every((s) => s.eventId === null)).toBe(true);
   });
 
-  it('matching event (drug + scheduledTime) ticks its slot with the actual at', () => {
+  it('matching event (drug + scheduledTime) ticks its slot with the actual at and the event id', () => {
     const slots = expandSchedule([item({ times: [{ time: '08:00', doseMg: 100 }] })]);
-    const ev = doseEvent({ at: '2026-07-16T08:12:00.000Z', scheduledTime: '08:00' });
+    const ev = doseEvent({ id: 'ev-morning', at: '2026-07-16T08:12:00.000Z', scheduledTime: '08:00' });
     const [status] = markTakenSlots(slots, [ev]);
     expect(status.takenAt).toBe('2026-07-16T08:12:00.000Z');
     // at (actual) is preserved and differs from the scheduled clock time.
     expect(status.takenAt).not.toBe('2026-07-16T08:00:00.000Z');
+    expect(status.eventId).toBe('ev-morning');
   });
 
   it('doseMg mismatch still ticks (strength edited midday — dose NOT in key)', () => {
     const slots = expandSchedule([item({ times: [{ time: '08:00', doseMg: 150 }] })]);
-    const ev = doseEvent({ doseMg: 100, scheduledTime: '08:00' });
+    const ev = doseEvent({ id: 'ev-mismatch', doseMg: 100, scheduledTime: '08:00' });
     const [status] = markTakenSlots(slots, [ev]);
     expect(status.takenAt).toBe(ev.at);
+    expect(status.eventId).toBe('ev-mismatch');
   });
 
   it('extra dose (no scheduledTime) ticks nothing', () => {
@@ -164,6 +176,7 @@ describe('markTakenSlots', () => {
     const ev = doseEvent({ scheduledTime: undefined });
     const statuses = markTakenSlots(slots, [ev]);
     expect(statuses[0].takenAt).toBeNull();
+    expect(statuses[0].eventId).toBeNull();
   });
 
   it('same drug, two nearby slots — one event ticks only its slot; other stays pending', () => {
@@ -175,18 +188,21 @@ describe('markTakenSlots', () => {
         ],
       }),
     ]);
-    const ev = doseEvent({ scheduledTime: '08:00' });
+    const ev = doseEvent({ id: 'ev-eight', scheduledTime: '08:00' });
     const statuses = markTakenSlots(slots, [ev]);
     expect(statuses[0].takenAt).toBe(ev.at);
+    expect(statuses[0].eventId).toBe('ev-eight');
     expect(statuses[1].takenAt).toBeNull();
+    expect(statuses[1].eventId).toBeNull();
   });
 
-  it('two events matching one slot → earliest at wins', () => {
+  it('two events matching one slot → earliest wins (both at and eventId)', () => {
     const slots = expandSchedule([item({ times: [{ time: '08:00', doseMg: 100 }] })]);
     const later = doseEvent({ id: 'ev-later', at: '2026-07-16T08:30:00.000Z', scheduledTime: '08:00' });
     const earlier = doseEvent({ id: 'ev-earlier', at: '2026-07-16T08:05:00.000Z', scheduledTime: '08:00' });
     const statuses = markTakenSlots(slots, [later, earlier]);
     expect(statuses[0].takenAt).toBe('2026-07-16T08:05:00.000Z');
+    expect(statuses[0].eventId).toBe('ev-earlier');
   });
 
   it('motor/meal events ignored', () => {
@@ -202,6 +218,7 @@ describe('markTakenSlots', () => {
     const events: PatientEvent[] = [motor];
     const statuses = markTakenSlots(slots, events);
     expect(statuses[0].takenAt).toBeNull();
+    expect(statuses[0].eventId).toBeNull();
   });
 
   it('uneven single-item regimen: an event scheduled for 18:00 ticks the 50mg slot specifically', () => {
@@ -214,13 +231,85 @@ describe('markTakenSlots', () => {
         ],
       }),
     ]);
-    const ev = doseEvent({ doseMg: 50, scheduledTime: '18:00' });
+    const ev = doseEvent({ id: 'ev-evening', doseMg: 50, scheduledTime: '18:00' });
     const statuses = markTakenSlots(slots, [ev]);
     const evening = statuses.find((s) => s.slot.time === '18:00')!;
     expect(evening.slot.doseMg).toBe(50);
     expect(evening.takenAt).toBe(ev.at);
+    expect(evening.eventId).toBe('ev-evening');
     // The two 100mg slots stay pending — the event only ticks its own time.
-    expect(statuses.filter((s) => s.slot.time !== '18:00').every((s) => s.takenAt === null)).toBe(true);
+    expect(statuses.filter((s) => s.slot.time !== '18:00').every((s) => s.takenAt === null && s.eventId === null)).toBe(
+      true,
+    );
+  });
+});
+
+describe('groupSlotsByDaypart', () => {
+  // Minimal SlotStatus fixture — most cases only care about slot.time for
+  // grouping/ordering; takenAt/eventId pass through untouched so a separate
+  // case (below) checks they survive the regrouping rather than repeating
+  // that check in every case.
+  function status(time: string, overrides: Partial<SlotStatus> = {}): SlotStatus {
+    return {
+      slot: { itemId: 'item-1', drug: 'levodopa', doseMg: 100, time },
+      takenAt: null,
+      eventId: null,
+      ...overrides,
+    };
+  }
+
+  it('all four windows present → 4 groups in SLOT_DEFS order with correct labels', () => {
+    const groups = groupSlotsByDaypart([status('08:00'), status('12:00'), status('18:00'), status('22:00')]);
+    expect(groups.map((g) => g.slotId)).toEqual(['morgens', 'mittags', 'abends', 'nachts']);
+    expect(groups.map((g) => g.label)).toEqual(['Morning', 'Midday', 'Evening', 'Night']);
+  });
+
+  it('empty day-parts omitted: 08:00 + 18:00 → 2 groups (morning, evening only)', () => {
+    const groups = groupSlotsByDaypart([status('08:00'), status('18:00')]);
+    expect(groups.map((g) => g.slotId)).toEqual(['morgens', 'abends']);
+  });
+
+  it('boundary times: 10:59 morning, 11:00 midday, 20:59 evening, 21:00 night, 03:59 night, 04:00 morning', () => {
+    const groups = groupSlotsByDaypart([
+      status('10:59'),
+      status('11:00'),
+      status('20:59'),
+      status('21:00'),
+      status('03:59'),
+      status('04:00'),
+    ]);
+    const bySlot = Object.fromEntries(groups.map((g) => [g.slotId, g.statuses.map((s) => s.slot.time)]));
+    expect(bySlot.morgens).toEqual(expect.arrayContaining(['10:59', '04:00']));
+    expect(bySlot.mittags).toEqual(['11:00']);
+    expect(bySlot.abends).toEqual(['20:59']);
+    // nachts re-orders late-before-early (next case covers that in detail);
+    // here just confirm both boundary times land in the night bucket.
+    expect(bySlot.nachts).toEqual(expect.arrayContaining(['21:00', '03:59']));
+  });
+
+  it('nachts wrap: 00:30 and 22:00 as input → night group lists 22:00 before 00:30', () => {
+    const groups = groupSlotsByDaypart([status('00:30'), status('22:00')]);
+    const night = groups.find((g) => g.slotId === 'nachts')!;
+    expect(night.statuses.map((s) => s.slot.time)).toEqual(['22:00', '00:30']);
+  });
+
+  it('within-group input order preserved for a non-night group (07:00 then 09:00)', () => {
+    const groups = groupSlotsByDaypart([status('07:00'), status('09:00')]);
+    const morning = groups.find((g) => g.slotId === 'morgens')!;
+    expect(morning.statuses.map((s) => s.slot.time)).toEqual(['07:00', '09:00']);
+  });
+
+  it('[] → []', () => {
+    expect(groupSlotsByDaypart([])).toEqual([]);
+  });
+
+  it('mixed taken + pending pass through with takenAt/eventId intact', () => {
+    const taken = status('08:00', { takenAt: '2026-07-16T08:05:00.000Z', eventId: 'ev-1' });
+    const pending = status('09:00');
+    const groups = groupSlotsByDaypart([taken, pending]);
+    const morning = groups.find((g) => g.slotId === 'morgens')!;
+    expect(morning.statuses[0]).toEqual(taken);
+    expect(morning.statuses[1]).toEqual(pending);
   });
 });
 

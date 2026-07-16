@@ -39,6 +39,12 @@ export default {
           soft: 'var(--accent-soft)',
         },
         warn: 'var(--warn)',
+        tint: {
+          morning: { DEFAULT: 'var(--tint-morning)', accent: 'var(--tint-morning-accent)' },
+          midday: { DEFAULT: 'var(--tint-midday)', accent: 'var(--tint-midday-accent)' },
+          evening: { DEFAULT: 'var(--tint-evening)', accent: 'var(--tint-evening-accent)' },
+          night: { DEFAULT: 'var(--tint-night)', accent: 'var(--tint-night-accent)' },
+        },
       },
       fontFamily: {
         // System stack — no web-font fetch, so first paint is instant and the
