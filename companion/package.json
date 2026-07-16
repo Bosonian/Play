@@ -1,0 +1,15 @@
+{
+  "name": "pd-dosing-companion-core",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Portable, de-identified domain model + transparent levodopa PK/PD engine. Stack-agnostic core shared by the patient app and the doctor dashboard.",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}
