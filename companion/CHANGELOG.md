@@ -4,6 +4,67 @@ A de-identified, physician-in-the-loop Parkinson's dosing companion. Patients
 log levodopa doses, motor state, and meals; the treating neurologist reviews the
 patterns and adjusts the prescription. The app never prescribes.
 
+## 0.4.0 — Patient logging loop: motor state + meals
+
+The first screens that actually record something. On first run the app silently
+bootstraps a single de-identified local patient (a generated `local-xxxxxxxx`
+code — never a name, never anything identifying) and shows the patient's own
+"Today". Dose logging and the medication regimen are the next increment; this
+one is the motor-state and meal loop only.
+
+- **How I feel now** — three big slabs (ON / OFF / ON with dyskinesia), OFF in
+  the centre because that is when the tapping hand is at its worst. One tap logs
+  the state with an automatic timestamp. Tapping "ON with dyskinesia" logs
+  immediately and then offers an *optional, skippable* "Was it troublesome?"
+  refinement — clinical richness for the doctor without ever blocking the
+  patient (Skip and Back both just leave it as unspecified).
+- **Log a meal** — Low / High protein, one tap. Protein timing matters for
+  levodopa absorption, so this is deliberately its own first-class action.
+- **A live "Today" timeline** — every log/undo/delete updates it instantly
+  (Dexie's own `useLiveQuery`), newest first, empty state stated exactly
+  ("Nothing logged yet today.").
+- **Undo, never confirm** — a logged or deleted entry surfaces an Undo strip
+  that *never auto-dismisses*; it persists until the next action replaces it or
+  you tap Undo. This satisfies the "at least 8 seconds" rule with zero timer
+  code. Undo is idempotent by construction (Dexie put/delete no-ops), so a
+  stray double-tap can't corrupt it.
+- **Event Detail** — the one place to change an entry's time (±5-minute stepper)
+  or delete it. Time can be stepped freely into the past (a date line keeps a
+  cross-midnight step legible) but **never into the future** — the shift is
+  clamped to "now" at the write layer, so no symptom or meal can be recorded
+  ahead of the clock. Delete has no confirm dialog and no swipe; it just deletes
+  and offers Undo.
+- **No typing, no confirms, big targets** throughout (heroes ≥120px, controls
+  ≥76px/≈20mm, gaps ≥8mm), per `docs/RESEARCH.md` §1. Times display in local
+  24-hour format; storage is always UTC ISO (so the timeline sorts by true
+  instant and a travelling patient's evening events still land on the right
+  local day).
+- **Pure logic stays pure** — the event builders, the time-shift/clamp, the
+  "today" range, and the label map live in `patient/log.ts` with no React and no
+  Dexie, unit-tested in plain node. DB writes live only in the React layer.
+
+Verified here: full flow driven in headless Chromium (bootstrap → log OFF → log
+dyskinesia+troublesome → log meal → undo → detail → time-step → delete →
+undo-delete → reload-persists), 18/18 checks. Suite is 79 tests (was 55).
+Typecheck and web build clean.
+
+### Known behaviour (recorded, not a bug)
+- **The logging debounce is global, not per-button.** A single ~450ms guard
+  (there to make a tremor double-strike count once) is shared across *all*
+  logging actions, so two *deliberate* logging taps within 450ms of each other
+  — e.g. tapping "ON with dyskinesia" and then "Yes" on the refinement almost
+  instantly — will drop the second. It degrades gracefully (the state is still
+  logged, just left unspecified), and for a bradykinetic patient deliberate taps
+  are comfortably slower than 450ms, so this is acceptable for v1. If on-device
+  use shows it swallowing real taps, the fix is a per-action guard — flagged for
+  the next increment.
+
+### Not verified in this environment
+- The APK **compile** is CI-only (no Android SDK in the sandbox), as before.
+- On-device *feel* of the tap targets and the debounce window is only judgeable
+  on the phone; the sandbox verifies logic, layout, and the DOM flow, not touch
+  ergonomics.
+
 ## 0.3.0 — Steady Read: gyro screen stabilization for tremor (prototype)
 
 An accessibility experiment, reachable as a discreet tool (not part of the

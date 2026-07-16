@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { PatientHome } from './screens/PatientHome';
+import { PatientRoot } from './screens/patient/PatientRoot';
 import { DoctorGate } from './screens/DoctorGate';
 import { DoctorHome } from './screens/DoctorHome';
 import { SteadyRead } from './steady/SteadyRead';
@@ -65,7 +65,7 @@ export function App() {
       </header>
       <main className="flex-1 p-4">
         {showSteady && <SteadyRead onBack={() => setShowSteady(false)} />}
-        {!showSteady && mode === 'patient' && <PatientHome />}
+        {!showSteady && mode === 'patient' && <PatientRoot />}
         {!showSteady && mode === 'doctor' && !doctorUnlocked && (
           <DoctorGate onUnlock={() => setDoctorUnlocked(true)} onBack={() => setMode('patient')} />
         )}
