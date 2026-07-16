@@ -8,7 +8,7 @@ function baseReport(overrides: Partial<FieldReport> = {}): FieldReport {
     createdAt: '2026-07-16T08:00:00.000Z',
     status: 'pending',
     description: 'The dose timer shows the wrong slot after midnight.',
-    metadata: { appVersion: '0.9.1', screen: 'patient-home', at: '2026-07-16T08:00:00.000Z' },
+    metadata: { appVersion: '0.10.0', screen: 'patient-home', at: '2026-07-16T08:00:00.000Z' },
     ...overrides,
   };
 }
@@ -36,7 +36,7 @@ describe('buildIssueBody', () => {
     const report = baseReport();
     const body = buildIssueBody(report);
     expect(body).not.toContain('```');
-    expect(body).toContain('| App version | 0.9.1 |');
+    expect(body).toContain('| App version | 0.10.0 |');
     expect(body).toContain('| Screen | patient-home |');
     expect(body).toContain('| Filed at | 2026-07-16T08:00:00.000Z |');
   });

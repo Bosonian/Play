@@ -39,7 +39,13 @@ jobs:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
       - run: npm ci
       - run: npm test
+      # Bake the CI build number into the web bundle so the running app knows
+      # its own build and can tell whether the published release is newer
+      # (the in-app "Update available" check). Same number as the APK
+      # versionCode and the "build N" stamp in the release body below.
       - run: npm run build
+        env:
+          VITE_APP_BUILD: ${{ github.run_number }}
       - run: npx cap sync android
 
       # App version (cosmetic versionName) from package.json; versionCode is the

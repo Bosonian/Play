@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { PatientRoot } from './screens/patient/PatientRoot';
 import { DoctorGate } from './screens/DoctorGate';
 import { DoctorHome } from './screens/DoctorHome';
+import { UpdateBanner } from './components/UpdateBanner';
 
 type Mode = 'patient' | 'doctor';
 
@@ -48,6 +49,7 @@ export function App() {
           </button>
         </div>
       </header>
+      <UpdateBanner />
       <main className="flex-1 p-4">
         {mode === 'patient' && <PatientRoot />}
         {mode === 'doctor' && !doctorUnlocked && (

@@ -4,6 +4,39 @@ A de-identified, physician-in-the-loop Parkinson's dosing companion. Patients
 log levodopa doses, motor state, and meals; the treating neurologist reviews the
 patterns and adjusts the prescription. The app never prescribes.
 
+## 0.10.0 — In-app update banner
+
+The app now tells you when a newer build is available and hands you the
+download, so you don't have to remember the release URL. On open it does one
+quiet, unauthenticated GET to the public `companion-latest` release, reads the
+`build N` stamp from the release body, and — only if that build is newer than
+the one running — shows a calm "Update available — version X.Y.Z" banner below
+the header with a **Download** action (opens `companion.apk` in the browser to
+install in place) and a session-only **Later**.
+
+- **How "newer" is known:** CI bakes its run number into the web bundle
+  (`VITE_APP_BUILD` → `APP_BUILD`), which equals the APK's versionCode and the
+  release's `build N`. Comparing build numbers detects every new build, not
+  just semver changes.
+- **Fail-silent and private:** the check sends no patient data (a GET to a
+  public release), and any failure — offline, GitHub down, malformed response —
+  resolves to "no banner" rather than an error. `checkForUpdate` is the only
+  network code besides reporting; both go through `api.github.com`, which is
+  CORS-reachable from the WebView.
+- **Honest scope:** this is a notify-and-link, not auto-update — Android does
+  the install from the downloaded APK (in place, same signing key). The check
+  runs once per app open, never in the background.
+- **Tradeoff, stated:** this is the first *automatic* network call the app
+  makes (previously it was fully local unless you configured reporting). You
+  approved that; it's a one-line change to make it a manual "Check for updates"
+  button instead if the posture should change.
+
+218 tests (was 210): +8 for `checkForUpdate` (newer/equal/older build, network
+error, non-ok response, malformed body, missing asset → fallback URL) with a
+mocked fetch. The banner itself verified in Chromium against a mocked release
+(shows on a newer build with the right Download link, hidden otherwise, Later
+dismisses). Typecheck + web build clean.
+
 ## 0.9.1 — Remove Steady Read
 
 The Steady Read gyroscope screen-stabilization tool (added in 0.3.0 as a
