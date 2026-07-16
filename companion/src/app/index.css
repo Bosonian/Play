@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens — the single source of truth for colour. Tailwind
+ * (tailwind.config.ts) references these via var(); switching themes is just
+ * flipping data-theme on <html>, which repoints every token at once.
+ *
+ * Two full sets: light (:root default) and dark ([data-theme="dark"]). Unlike
+ * the root Head-in app, there is no persisted theme override here — data-theme
+ * is set once, synchronously, from the OS preference (see index.html) and
+ * never changed at runtime.
+ *
+ * Contrast: body text on bg ≈ 15:1, muted ≈ 5.6:1, accent ≈ 5:1 (all WCAG AA+).
+ */
+:root {
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --surface-soft: #eef1f5;
+  --line: #d6dbe2;
+  --fg: #161a20;
+  --fg-muted: #5a6472;
+  --fg-faint: #8a93a3;
+
+  --accent: #2b6cb0;
+  --accent-soft: #dce8f4;
+
+  /* Amber, not red — this app never says a dosing decision is "wrong", only
+     that something needs the patient's or doctor's attention. Errors are
+     always paired with explanatory text, never colour alone. */
+  --warn: #c4661f;
+
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  --bg: #0e1116;
+  --surface: #161b22;
+  --surface-soft: #1f2630;
+  --line: #2c3542;
+  --fg: #e8ecf1;
+  --fg-muted: #9aa5b3;
+  --fg-faint: #5f6a78;
+
+  --accent: #5b9bd5;
+  --accent-soft: #1b2c3d;
+
+  --warn: #e08a45;
+
+  color-scheme: dark;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--fg);
+    /* Prevent iOS/Android rubber-band from revealing a mismatched colour
+       behind the app; the app owns the full viewport. */
+    overscroll-behavior: none;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Respect reduced-motion globally: kill decorative transitions/animation.
+     Functional state changes still happen instantly, so nothing depends on
+     motion (design doc §8.6/§8.7). */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* Visible focus ring for keyboard users (Mac), invisible to mouse/touch. */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}

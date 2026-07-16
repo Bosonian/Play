@@ -1,15 +1,32 @@
 {
-  "name": "pd-dosing-companion-core",
+  "name": "pd-dosing-companion",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
-  "description": "Portable, de-identified domain model + transparent levodopa PK/PD engine. Stack-agnostic core shared by the patient app and the doctor dashboard.",
+  "description": "Portable, de-identified Parkinson's dosing companion. Patient and doctor modes over a shared domain model + transparent levodopa PK/PD engine.",
   "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/android": "^7.0.0"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
-    "vitest": "^2.1.8"
+    "vite": "^6.0.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^3.4.17",
+    "postcss": "^8.4.49",
+    "autoprefixer": "^10.4.20",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@capacitor/cli": "^7.0.0",
+    "vitest": "^3.0.5"
   }
 }

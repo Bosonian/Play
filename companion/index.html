@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- theme-color drives the Android status-bar tint. Kept in sync with
+         the --bg token in index.css. This is the light-mode value; the
+         media-query below swaps it in dark mode. -->
+    <meta name="theme-color" content="#F7F8FA" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0E1116" media="(prefers-color-scheme: dark)" />
+    <title>Companion</title>
+    <!-- Set the theme synchronously, before the module bundle loads, so
+         there's no flash of the wrong theme on cold start. Defaults to the
+         OS preference; there is no saved override to apply later. -->
+    <script>
+      try {
+        var dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/app/main.tsx"></script>
+  </body>
+</html>
