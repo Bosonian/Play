@@ -471,6 +471,52 @@ export interface StudySchedule {
 }
 
 /**
+ * A day-sized floor beside Prüfung mode's honest weekly math (daily-shape
+ * increment). CLAUDE.md, verbatim, is why this exists: "Three 50-min
+ * sprints daily, one full rest day: 2.5 h × 6 = 15 h. you know my adhd
+ * brain sees the big numbers and dont even start" — the exam overview's
+ * ready-by date and required-pace line (`requiredPaceHoursPerWeek`,
+ * examProjection.ts) are strategy-sized numbers, 310 h and 18.7 h/week,
+ * paralyzing at zero data. "Today: 1 of 3 sprints." is a number a single
+ * day can actually hold.
+ *
+ * CRITICAL HONESTY CONSTRAINT, stated here because it constrains every
+ * reader of this field, not just the writer: `sprints` is DELIBERATELY
+ * decoupled from examProjection's pace math. 3 sprints × 50 min × 6 days
+ * (one rest day) is 15 h/week — genuinely less than an 18.7 h/week
+ * requirement would be. This field must never be summed, averaged, or
+ * otherwise folded into `measuredPaceHoursPerWeek`/`requiredPaceHoursPerWeek`
+ * — doing so would let a daily floor quietly launder itself into looking
+ * like it satisfies the weekly requirement, which is exactly the kind of
+ * reassuring-but-false number CLAUDE.md's "tell the truth about tradeoffs"
+ * rule forbids. `dailyShape.ts`'s `todayLine` reads ONLY sprint-completion
+ * counts (`sprintsCompletedOn`) for this reason — never hours, never the
+ * projection — so there is no code path by which this field could feed the
+ * ready-date equation even by accident. It feeds exactly three UI surfaces
+ * (ExamOverview's Today line, Sprint.tsx's PostSprintView count, the
+ * Prüfung widget's today line), all of which sit BESIDE the honest
+ * ready-by/required-pace numbers, never replacing them.
+ *
+ * `sprints`: the daily sprint target, 1–4 (SprintSetup-adjacent range —
+ * more than 4 fixed-length sprints in one day stops being a "day-sized"
+ * floor and starts being a second weekly plan). `restDay`: an ISO weekday
+ * (1 Monday .. 7 Sunday, same numbering as `StudySchedule.days` above) with
+ * no sprint expectation, or `null` for "no rest day" (every day carries the
+ * same target). `null` on the whole field means the feature is off —
+ * ExamSetup's Daily shape section leaves every chip deselected by default,
+ * same "absence means off" shape `studySchedule` above already uses.
+ *
+ * Not indexed — same undefined-as-null discipline as `studySchedule`
+ * above: a row saved before this field existed has no `dailyTarget`
+ * property at all, read everywhere as `dailyTarget ?? null`, never
+ * `=== null`. No Dexie version bump needed for the same reason.
+ */
+export interface DailyTarget {
+  sprints: number;
+  restDay: number | null;
+}
+
+/**
  * Prüfung mode's deadline anchor — the exam the mode's math points at.
  * `windowStart` is the earliest the exam could fall (usually all that's
  * known for a long-lead exam like the Facharztprüfung, e.g. "November
@@ -508,6 +554,16 @@ export interface Exam {
    * `=== null`.
    */
   studySchedule: StudySchedule | null;
+  /**
+   * Daily-shape increment: see `DailyTarget`'s own doc comment (above this
+   * interface) for the full CRITICAL HONESTY CONSTRAINT — this field is a
+   * starting floor, deliberately decoupled from the pace projection, never
+   * a substitute for `requiredPaceHoursPerWeek`. `undefined` on every row
+   * saved before this field existed; read everywhere as `dailyTarget ??
+   * null`, same undefined-as-null discipline as `studySchedule` above. Not
+   * indexed, no Dexie version bump.
+   */
+  dailyTarget?: DailyTarget | null;
 }
 
 /**

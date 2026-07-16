@@ -34,7 +34,17 @@
      — so the picker falls back to rendering this initialLayout as-is).
      PruefungWidgetProvider.onUpdate ALWAYS overwrites every one of these
      views the moment the widget is actually placed on a home screen;
-     nothing below is ever shown to Deepak on a real, placed widget. -->
+     nothing below is ever shown to Deepak on a real, placed widget.
+
+     0.41.0 (daily shape): widget_line_today sits between the progress row
+     and widget_line3 — "Today: 1 of 3 sprints." / "Rest day.", hidden
+     (GONE) entirely when no dailyTarget is set. Coloured via a direct
+     setTextColor(int) call in PruefungWidgetProvider.applyTodayLine, NOT
+     the two-pre-coloured-view toggle the progress bar above uses — a plain
+     TextView's text colour is a @RemotableViewMethod RemoteViews can set
+     reliably on any API level this app's minSdk spans, unlike retinting a
+     ProgressDrawable, which is what forced the bar's two-view workaround in
+     the first place (see PruefungWidgetProvider's own comment on that). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_root"
     android:layout_width="match_parent"
@@ -86,11 +96,27 @@
 
     </FrameLayout>
 
+    <!-- Daily shape (0.41.0) — see this file's own header comment above.
+         Same 12sp/slate-400 starting look as widget_line3 below (its
+         "not met" state IS this default XML colour; "met" overrides it to
+         emerald #6EE7B7 at render time), 6dp below the bar the same way
+         widget_line3 used to sit before this line was inserted between
+         them. -->
+    <TextView
+        android:id="@+id/widget_line_today"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:textSize="12sp"
+        android:textColor="#94A3B8"
+        android:maxLines="1"
+        android:text="Today: 1 of 3 sprints." />
+
     <TextView
         android:id="@+id/widget_line3"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
+        android:layout_marginTop="2dp"
         android:textSize="12sp"
         android:textColor="#94A3B8"
         android:maxLines="1"

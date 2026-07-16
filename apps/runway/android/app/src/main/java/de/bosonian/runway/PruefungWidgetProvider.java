@@ -48,6 +48,16 @@ import org.json.JSONObject;
  * of the two pre-coloured ProgressBar views to show) are both prebaked in
  * widgetSnapshot.ts and simply read here via optInt/optBoolean, same
  * tolerance idiom `emptyExam` below already uses.
+ *
+ * Daily shape (0.41.0): one more line, `widget_line_today`, between the bar
+ * and "This week: ...". Same ARCHITECTURE RULE, same tolerance idiom — the
+ * sentence (`todayLine`) and the met/not-met flag (`todayMet`) are both
+ * prebaked in widgetSnapshot.ts (which itself defers to dailyShape.ts's
+ * `todayLine`, the one function CLAUDE.md's honesty constraint on
+ * `Exam.dailyTarget` binds), never decided here. Unlike the progress bar,
+ * this line's colour is set via a direct `setTextColor(int)` call rather
+ * than a two-view visibility toggle — see `applyTodayLine`'s own comment
+ * for why that's safe here even though it wasn't for the bar.
  */
 public class PruefungWidgetProvider extends AppWidgetProvider {
 
@@ -84,6 +94,13 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
     private static final int COLOR_LATE = 0xFFF87171;
     private static final int COLOR_TIGHT = 0xFFFBBF24;
     private static final int COLOR_CALM = 0xFFF1F5F9;
+
+    // Daily shape (0.41.0): the Today line's two colours. COLOR_TODAY_DEFAULT
+    // matches widget_line_today's own XML default (#94A3B8, slate-400) —
+    // set explicitly anyway (see applyTodayLine's own comment on why) rather
+    // than left to fall through to the layout's static value.
+    private static final int COLOR_TODAY_DEFAULT = 0xFF94A3B8;
+    private static final int COLOR_TODAY_MET = 0xFF6EE7B7;
 
     @Override
     public void onUpdate(Context context, AppWidgetManager appWidgetManager, int[] appWidgetIds) {
@@ -142,6 +159,13 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
         views.setTextViewText(R.id.widget_line2, "");
         views.setTextViewText(R.id.widget_line3, "");
         views.setViewVisibility(R.id.widget_progress_row, View.GONE);
+        // Daily shape (0.41.0): explicitly cleared and hidden here too, not
+        // just left at whatever a PREVIOUS render (a real snapshot, before
+        // whatever made this one unreadable/absent) left it at — a recycled
+        // RemoteViews object can otherwise carry a stale "Today: 2 of 3
+        // sprints." line into a state that has nothing to say about today.
+        views.setTextViewText(R.id.widget_line_today, "");
+        views.setViewVisibility(R.id.widget_line_today, View.GONE);
     }
 
     // m2: same shape as renderFallback (one-line message, calm colour,
@@ -157,6 +181,10 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
         views.setTextViewText(R.id.widget_line2, "");
         views.setTextViewText(R.id.widget_line3, "");
         views.setViewVisibility(R.id.widget_progress_row, View.GONE);
+        // Daily shape (0.41.0): no exam means no dailyTarget either — same
+        // stale-recycled-view reasoning as renderFallback's own comment.
+        views.setTextViewText(R.id.widget_line_today, "");
+        views.setViewVisibility(R.id.widget_line_today, View.GONE);
     }
 
     private void renderSnapshot(RemoteViews views, String snapshotJson) throws JSONException {
@@ -172,6 +200,20 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
             return;
         }
         JSONObject pruefung = root.getJSONObject("pruefung");
+
+        // Daily shape (0.41.0): computed once, up front, so it's available
+        // to BOTH the emptyExam early-return branch below and the ordinary
+        // flow further down — a daily sprint target is decoupled from the
+        // topic/pace projection (db/types.ts's DailyTarget doc comment), so
+        // it must render even when emptyExam short-circuits everything
+        // else. See applyTodayLine's own comment for what this Calendar is
+        // compared against.
+        Calendar todayMidnightCal = Calendar.getInstance();
+        todayMidnightCal.set(Calendar.HOUR_OF_DAY, 0);
+        todayMidnightCal.set(Calendar.MINUTE, 0);
+        todayMidnightCal.set(Calendar.SECOND, 0);
+        todayMidnightCal.set(Calendar.MILLISECOND, 0);
+        long todayMidnightMs = todayMidnightCal.getTimeInMillis();
 
         boolean neverReady = pruefung.getBoolean("neverReady");
         // optBoolean(..., false): a snapshot written by a pre-empty-exam-fix
@@ -192,6 +234,7 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
             views.setTextViewText(R.id.widget_line2, "");
             views.setTextViewText(R.id.widget_line3, "");
             views.setViewVisibility(R.id.widget_progress_row, View.GONE);
+            applyTodayLine(views, pruefung, todayMidnightMs);
             return;
         }
 
@@ -255,6 +298,11 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
             views.setTextColor(R.id.widget_line1, color);
         }
 
+        // Daily shape (0.41.0): rendered here, between the ready-by branch
+        // above and the stale-week guard below, matching widget_pruefung.xml's
+        // own top-to-bottom order (bar, Today line, week line, anchor line).
+        applyTodayLine(views, pruefung, todayMidnightMs);
+
         // Stale-week guard: once the real device clock has moved past the
         // week this weekLine was computed for, it no longer describes "this
         // week" — hidden rather than shown out of date. A snapshot is only
@@ -307,6 +355,55 @@ public class PruefungWidgetProvider extends AppWidgetProvider {
         // visibility-toggle approach is the standard, documented RemoteViews
         // pattern for a coloured progress bar, but "standard" isn't the
         // same as "confirmed on Deepak's actual S25 Ultra home screen".
+    }
+
+    /**
+     * Daily shape (0.41.0): "Today: N of target sprints." / "Rest day."
+     * between the weekly bar and "This week: ...". Called from BOTH the
+     * emptyExam early return and the ordinary ready-date flow above — a
+     * daily sprint target has nothing to do with whether the exam has
+     * topics yet (db/types.ts's `DailyTarget` doc comment: deliberately
+     * decoupled from the pace/topic projection), so it must not be hidden
+     * just because `emptyExam` short-circuits everything else this method
+     * renders.
+     *
+     * Text tinting via `setTextColor(int)` directly, unlike the progress
+     * bar's two-pre-coloured-view toggle above — `setTextColor` is a plain
+     * `@RemotableViewMethod` on `TextView`, reliable across every API level
+     * this app's minSdk spans, unlike `RemoteViews` retinting a
+     * `ProgressDrawable`'s tint (see this class's own header comment on the
+     * bar for why THAT needed the two-view workaround instead of just
+     * recolouring one view). Both branches below set the colour explicitly
+     * — never left to the XML default — because a recycled `RemoteViews`
+     * object can carry a stale tint from a PREVIOUS render: an emerald
+     * "met" colour from an earlier redraw must not silently persist onto a
+     * later, not-yet-met one.
+     *
+     * `todayMidnightMs`: the widget's own idea of local midnight "today",
+     * computed once by the caller. Compared against the snapshot's own
+     * `generatedDayEpochMs` (optionally read here, tolerant of a missing
+     * key — same schema-upgrade idiom `emptyExam`/`weekProgressPercent`
+     * already use) so a snapshot that's sat unrefreshed since a PREVIOUS
+     * calendar day never shows yesterday's sprint count under today's
+     * label — the one-day analogue of `weekIsCurrent`'s own seven-day
+     * staleness guard just below this method's call sites.
+     */
+    private void applyTodayLine(RemoteViews views, JSONObject pruefung, long todayMidnightMs) {
+        long generatedDayEpochMs = pruefung.optLong("generatedDayEpochMs", -1);
+        boolean current = generatedDayEpochMs == todayMidnightMs;
+
+        if (!current || pruefung.isNull("todayLine")) {
+            views.setTextViewText(R.id.widget_line_today, "");
+            views.setViewVisibility(R.id.widget_line_today, View.GONE);
+            return;
+        }
+
+        String todayLineText = pruefung.optString("todayLine", "");
+        boolean todayMet = pruefung.optBoolean("todayMet", false);
+
+        views.setViewVisibility(R.id.widget_line_today, View.VISIBLE);
+        views.setTextViewText(R.id.widget_line_today, todayLineText);
+        views.setTextColor(R.id.widget_line_today, todayMet ? COLOR_TODAY_MET : COLOR_TODAY_DEFAULT);
     }
 
     /** Whole days between two instants, floor-divided — mirrors

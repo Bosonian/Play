@@ -16,6 +16,13 @@
      (no Android SDK/emulator available in this environment; see the
      increment's own "CI will prove" list).
 
+     0.41.0 (daily shape): a fifth row (widget_line_today, 12sp text plus
+     6dp top margin — see widget_pruefung.xml's own comment) lands between
+     the bar and the former widget_line3, so minHeight is bumped again, by
+     the same rough per-row allowance as before, 84dp -> 98dp. Same
+     "judgment call, not a spec number" caveat as the 0.40.0 bump above —
+     still untested against a real launcher grid.
+
      updatePeriodMillis: 6 hours. The widget's whole display is a 1:1
      calendar slide (m3: readyDayEpochMs slid forward by however many whole
      calendar days have passed since generatedDayEpochMs — see
@@ -37,7 +44,7 @@
      needed for it. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:minWidth="180dp"
-    android:minHeight="84dp"
+    android:minHeight="98dp"
     android:updatePeriodMillis="21600000"
     android:initialLayout="@layout/widget_pruefung"
     android:description="@string/widget_pruefung_description"

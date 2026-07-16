@@ -1,5 +1,6 @@
 import { startOfWeek } from 'date-fns';
 import type { Departure, Exam, Sprint, Topic, WorkTask } from '../db/types';
+import { todayLine } from './dailyShape';
 import { examProjection, hoursThisWeek } from './examProjection';
 import { formatDateTimeShort, formatExamAnchorLine, formatTime } from './format';
 import { PAST_DEPARTURE_THRESHOLD_MS } from './departureThreshold';
@@ -7,8 +8,8 @@ import { computeProjection, computeStartBy } from './projection';
 import { taskStartBy } from './taskProjection';
 
 // Widgets increment (Runway 0.10.0 W1, 0.11.0 W2, 0.39.0 W3, 0.40.0 progress
-// bar): the JSON shape written to Android SharedPreferences and read by the
-// three native widgets
+// bar, 0.41.0 daily shape): the JSON shape written to Android
+// SharedPreferences and read by the three native widgets
 // (android/app/src/main/java/de/bosonian/runway/PruefungWidgetProvider.java,
 // DepartureWidgetProvider.java, and TaskWidgetProvider.java).
 //
@@ -25,7 +26,12 @@ import { taskStartBy } from './taskProjection';
 // weekProgressPercent/weekAtTarget (0.40.0) extend this same rule to the
 // Prüfung widget's progress bar: the ratio and the emerald/sky decision are
 // both computed here, never in PruefungWidgetProvider.java, which only
-// picks which of two pre-coloured ProgressBar views to show.
+// picks which of two pre-coloured ProgressBar views to show. todayLine/
+// todayMet (0.41.0) extend it once more, to the daily-shape Today line —
+// the sentence and the met/not-met flag are both baked here (dailyShape.ts's
+// todayLine), and the native side does display plumbing only: it plain
+// setTextColor()s the one TextView, never deciding what the line says or
+// whether it's "met".
 
 /** Same tight/late threshold the app's own STATE_TEXT (ExamOverview.tsx)
  * switches colour at — passed through in the snapshot rather than hardcoded
@@ -122,6 +128,22 @@ export interface PruefungWidgetData {
    * pre-coloured ProgressBar views to show (see
    * PruefungWidgetProvider.java) — it makes no colour decision itself. */
   weekAtTarget: boolean;
+  /**
+   * Daily-shape increment: `dailyShape.ts`'s `todayLine(now, exam.dailyTarget
+   * ?? null, sprints).text` — "Today: 1 of 3 sprints." / "Rest day." —
+   * `null` whenever no dailyTarget is set (the native side hides the row
+   * entirely; see `PruefungWidgetProvider.applyTodayLine`). Computed
+   * unconditionally alongside every other pruefung field, INCLUDING when
+   * `emptyExam`/`neverReady` are true — per db/types.ts's `DailyTarget` doc
+   * comment, a daily sprint target is deliberately decoupled from the
+   * topic/pace projection, so it must not disappear just because the
+   * projection itself has nothing to say yet.
+   */
+  todayLine: string | null;
+  /** `todayLine`'s own `met` flag, mirrored the same way `weekAtTarget`
+   * mirrors ExamOverview's weekly-bar colour decision — `false` (not
+   * meaningful) whenever `todayLine` is `null`. */
+  todayMet: boolean;
 }
 
 /** The departure widget's data (W2) — mirrors PruefungWidgetData's shape:
@@ -412,6 +434,11 @@ export function buildWidgetSnapshot(
   const projection = examProjection(now, exam, topics, sprints);
   const loggedThisWeek = hoursThisWeek(now, sprints);
   const weekStart = startOfWeek(now, { weekStartsOn: 1 });
+  // Daily shape (this increment): built from `exam.dailyTarget` alone —
+  // never `projection` — so it stays correct in the emptyExam/neverReady
+  // branches below exactly as much as in the ordinary one. See
+  // PruefungWidgetData.todayLine's own doc comment.
+  const daily = todayLine(now, exam.dailyTarget ?? null, sprints);
 
   const emptyExam = projection.state === 'empty';
   // 'empty' is a distinct flag, not a flavour of "never ready" — see
@@ -438,6 +465,8 @@ export function buildWidgetSnapshot(
       stateThresholdDays: PRUEFUNG_STATE_THRESHOLD_DAYS,
       weekProgressPercent: computeWeekProgressPercent(loggedThisWeek, projection.requiredPaceHoursPerWeek),
       weekAtTarget: computeWeekAtTarget(loggedThisWeek, projection.requiredPaceHoursPerWeek),
+      todayLine: daily ? daily.text : null,
+      todayMet: daily ? daily.met : false,
     },
     departure: departureData,
     tasks: taskData,

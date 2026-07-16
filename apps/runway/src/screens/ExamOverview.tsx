@@ -17,6 +17,7 @@ import {
   zombieSprints,
 } from '../lib/examProjection';
 import type { ExamProjectionResult } from '../lib/examProjection';
+import { todayLine } from '../lib/dailyShape';
 import { nextMove } from '../lib/nextMove';
 import type { NextMove } from '../lib/nextMove';
 import { PRUEFUNG_GUIDED_DONE_KEY, isGuidedPassActive, markGuidedPassDone } from '../lib/guidedPass';
@@ -141,6 +142,13 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
   const textAccent = STATE_TEXT[projection.state];
   const thisWeekHours = hoursThisWeek(now, sprints);
   const bestWeek = bestWeekHours(now, sprints);
+  // Daily shape (this increment): `null` whenever Deepak hasn't set a
+  // dailyTarget (undefined-as-null read, same discipline as
+  // `exam.studySchedule` below) — the Today line is then omitted entirely,
+  // never a dash or a "0 of 0". See db/types.ts's DailyTarget doc comment
+  // for why this is computed from sprint COUNTS only, never hours, and
+  // never touches `projection` above.
+  const daily = todayLine(now, exam.dailyTarget ?? null, sprints);
 
   // Next-move card's suggestion (guided-layer increment §1) — see
   // showNextMoveArea below, where this combines with `liveSprint` (defined
@@ -333,6 +341,25 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
                 style={{ width: `${Math.min(100, (thisWeekHours / projection.requiredPaceHoursPerWeek) * 100)}%` }}
               />
             </div>
+          )}
+
+          {/* Daily shape (this increment): directly under the weekly bar,
+              not up near the "Ready by"/margin headline above — the truth
+              stays the headline, this actionable line sits with the other
+              tactical, day-to-day surfaces (the bar, "This week: …", the
+              study-blocks schedule below). Same emerald-vs-slate tone rule
+              as the weekly bar just above it (met ⇒ the app's one emerald
+              "acknowledgment" accent, same as `weekAtTarget`'s colour
+              there) — never gated on or blended with `projection.state`,
+              per DailyTarget's own CRITICAL HONESTY CONSTRAINT. */}
+          {daily && (
+            <p
+              className={`text-sm tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${
+                daily.met ? 'text-emerald-300' : 'text-slate-400'
+              }`}
+            >
+              {daily.text}
+            </p>
           )}
 
           {/* Self-Competitor line (CLAUDE.md's secondary play personality)

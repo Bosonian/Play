@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
 import type { Screen } from '../App';
-import type { Exam, StudySchedule } from '../db/types';
+import type { DailyTarget, Exam, StudySchedule } from '../db/types';
 import { Button } from '../ui/Button';
 import { TextField } from '../ui/TextField';
 import { ScreenHeader } from '../ui/ScreenHeader';
@@ -28,6 +28,31 @@ type StudyBlockMinutes = (typeof STUDY_BLOCK_LENGTHS)[number];
 // example is "Tuesday 19:00"), and a sensible starting point saves a tap
 // even though every field here stays freely editable before save.
 const DEFAULT_STUDY_TIME = '19:00';
+
+// Daily-shape increment: the day-sized sprint-count choices — capped at 4
+// (see db/types.ts's DailyTarget doc comment for why: past 4 fixed-length
+// sprints a day this is trying to be a small, actionable floor, not a
+// second weekly plan).
+const DAILY_SPRINT_COUNTS = [1, 2, 3, 4] as const;
+
+// Same Monday-first ISO-weekday chip labels as RepeatEditor's own DAY_CHIPS
+// — duplicated rather than imported, same "screen-local constant, not a
+// lib/ dependency" reasoning STUDY_BLOCK_LENGTHS above already gives for
+// its own copy. Can't reuse RepeatEditor's <DAY_CHIPS> rendering directly
+// either way: that component's `days`/`onToggleDay` props are shaped for
+// MULTI-select (a Set of weekdays), while a rest day is SINGLE-select
+// (`number | null`) — a different enough interaction that this screen
+// renders its own small chip row rather than bending RepeatEditor's API to
+// fit a selection shape it wasn't built for.
+const REST_DAY_CHIPS: { iso: number; label: string; ariaLabel: string }[] = [
+  { iso: 1, label: 'M', ariaLabel: 'Monday' },
+  { iso: 2, label: 'T', ariaLabel: 'Tuesday' },
+  { iso: 3, label: 'W', ariaLabel: 'Wednesday' },
+  { iso: 4, label: 'T', ariaLabel: 'Thursday' },
+  { iso: 5, label: 'F', ariaLabel: 'Friday' },
+  { iso: 6, label: 'S', ariaLabel: 'Saturday' },
+  { iso: 7, label: 'S', ariaLabel: 'Sunday' },
+];
 
 /**
  * Create-or-edit for the single exam Prüfung mode is built around
@@ -76,6 +101,17 @@ export function ExamSetup({ examId, onNavigate }: ExamSetupProps) {
   const [studyDays, setStudyDays] = useState<number[]>([]);
   const [studyMinutes, setStudyMinutes] = useState<StudyBlockMinutes | null>(null);
 
+  // Daily shape (this increment). No separate enable checkbox — unlike
+  // Study blocks' explicit toggle, the sprint-count selection itself IS the
+  // on/off switch: leaving every chip deselected (`dailyTargetSprints ===
+  // null`) is the none-state, exactly what a fresh, absent `dailyTarget`
+  // means (db/types.ts's own doc comment). Tapping the already-selected
+  // sprint-count chip deselects it, same "tap the selected chip again to
+  // turn the whole thing off" affordance the rest-day chip gets — see the
+  // JSX below for both.
+  const [dailyTargetSprints, setDailyTargetSprints] = useState<number | null>(null);
+  const [dailyTargetRestDay, setDailyTargetRestDay] = useState<number | null>(null);
+
   // Populate once the existing exam (whichever path resolved it) has
   // loaded — same "runs once on load, not on every keystroke" pattern as
   // TemplateEdit's populate effect.
@@ -95,6 +131,12 @@ export function ExamSetup({ examId, onNavigate }: ExamSetupProps) {
         setStudyDays(schedule.days);
         setStudyMinutes(schedule.minutes);
       }
+      // Same undefined-as-null read as `studySchedule` above — an exam
+      // saved before this field existed has no `dailyTarget` property at
+      // all.
+      const dailyTarget = existing.dailyTarget ?? null;
+      setDailyTargetSprints(dailyTarget?.sprints ?? null);
+      setDailyTargetRestDay(dailyTarget?.restDay ?? null);
     }
   }, [existing]);
 
@@ -138,6 +180,12 @@ export function ExamSetup({ examId, onNavigate }: ExamSetupProps) {
     const examDateValue = examDate.trim() === '' ? null : examDate;
     const studySchedule: StudySchedule | null =
       studyEnabled && studyMinutes !== null ? { time: studyTime, days: studyDays, minutes: studyMinutes } : null;
+    // Daily shape (this increment): `null` (feature off) unless a sprint
+    // count is actually selected — no alarms involved, unlike studySchedule
+    // above, so there's no ensurePermissions/scheduleStudyBlockAlarms call
+    // to pair this with.
+    const dailyTarget: DailyTarget | null =
+      dailyTargetSprints !== null ? { sprints: dailyTargetSprints, restDay: dailyTargetRestDay } : null;
 
     let savedExam: Exam;
     if (existing) {
@@ -146,6 +194,7 @@ export function ExamSetup({ examId, onNavigate }: ExamSetupProps) {
         windowStart,
         examDate: examDateValue,
         studySchedule,
+        dailyTarget,
         updatedAt: now,
       };
       await db.exams.update(existing.id, patch);
@@ -157,6 +206,7 @@ export function ExamSetup({ examId, onNavigate }: ExamSetupProps) {
         windowStart,
         examDate: examDateValue,
         studySchedule,
+        dailyTarget,
         createdAt: now,
         updatedAt: now,
       };
@@ -280,6 +330,76 @@ export function ExamSetup({ examId, onNavigate }: ExamSetupProps) {
           {studyMinutes === null && <p className="text-sm text-red-400">Pick a sprint length.</p>}
         </section>
       )}
+
+      {/* Daily shape (this increment): the day-sized floor beside the
+          projection's honest weekly math — see db/types.ts's DailyTarget
+          doc comment for the full CRITICAL HONESTY CONSTRAINT this section
+          exists under. Placed right after Study blocks (both are "give a
+          commitment real shape" sections) but is entirely independent of
+          it — a daily sprint target works with or without study blocks
+          armed. */}
+      <section className="flex flex-col gap-3">
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Daily shape</h2>
+        <p className="text-sm text-slate-500">
+          A day-sized target: sprints today, nothing bigger. It changes no projection — the ready date stays honest
+          above it.
+        </p>
+
+        <div className="flex gap-3">
+          {DAILY_SPRINT_COUNTS.map((count) => {
+            const selected = dailyTargetSprints === count;
+            return (
+              <button
+                key={count}
+                type="button"
+                onClick={() => setDailyTargetSprints(selected ? null : count)}
+                aria-pressed={selected}
+                className={`flex min-h-12 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl border py-4 text-2xl font-bold tabular-nums transition-colors ${
+                  selected
+                    ? 'border-sky-500 bg-sky-500 text-slate-950'
+                    : 'border-slate-800/60 bg-surface text-slate-100 hover:border-slate-700'
+                }`}
+              >
+                {count}
+                <span className={`text-xs font-normal ${selected ? 'text-slate-900' : 'text-slate-500'}`}>
+                  {count === 1 ? 'sprint' : 'sprints'}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Rest day, gated on a sprint count actually being selected — a
+            rest day with no daily target to rest FROM is a meaningless
+            choice, same "the length picker only appears once study blocks
+            are on" gating the section above uses. */}
+        {dailyTargetSprints !== null && (
+          <div className="flex flex-col gap-2 motion-safe:animate-fade-in">
+            <h3 className="text-sm text-slate-400">Rest day (optional)</h3>
+            <div className="flex gap-1.5">
+              {REST_DAY_CHIPS.map((day) => {
+                const selected = dailyTargetRestDay === day.iso;
+                return (
+                  <button
+                    key={day.iso}
+                    type="button"
+                    onClick={() => setDailyTargetRestDay(selected ? null : day.iso)}
+                    aria-label={day.ariaLabel}
+                    aria-pressed={selected}
+                    className={`flex min-h-12 min-w-12 flex-1 items-center justify-center rounded-lg border text-sm font-medium transition-colors ${
+                      selected
+                        ? 'border-sky-500 bg-sky-500/20 text-sky-300'
+                        : 'border-slate-700 bg-raised text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {day.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </section>
 
       {errors.length > 0 && (
         <ul className="flex flex-col gap-1 text-sm text-red-400">

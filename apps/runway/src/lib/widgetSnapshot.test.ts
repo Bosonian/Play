@@ -222,6 +222,42 @@ describe('buildWidgetSnapshot', () => {
     expect(snapshot.pruefung?.weekProgressPercent).toBe(0);
     expect(snapshot.pruefung?.weekAtTarget).toBe(false);
   });
+
+  // Daily shape (0.41.0): wiring-level checks that buildWidgetSnapshot
+  // threads exam.dailyTarget through dailyShape.ts's todayLine — the
+  // function's own formula coverage (rest day, met/not-met, no cap past the
+  // target) lives in dailyShape.test.ts, same "small helper gets its own
+  // describe block, buildWidgetSnapshot only gets a wiring check" split
+  // formatTaskCountsLine/computeWeekProgressPercent above already use.
+  it('todayLine/todayMet are null/false when no dailyTarget is set', () => {
+    const snapshot = buildWidgetSnapshot(NOW, makeExam(), [makeTopic({ estimatedHours: 10 })], [], [], []);
+    expect(snapshot.pruefung?.todayLine).toBeNull();
+    expect(snapshot.pruefung?.todayMet).toBe(false);
+  });
+
+  it('todayLine reports the sprint count against the target, and todayMet once it is reached', () => {
+    const exam = makeExam({ dailyTarget: { sprints: 2, restDay: null } });
+    const sprints = [
+      makeSprint({ id: 'a', startedAt: '2026-07-09T07:00:00.000Z', endedAt: '2026-07-09T07:50:00.000Z' }),
+      makeSprint({ id: 'b', startedAt: '2026-07-09T08:00:00.000Z', endedAt: '2026-07-09T08:50:00.000Z' }),
+    ];
+    const snapshot = buildWidgetSnapshot(NOW, exam, [makeTopic({ estimatedHours: 10 })], sprints, [], []);
+    expect(snapshot.pruefung?.todayLine).toBe('Today: 2 of 2 sprints.');
+    expect(snapshot.pruefung?.todayMet).toBe(true);
+  });
+
+  it('todayLine reads "Rest day." on the configured rest day, decoupled from the exam having any topics at all', () => {
+    // NOW (2026-07-09) is a Thursday, ISO weekday 4 — and this exam has
+    // ZERO topics (emptyExam: true), pinning that the Today line is built
+    // from exam.dailyTarget alone, never gated on the topic/pace
+    // projection (db/types.ts's DailyTarget doc comment: "decoupled ...
+    // never a substitute").
+    const exam = makeExam({ dailyTarget: { sprints: 3, restDay: 4 } });
+    const snapshot = buildWidgetSnapshot(NOW, exam, [], [], [], []);
+    expect(snapshot.pruefung?.emptyExam).toBe(true);
+    expect(snapshot.pruefung?.todayLine).toBe('Rest day.');
+    expect(snapshot.pruefung?.todayMet).toBe(true);
+  });
 });
 
 describe('buildWidgetSnapshot — departure', () => {

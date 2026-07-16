@@ -9,6 +9,7 @@ import { Button } from '../ui/Button';
 import { TextAction } from '../ui/TextAction';
 import { useNow } from '../hooks/useNow';
 import { remainingHours, sprintMinutes } from '../lib/examProjection';
+import { isoWeekday, sprintsCompletedOn } from '../lib/dailyShape';
 import { formatCountdown } from '../lib/format';
 import { allowSleep, keepAwake } from '../native/keepAwake';
 import { hapticImpact } from '../native/haptics';
@@ -45,8 +46,29 @@ interface PostSprintViewProps {
 function PostSprintView({ sprint, topicName, onNavigate }: PostSprintViewProps) {
   const topics = useLiveQuery(() => db.topics.where('examId').equals(sprint.examId).toArray(), [sprint.examId]);
   const sprints = useLiveQuery(() => db.sprints.where('examId').equals(sprint.examId).toArray(), [sprint.examId]);
+  // Daily shape (this increment): FRESH exam data, same "re-query rather
+  // than trust anything computed before the end" reasoning the two queries
+  // above already give — dailyTarget can't have changed mid-sprint, but
+  // querying it fresh here costs nothing and keeps this view's whole data
+  // source consistent (everything read the same way).
+  const exam = useLiveQuery(() => db.exams.get(sprint.examId), [sprint.examId]);
 
   const remaining = topics && sprints ? remainingHours(topics, sprints) : null;
+
+  // Daily shape (this increment): a plain `new Date()` rather than a
+  // useNow() tick — this view is a one-time post-sprint summary, not a
+  // live-updating countdown, so nothing here needs to re-render on a clock
+  // tick the way Sprint's own live countdown does. `sprints` above already
+  // includes the sprint that was just ended (finishSprint, below, already
+  // awaited the Dexie write before this view could ever mount), so
+  // `sprintsCompletedOn` counts it without needing the F13 local-state
+  // workaround the headline `sprintMinutes(sprint)` line further down
+  // relies on.
+  const now = new Date();
+  const dailyTarget = exam?.dailyTarget ?? null;
+  const isRestDay = dailyTarget !== null && dailyTarget.restDay !== null && isoWeekday(now) === dailyTarget.restDay;
+  const completedToday = sprints ? sprintsCompletedOn(now, sprints) : null;
+  const dailyMet = dailyTarget !== null && completedToday !== null && completedToday >= dailyTarget.sprints;
 
   // Witness increment (0.34.0): whether the last "Tell them" tap had
   // nowhere to go (no share sheet, no clipboard — see shareWitnessText's
@@ -86,6 +108,17 @@ function PostSprintView({ sprint, topicName, onNavigate }: PostSprintViewProps) 
           guessing). */}
       {remaining !== null && (
         <p className="tabular-nums text-slate-400">{remaining.toFixed(1)} h remaining across all topics.</p>
+      )}
+      {/* Daily shape (this increment): omitted on a rest day (nothing to
+          count toward) and while `completedToday` hasn't resolved yet,
+          same "omitted, never a wrong placeholder" rule `remaining` above
+          follows. Same emerald-vs-slate tone rule as ExamOverview's own
+          Today line — met ⇒ emerald-300, the app's one acknowledgment
+          accent. */}
+      {dailyTarget !== null && !isRestDay && completedToday !== null && (
+        <p className={`tabular-nums ${dailyMet ? 'text-emerald-300' : 'text-slate-400'}`}>
+          {completedToday} of {dailyTarget.sprints} today.
+        </p>
       )}
       {/* Witness increment (0.34.0): the done half of the ritual — quiet on
           purpose (TextAction, never Button), so it stays smaller than "Back
