@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { getISODay } from 'date-fns';
 import { db } from '../db/db';
-import type { Departure, DepartureStep, Template } from '../db/types';
+import type { Departure, DepartureStep, Template, TemplateSchedule } from '../db/types';
 import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { NumberField } from '../ui/NumberField';
@@ -18,7 +18,8 @@ import { getCurrentPosition } from '../native/geolocation';
 import { refreshWidgets } from '../native/widgets';
 import { refreshDayGauge } from '../lib/dayGaugeRefresh';
 import { stepNameLibrary } from '../lib/learning';
-import { materializeScheduledDepartures } from '../lib/materialize';
+import { materializeScheduledDepartures, replaceUntouchedFutureAutoRows } from '../lib/materialize';
+import { scheduleDiffers } from '../lib/recurrence';
 import { StepNameAutocomplete } from '../ui/StepNameAutocomplete';
 import { logEvent } from '../lib/eventLog';
 
@@ -217,6 +218,23 @@ export function DepartureSetup({
         })),
       );
       setArrivalWifiSsid(sourceTemplate.arrivalWifiSsid ?? '');
+
+      // Field report #12: a template with a standing `schedule` seeds the
+      // Repeat editor as ON, not the OFF default — the form must reflect
+      // the template's actual standing reality. Leaving this OFF on a
+      // repeating template was the "inviting condition" flagged in the
+      // report: it looked like a normal, harmless toggle to flip back on,
+      // but flipping it (before the save-fix below) minted a SECOND
+      // template rather than editing the one already repeating, which is
+      // exactly the twin-template bug field report #12 diagnosed. Mirrors
+      // TemplateEdit's own populate-from-`existing` effect, which has
+      // always done this for an edited template — this form just never
+      // did it for a template being read FROM, only one being read INTO.
+      if (sourceTemplate.schedule != null) {
+        setRepeatEnabled(true);
+        setRepeatTime(sourceTemplate.schedule.time);
+        setRepeatDays(sourceTemplate.schedule.days);
+      }
     }
   }, [sourceTemplate]);
 
@@ -479,39 +497,100 @@ export function DepartureSetup({
       savedDeparture = { ...existingDeparture, ...sharedFields };
       void logEvent('departure', `Departure edited: ${savedDeparture.name}.`);
     } else {
-      // Save-with-repeat (field report #10 §2) — the careful part, worth
-      // spelling out in full. Turning Repeat on here does NOT spin up a
-      // second scheduler on this one departure — per this fix's binding
-      // design decision (ONE recurrence engine: templates), it PROMOTES
-      // this one-off form into a brand-new Template carrying the chosen
-      // schedule, then links TODAY's departure to that template instead of
-      // leaving it as an unrelated one-off row. Three things make that
-      // link safe:
+      // Save-with-repeat (field report #10 §2, reworked by field report
+      // #12) — the careful part, worth spelling out in full. Turning
+      // Repeat on here does NOT spin up a second scheduler on this one
+      // departure — per this fix's binding design decision (ONE recurrence
+      // engine: templates) — but WHICH template it points at now depends
+      // on whether this form was seeded from one:
       //
-      //  1. `templateId` points at the template created just below.
-      //  2. `scheduledForDate` is stamped with THIS appointment's own
-      //     date — the exact join key materialize.ts's
-      //     createMissingOccurrences reads to decide "already planned" vs
-      //     "still missing" for a given template+date. Setting it here
-      //     means the materialize call at the end of this branch can
-      //     never create a second departure for the same date, even
-      //     though this particular row was hand-built by this form, not
-      //     by the materializer itself.
-      //  3. That holds EVEN WHEN today's weekday isn't among the chosen
-      //     repeat days — a real combination (e.g. planning today's
-      //     one-off Friday appointment while setting the recurring
-      //     schedule to Mon/Wed only). The dedup key is an exact DATE
-      //     match, not "was this date implied by the schedule", so the
-      //     two disagreeing is not a conflict the materializer would ever
-      //     need to resolve.
+      //  - New-from-template (`sourceTemplate` set — App.tsx's
+      //    `templateId` prop resolved to a real row): field report #12's
+      //    bug. The pre-fix code ALWAYS minted a brand-new Template here
+      //    whenever Repeat was on, even though the form already came FROM
+      //    a template — "New from template" + Repeat on produced a twin:
+      //    two templates, each materializing its own week of departures,
+      //    with no way to tell from Home which twin owned which row (hence
+      //    the report's second symptom, an "undeletable" departure — it
+      //    wasn't undeletable, its sibling from the OTHER twin was still
+      //    there). The fix: reuse `sourceTemplate` instead of creating a
+      //    second one. See the branch below for what "reuse" writes.
+      //  - From-scratch (`sourceTemplate` unset) with Repeat on: unchanged
+      //    from field report #10 §2 — there's no existing template to
+      //    reuse, so promoting this one-off form into a brand-new Template
+      //    carrying the chosen schedule is still correct.
+      //  - Without Repeat and without `sourceTemplate`: unchanged from
+      //    before either fix — `templateId` stays whatever was passed in
+      //    (or `null`) and `scheduledForDate` stays `null`.
       //
-      // Without Repeat, this branch behaves exactly as it did before this
-      // fix: `templateId` stays whatever was passed in (or `null` for a
-      // from-scratch departure) and `scheduledForDate` stays `null`.
+      // Whenever a template — new or reused — ends up linked,
+      // `scheduledForDate` is stamped with THIS appointment's own date, the
+      // exact join key materialize.ts's createMissingOccurrences reads to
+      // decide "already planned" vs "still missing" for a given
+      // template+date. Setting it here means the materialize call at the
+      // end of this branch can never create a second departure for the
+      // same date, even though this particular row was hand-built by this
+      // form, not by the materializer itself — EVEN WHEN today's weekday
+      // isn't among the chosen repeat days (a real combination: planning
+      // today's one-off Friday appointment while the recurring schedule is
+      // Mon/Wed only). The dedup key is an exact DATE match, not "was this
+      // date implied by the schedule", so the two disagreeing is not a
+      // conflict the materializer would ever need to resolve.
       let linkedTemplateId: string | null = templateId ?? null;
+      let scheduledForDateValue: string | null = null;
       let repeatTemplateJustCreated = false;
+      let scheduleChanged = false;
 
-      if (repeatEnabled) {
+      if (sourceTemplate) {
+        // Reuse path (field report #12's fix): this departure is always
+        // linked back to the template it was created from, whether or not
+        // Repeat ended up enabled — a one-off instance of a standing
+        // routine is still an instance of it (buildDeparture, materialize.ts,
+        // sets `templateId` on every materialized row the same
+        // unconditional way, regardless of that occurrence's own date —
+        // this keeps a hand-created "New from template" row consistent
+        // with a materializer-created one).
+        linkedTemplateId = sourceTemplate.id;
+
+        if (repeatEnabled) {
+          const nextSchedule: TemplateSchedule = { time: repeatTime, days: repeatDays };
+          // Deliberately does NOT write this form's steps/travel/buffer
+          // back to the template — a one-day tweak on today's departure
+          // (an extra step, a longer buffer because of traffic) stays on
+          // THIS departure; the template remains the standing routine
+          // everyone else's occurrences still copy from. Only `schedule`
+          // is ever eligible to flow back, and only when it actually
+          // changed — see scheduleDiffers's own doc comment (recurrence.ts)
+          // for why an order-insensitive day-set comparison is what
+          // "changed" means here.
+          if (scheduleDiffers(sourceTemplate.schedule, nextSchedule)) {
+            const templateNowIso = new Date().toISOString();
+            await db.templates.update(sourceTemplate.id, {
+              schedule: nextSchedule,
+              updatedAt: templateNowIso,
+            });
+            // Same "replace, then re-materialize" pairing TemplateEdit's
+            // own schedule-change save uses (see its handleSave comment) —
+            // without this sweep, the week already materialized under the
+            // OLD schedule would keep its stale rows (and stale alarms)
+            // sitting alongside whatever the new schedule produces below.
+            await replaceUntouchedFutureAutoRows(sourceTemplate.id);
+            scheduleChanged = true;
+          }
+          scheduledForDateValue = formatDateInput(appointmentAtDate);
+        }
+        // repeatEnabled === false here means Deepak explicitly turned the
+        // toggle off on a from-template create (it seeds ON for a
+        // repeating template — see the populate effect above). The
+        // template is left completely untouched: turning Repeat off on
+        // ONE instance is not a request to stop the standing routine.
+        // `scheduledForDate` stays `null` — this row isn't claiming to BE
+        // a materialized occurrence of the schedule, just a manually
+        // created one-off that happens to share the template's steps.
+      } else if (repeatEnabled) {
+        // From-scratch create with Repeat on (field report #10 §2):
+        // unchanged — there's no existing template to reuse, so this
+        // promotes the one-off form into a brand-new Template.
         const templateNowIso = new Date().toISOString();
         const newTemplate: Template = {
           id: crypto.randomUUID(),
@@ -553,6 +632,7 @@ export function DepartureSetup({
         await db.templates.add(newTemplate);
         linkedTemplateId = newTemplate.id;
         repeatTemplateJustCreated = true;
+        scheduledForDateValue = formatDateInput(appointmentAtDate);
       }
 
       savedDeparture = {
@@ -565,10 +645,7 @@ export function DepartureSetup({
         arrivalResult: null,
         arrivalLateMinutes: null,
         createdAt: nowIso,
-        // `null` exactly as before this fix, UNLESS Repeat was just turned
-        // on above — see point 2 in the comment above for why this is the
-        // field that makes the link dedup-safe.
-        scheduledForDate: repeatTemplateJustCreated ? formatDateInput(appointmentAtDate) : null,
+        scheduledForDate: scheduledForDateValue,
         // A brand-new departure has never been through compressPlan - see
         // db/types.ts's own comment on wasReplanned.
         wasReplanned: false,
@@ -580,12 +657,18 @@ export function DepartureSetup({
       };
       await db.departures.add(savedDeparture);
       void logEvent('departure', `Departure created: ${savedDeparture.name}.`);
+      if (sourceTemplate) {
+        void logEvent('departure', `Departure linked to template: ${sourceTemplate.name}.`);
+      }
 
-      if (repeatTemplateJustCreated) {
+      if (repeatTemplateJustCreated || scheduleChanged) {
         // Materializes the rest of the week, minus today — today's own
-        // occurrence is already covered by the departure just saved above
-        // (point 2 above), so this can only ever fill in the remaining
-        // scheduled days, never duplicate it.
+        // occurrence is already covered by the departure just saved above,
+        // so this can only ever fill in the remaining scheduled days,
+        // never duplicate it. Also the right call after a reused
+        // template's schedule changed just above: replaceUntouchedFutureAutoRows
+        // already cleared the stale week, so this is what actually
+        // re-plans it under the new schedule.
         await materializeScheduledDepartures();
       }
     }

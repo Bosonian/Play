@@ -239,12 +239,18 @@ export async function materializeStudyBlockAlarms(): Promise<void> {
  * exported here (learning increment) so src/lib/autoLearn.ts's
  * `applyAutoLearn` can reuse the exact same sweep instead of a second,
  * drifting copy of this logic.
+ *
+ * Returns the number of departures it removed — field report #12:
+ * TemplateEdit's handleDelete logs that count in its own "N upcoming
+ * departures removed" line, so the caller needs it back rather than this
+ * function staying a fire-and-forget void like it was before that report.
  */
-export async function replaceUntouchedFutureAutoRows(templateId: string): Promise<void> {
+export async function replaceUntouchedFutureAutoRows(templateId: string): Promise<number> {
   const nowMs = Date.now();
   // Same "load planned rows, filter the rest in JS" pattern as this file's
   // own sweep below — templateId isn't an indexed field.
   const plannedDepartures = await db.departures.where('status').equals('planned').toArray();
+  let removed = 0;
   for (const departure of plannedDepartures) {
     if (departure.templateId !== templateId) continue;
     if (departure.scheduledForDate == null) continue; // a manual departure, not the materializer's to replace
@@ -253,7 +259,9 @@ export async function replaceUntouchedFutureAutoRows(templateId: string): Promis
 
     await db.departures.delete(departure.id);
     await cancelDepartureAlarms(departure.id, departure.name);
+    removed++;
   }
+  return removed;
 }
 
 /**

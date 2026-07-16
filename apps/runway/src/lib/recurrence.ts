@@ -77,6 +77,30 @@ export function calendarDates(now: Date, days: number): string[] {
   return dates;
 }
 
+/**
+ * Whether `next` is a materially different schedule than `existing` — same
+ * time string and the same SET of weekdays (order-independent: `days` has
+ * never been guaranteed sorted for every writer of this field historically,
+ * only `toggleRepeatDay`'s own re-sort keeps it tidy going forward) counts
+ * as "no change". `existing === null` (the template has no schedule yet)
+ * always differs from any real `next`.
+ *
+ * Extracted as its own pure function (field report #12) so DepartureSetup's
+ * save-with-repeat path can decide "does the reused template's schedule
+ * need writing back" without Dexie in the loop — see recurrence.test.ts for
+ * the pinned cases. Deliberately does not compare anything else about a
+ * Template (steps, travelMinutes, ...); those are out of scope by design —
+ * see DepartureSetup's handleSave comment on why a one-day tweak never
+ * writes back to the template.
+ */
+export function scheduleDiffers(existing: TemplateSchedule | null, next: TemplateSchedule): boolean {
+  if (existing == null) return true;
+  if (existing.time !== next.time) return true;
+  if (existing.days.length !== next.days.length) return true;
+  const existingDays = new Set(existing.days);
+  return next.days.some((day) => !existingDays.has(day));
+}
+
 export function occurrenceDates(now: Date, schedule: TemplateSchedule, horizonDays: number): Occurrence[] {
   const [hours, minutes] = schedule.time.split(':').map(Number);
   const occurrences: Occurrence[] = [];

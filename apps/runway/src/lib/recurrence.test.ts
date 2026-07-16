@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HORIZON_DAYS, calendarDates, occurrenceDates } from './recurrence';
+import { HORIZON_DAYS, calendarDates, occurrenceDates, scheduleDiffers } from './recurrence';
 import type { TemplateSchedule } from '../db/types';
 
 // A fixed "now" for every test so assertions aren't racing the real clock —
@@ -112,5 +112,34 @@ describe('calendarDates', () => {
   it('rolls over a month boundary correctly (JS Date normalizes the out-of-range day)', () => {
     const nearMonthEnd = new Date(2026, 0, 30, 8, 0, 0); // 2026-01-30
     expect(calendarDates(nearMonthEnd, 4)).toEqual(['2026-01-30', '2026-01-31', '2026-02-01', '2026-02-02']);
+  });
+});
+
+// Field report #12: DepartureSetup's save-with-repeat path reads this to
+// decide whether a from-template create's schedule needs writing back to
+// the source template.
+describe('scheduleDiffers', () => {
+  it('is false for identical time and identically-ordered days', () => {
+    expect(scheduleDiffers(schedule({ days: [1, 3, 5] }), schedule({ days: [1, 3, 5] }))).toBe(false);
+  });
+
+  it('is false when the day sets match but are ordered differently', () => {
+    expect(scheduleDiffers(schedule({ days: [1, 3, 5] }), schedule({ days: [5, 1, 3] }))).toBe(false);
+  });
+
+  it('is true when the time differs', () => {
+    expect(scheduleDiffers(schedule({ time: '08:00' }), schedule({ time: '08:15' }))).toBe(true);
+  });
+
+  it('is true when the day sets differ in length', () => {
+    expect(scheduleDiffers(schedule({ days: [1, 3, 5] }), schedule({ days: [1, 3] }))).toBe(true);
+  });
+
+  it('is true when the day sets are the same length but differ in membership', () => {
+    expect(scheduleDiffers(schedule({ days: [1, 3, 5] }), schedule({ days: [1, 3, 6] }))).toBe(true);
+  });
+
+  it('is true when the existing schedule is null (template has no schedule yet)', () => {
+    expect(scheduleDiffers(null, schedule())).toBe(true);
   });
 });

@@ -14,6 +14,7 @@ import { formatDateInput, formatTimeInput } from '../lib/format';
 import { learnedEstimate, naturalActualsByStepName, stepNameLibrary } from '../lib/learning';
 import type { LearnedEstimate } from '../lib/learning';
 import { StepNameAutocomplete } from '../ui/StepNameAutocomplete';
+import { logEvent } from '../lib/eventLog';
 
 interface TemplateEditProps {
   id?: string;
@@ -404,8 +405,15 @@ export function TemplateEdit({ id, fromDepartureId, onNavigate }: TemplateEditPr
       // sweep would leave them firing for a plan that no longer exists
       // (orphan gap flagged in the recurring-departures review). Manual and
       // already-started departures survive, same rule as the save path.
-      await replaceUntouchedFutureAutoRows(id);
+      //
+      // Field report #12: this sweep is also what lets Deepak clean up a
+      // twin template minted by the since-fixed DepartureSetup bug — delete
+      // the duplicate, its future rows (and their alarms, via
+      // cancelDepartureAlarms inside the sweep) vanish with it, which is
+      // what makes the twin's occurrence deletable again.
+      const removedCount = await replaceUntouchedFutureAutoRows(id);
       await db.templates.delete(id);
+      void logEvent('departure', `Template deleted: ${name}, ${removedCount} upcoming departures removed.`);
       onNavigate({ name: 'home' });
     }
   }
