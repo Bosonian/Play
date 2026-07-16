@@ -1,4 +1,4 @@
-name: Companion debug APK
+name: Companion release APK
 
 on:
   push:
@@ -41,34 +41,60 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npx cap sync android
-      - run: ./gradlew assembleDebug --no-daemon
+
+      # App version (cosmetic versionName) from package.json; versionCode is the
+      # workflow run number, which strictly increases across builds so Android
+      # always sees a newer version and will update in place.
+      - name: Read app version
+        id: ver
+        run: echo "name=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      # Signed RELEASE build (non-debuggable), signed with the committed stable
+      # key so every build shares one cryptographic identity. -P properties feed
+      # versionCode/versionName; the signing config's own defaults pick up the
+      # committed keystore, so no secrets are required.
+      - name: Assemble signed release APK
         working-directory: companion/android
+        run: >-
+          ./gradlew assembleRelease --no-daemon
+          -PcompanionVersionCode=${{ github.run_number }}
+          -PcompanionVersionName=${{ steps.ver.outputs.name }}
+
+      # Give the asset a clean, stable filename for the download link.
+      - name: Stage APK as companion.apk
+        run: cp android/app/build/outputs/apk/release/app-release.apk companion.apk
+
       - uses: actions/upload-artifact@v4
         with:
-          name: companion-debug-apk
-          path: companion/android/app/build/outputs/apk/debug/app-debug.apk
+          name: companion-release-apk
+          path: companion/companion.apk
           if-no-files-found: error
 
-      # Publish the same APK as a Release asset on a moving tag, so there is a
-      # stable, public, direct-download URL (no GitHub login, no zip):
-      #   https://github.com/Bosonian/Play/releases/download/companion-latest/app-debug.apk
+      # Publish as a Release asset on a moving tag → stable, public,
+      # direct-download URL (no GitHub login, no zip):
+      #   https://github.com/Bosonian/Play/releases/download/companion-latest/companion.apk
       # The tag is force-updated to the built commit on every run, so the link
-      # always serves the newest build. Marked prerelease — it's a debug build.
+      # always serves the newest build.
       - name: Publish APK to the companion-latest release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: companion-latest
-          name: Companion (latest debug APK)
+          name: Companion (latest APK)
           prerelease: true
           body: |
-            Latest **debug** APK of the Parkinson's dosing companion, rebuilt on
-            every push to `claude/pd-dosing-companion`.
+            Latest signed release APK of the Parkinson's dosing companion,
+            rebuilt on every push to `claude/pd-dosing-companion`. Version
+            ${{ steps.ver.outputs.name }} (build ${{ github.run_number }}).
 
-            Direct download: **app-debug.apk** below. On Android: open this on the
-            phone, download it, and allow install from your browser when prompted
-            (debug builds are unsigned for Play, so "install unknown apps" must be
-            allowed for that browser).
+            Direct download: **companion.apk** below. On Android: open this on
+            the phone, download it, and allow "install unknown apps" for your
+            browser if prompted. If Play Protect warns about an unknown
+            developer, tap **Install anyway** (not OK).
+
+            Signed with a stable key, so later builds update in place. If you
+            still have an *older, differently-signed* build installed, uninstall
+            it once before installing this one.
 
             Built from commit ${{ github.sha }}.
-          files: companion/android/app/build/outputs/apk/debug/app-debug.apk
+          files: companion/companion.apk
           target_commitish: ${{ github.sha }}

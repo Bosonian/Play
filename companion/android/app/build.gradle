@@ -3,12 +3,38 @@ apply plugin: 'com.android.application'
 android {
     namespace "app.dosing.companion"
     compileSdk rootProject.ext.compileSdkVersion
+
+    // Stable signing identity for every build (see the keystore note below).
+    // WHY committed, and the tradeoff: this is a *test* key whose password is
+    // public in the repo on purpose, so that CI can sign every build with the
+    // SAME identity without any secret setup. That consistent signature is
+    // what lets a new build install over an old one (Android refuses a
+    // signature change) and what makes Play Protect treat this as one app
+    // updating itself rather than a stream of strangers. It is explicitly NOT
+    // a Play Store production key — publishing to Play would need a private
+    // key generated then, and that key would become the app's permanent
+    // identity. Overridable from CI via -PcompanionStoreFile etc. if a real
+    // key is ever wired in as a secret, without touching this file.
+    signingConfigs {
+        release {
+            storeFile file(project.findProperty('companionStoreFile') ?: 'companion-release.jks')
+            storePassword project.findProperty('companionStorePassword') ?: 'companiontest'
+            keyAlias project.findProperty('companionKeyAlias') ?: 'companion'
+            keyPassword project.findProperty('companionKeyPassword') ?: 'companiontest'
+        }
+    }
+
     defaultConfig {
         applicationId "app.dosing.companion"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // versionCode must strictly increase across builds for Android to
+        // accept an update. CI passes -PcompanionVersionCode=<run number>;
+        // a local build with no property falls back to 1.
+        versionCode (project.findProperty('companionVersionCode') ?: '1').toString().toInteger()
+        // Cosmetic; CI passes the package.json version. Falls back to a
+        // marker so a local build is obviously not a CI build.
+        versionName project.findProperty('companionVersionName') ?: '0.0.0-local'
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -20,6 +46,11 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // Sign release with the stable key above, so assembleRelease
+            // emits a signed app-release.apk (not app-release-unsigned.apk).
+            signingConfig signingConfigs.release
+            // Explicitly non-debuggable — this is the build users install.
+            debuggable false
         }
     }
 }
