@@ -4,6 +4,48 @@ A de-identified, physician-in-the-loop Parkinson's dosing companion. Patients
 log levodopa doses, motor state, and meals; the treating neurologist reviews the
 patterns and adjusts the prescription. The app never prescribes.
 
+## 0.8.0 — Dose-per-time regimen model (Phase A of the CPOE prescription redesign)
+
+Groundwork for a German-Medikationsplan-style prescription entry. The chosen
+design was decided by simulation, not assertion: eight normal + edge PD cases
+run through two candidate data models scored the dose-per-time model 32/32 vs
+29/32 — it's the only shape that holds an uneven levodopa schedule
+(125-125-62.5) as a single clean line, the way the BMP prints it, without
+false-firing the duplicate-drug warning. This is **Phase A** — the model change,
+migration, and consumers; **Phase B** rebuilds the entry form into the actual
+1-1-1-1 grid.
+
+- **Dose-per-time model.** A `RegimenItem`'s `times` moves from `["08:00", …]`
+  (one dose shared across all times) to `[{time, doseMg}, …]` — each
+  administration carries its own dose. Uneven and fractional schedules are now
+  one line per drug; LEDD reads each time's real dose; the patient's dose
+  checklist and taken-matching are unchanged (dose was never part of the match
+  key). Optional `strengthMg` (a UI round-trip convenience for the grid, never
+  read by LEDD) and `freeText` (an escape hatch for tapers / patch-change
+  instructions the grid can't hold — excluded from LEDD and the patient list,
+  with a note saying so) are added.
+- **Safe migration of real device data.** A guarded Dexie `version(4)` upgrade
+  rewrites existing rows in place (`{doseMg, times:[…]}` → `{times:[{time,
+  doseMg}…]}`, copying the dose to each time). It only touches rows still in the
+  old shape and never throws — because a throwing upgrade aborts the version
+  transaction and leaves the database unopenable. Proven by a v3→v4 migration
+  test that seeds old-shape rows and asserts the migrated result.
+- **New pure modules** (`quantity.ts`, `grid.ts`) that Phase B's form builds on:
+  a German-quantity parser (`½`, `1½`, `0,5`, `1/2`), the grid↔model round-trip
+  contract (with an explicit "doesn't fit the 4 slots" fallback for 6×/day
+  schedules), frequency presets, and a plain-language **Sig line**
+  (`Levodopa 125 mg — 1-1-½-0 — 08:00 · 12:00 · 18:00`) now shown in the
+  regimen list and the activity log.
+
+Suite is 210 tests (was 160): +50 across the reshaped domain, the new
+migration, and the two new pure modules. Doctor→patient flow re-driven in
+Chromium on the new model (7/7). Typecheck and web build clean; APK compile is
+CI-only.
+
+Phase A keeps the existing (simple) entry form — no visible UX change yet; it
+just emits the new shape. The grid, strength quick-picks, presets, Sig preview,
+free-text mode, and patch handling land in Phase B.
+
 ## 0.7.0 — Activity log + field reporting
 
 Two coupled systems so a user-reported problem comes with evidence: an

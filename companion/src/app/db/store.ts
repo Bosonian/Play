@@ -17,6 +17,15 @@ import type { RegimenItem } from '../../domain/regimen';
 import type { ActivityRow } from '../activity/types';
 import type { FieldReport } from '../report/types';
 
+// The pre-version(4) RegimenItem shape (one doseMg for the whole item, times
+// as bare strings) — kept ONLY so the version(4) upgrade below can name what
+// it's migrating away from. Not exported: nothing outside this migration
+// should ever construct or expect this shape again.
+type RegimenItemV3 = Omit<RegimenItem, 'times' | 'strengthMg' | 'freeText'> & {
+  doseMg: number;
+  times: string[];
+};
+
 // The companion's Dexie database. Modeled on the root Head-in app's
 // src/db/db.ts pattern (see that file for the versioning-comment rationale).
 //
@@ -64,6 +73,30 @@ export class CompanionDatabase extends Dexie {
     this.version(3).stores({
       activityLog: '&id, at',
       fieldReports: '&id, status, createdAt',
+    });
+
+    // Non-additive: regimenItems rows move from one-doseMg-for-the-item to
+    // dose-per-time (SPEC RISK 1). This rewrites existing rows in place, so
+    // it needs a real .upgrade() callback, unlike versions 2-3 above.
+    //
+    // Guard: only touch rows that still have the OLD shape ('doseMg' in
+    // row) — a device that's never had a regimenItems row, or one already
+    // migrated, hits this as a no-op. And this must never throw: if it did,
+    // Dexie aborts the whole upgrade transaction and the database is left
+    // stuck unopenable at v3 (real device data, not a test fixture) — so the
+    // migration logic itself carries no validation that could reject a row,
+    // just a reshape.
+    this.version(4).stores({}).upgrade(async (tx) => {
+      await tx.table('regimenItems').toCollection().modify((row) => {
+        if ('doseMg' in row) {
+          const legacy = row as RegimenItemV3;
+          (row as unknown as RegimenItem).times = (legacy.times ?? []).map((t) => ({
+            time: t,
+            doseMg: legacy.doseMg,
+          }));
+          delete (row as { doseMg?: number }).doseMg;
+        }
+      });
     });
 
     // When a future schema bump opens a new DB version in another tab, let

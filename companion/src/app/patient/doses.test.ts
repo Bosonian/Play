@@ -11,8 +11,7 @@ function item(overrides: Partial<RegimenItem> = {}): RegimenItem {
     id: 'item-1',
     patient: 'local-1',
     drug: 'levodopa',
-    doseMg: 100,
-    times: ['08:00'],
+    times: [{ time: '08:00', doseMg: 100 }],
     updatedAt: '2026-07-16T00:00:00.000Z',
     ...overrides,
   };
@@ -33,7 +32,15 @@ function doseEvent(overrides: Partial<DoseEvent> = {}): DoseEvent {
 
 describe('expandSchedule', () => {
   it('one item, three times → three slots sorted ascending, each carrying itemId/drug/doseMg', () => {
-    const items = [item({ times: ['12:00', '08:00', '20:00'] })];
+    const items = [
+      item({
+        times: [
+          { time: '12:00', doseMg: 100 },
+          { time: '08:00', doseMg: 100 },
+          { time: '20:00', doseMg: 100 },
+        ],
+      }),
+    ];
     const slots = expandSchedule(items);
     expect(slots.map((s) => s.time)).toEqual(['08:00', '12:00', '20:00']);
     for (const s of slots) {
@@ -45,8 +52,15 @@ describe('expandSchedule', () => {
 
   it('two items interleave by time; equal times tie-break by generic name', () => {
     const items = [
-      item({ id: 'a', drug: 'rotigotine', doseMg: 4, times: ['08:00'] }),
-      item({ id: 'b', drug: 'levodopa', doseMg: 100, times: ['08:00', '14:00'] }),
+      item({ id: 'a', drug: 'rotigotine', times: [{ time: '08:00', doseMg: 4 }] }),
+      item({
+        id: 'b',
+        drug: 'levodopa',
+        times: [
+          { time: '08:00', doseMg: 100 },
+          { time: '14:00', doseMg: 100 },
+        ],
+      }),
     ];
     const slots = expandSchedule(items);
     // Both 08:00 — "Levodopa" < "Rotigotine" alphabetically, so levodopa's
@@ -58,16 +72,39 @@ describe('expandSchedule', () => {
     expect(expandSchedule([])).toEqual([]);
   });
 
-  it('uneven regimen (same drug, two items, different doseMg) → distinct slots with own doseMg', () => {
+  it('uneven regimen across two items (same drug, different doseMg) → distinct slots with own doseMg', () => {
     const items = [
-      item({ id: 'a', doseMg: 100, times: ['08:00'] }),
-      item({ id: 'b', doseMg: 50, times: ['20:00'] }),
+      item({ id: 'a', times: [{ time: '08:00', doseMg: 100 }] }),
+      item({ id: 'b', times: [{ time: '20:00', doseMg: 50 }] }),
     ];
     const slots = expandSchedule(items);
     expect(slots).toEqual([
       { itemId: 'a', drug: 'levodopa', doseMg: 100, time: '08:00' },
       { itemId: 'b', drug: 'levodopa', doseMg: 50, time: '20:00' },
     ]);
+  });
+
+  it('uneven regimen within a SINGLE item (dose-per-time) → three slots, each carrying its own doseMg', () => {
+    const items = [
+      item({
+        times: [
+          { time: '08:00', doseMg: 100 },
+          { time: '12:00', doseMg: 100 },
+          { time: '18:00', doseMg: 50 },
+        ],
+      }),
+    ];
+    const slots = expandSchedule(items);
+    expect(slots).toEqual([
+      { itemId: 'item-1', drug: 'levodopa', doseMg: 100, time: '08:00' },
+      { itemId: 'item-1', drug: 'levodopa', doseMg: 100, time: '12:00' },
+      { itemId: 'item-1', drug: 'levodopa', doseMg: 50, time: '18:00' },
+    ]);
+  });
+
+  it('freeText-only item (no times) → yields no slots', () => {
+    const items = [item({ times: [], freeText: 'Irregular taper per neurology follow-up.' })];
+    expect(expandSchedule(items)).toEqual([]);
   });
 });
 
@@ -94,13 +131,20 @@ describe('buildDoseEvent', () => {
 
 describe('markTakenSlots', () => {
   it('no events → every slot takenAt null', () => {
-    const slots = expandSchedule([item({ times: ['08:00', '14:00'] })]);
+    const slots = expandSchedule([
+      item({
+        times: [
+          { time: '08:00', doseMg: 100 },
+          { time: '14:00', doseMg: 100 },
+        ],
+      }),
+    ]);
     const statuses = markTakenSlots(slots, []);
     expect(statuses.every((s) => s.takenAt === null)).toBe(true);
   });
 
   it('matching event (drug + scheduledTime) ticks its slot with the actual at', () => {
-    const slots = expandSchedule([item({ times: ['08:00'] })]);
+    const slots = expandSchedule([item({ times: [{ time: '08:00', doseMg: 100 }] })]);
     const ev = doseEvent({ at: '2026-07-16T08:12:00.000Z', scheduledTime: '08:00' });
     const [status] = markTakenSlots(slots, [ev]);
     expect(status.takenAt).toBe('2026-07-16T08:12:00.000Z');
@@ -109,21 +153,28 @@ describe('markTakenSlots', () => {
   });
 
   it('doseMg mismatch still ticks (strength edited midday — dose NOT in key)', () => {
-    const slots = expandSchedule([item({ times: ['08:00'], doseMg: 150 })]);
+    const slots = expandSchedule([item({ times: [{ time: '08:00', doseMg: 150 }] })]);
     const ev = doseEvent({ doseMg: 100, scheduledTime: '08:00' });
     const [status] = markTakenSlots(slots, [ev]);
     expect(status.takenAt).toBe(ev.at);
   });
 
   it('extra dose (no scheduledTime) ticks nothing', () => {
-    const slots = expandSchedule([item({ times: ['08:00'] })]);
+    const slots = expandSchedule([item({ times: [{ time: '08:00', doseMg: 100 }] })]);
     const ev = doseEvent({ scheduledTime: undefined });
     const statuses = markTakenSlots(slots, [ev]);
     expect(statuses[0].takenAt).toBeNull();
   });
 
   it('same drug, two nearby slots — one event ticks only its slot; other stays pending', () => {
-    const slots = expandSchedule([item({ times: ['08:00', '10:00'] })]);
+    const slots = expandSchedule([
+      item({
+        times: [
+          { time: '08:00', doseMg: 100 },
+          { time: '10:00', doseMg: 100 },
+        ],
+      }),
+    ]);
     const ev = doseEvent({ scheduledTime: '08:00' });
     const statuses = markTakenSlots(slots, [ev]);
     expect(statuses[0].takenAt).toBe(ev.at);
@@ -131,7 +182,7 @@ describe('markTakenSlots', () => {
   });
 
   it('two events matching one slot → earliest at wins', () => {
-    const slots = expandSchedule([item({ times: ['08:00'] })]);
+    const slots = expandSchedule([item({ times: [{ time: '08:00', doseMg: 100 }] })]);
     const later = doseEvent({ id: 'ev-later', at: '2026-07-16T08:30:00.000Z', scheduledTime: '08:00' });
     const earlier = doseEvent({ id: 'ev-earlier', at: '2026-07-16T08:05:00.000Z', scheduledTime: '08:00' });
     const statuses = markTakenSlots(slots, [later, earlier]);
@@ -139,7 +190,7 @@ describe('markTakenSlots', () => {
   });
 
   it('motor/meal events ignored', () => {
-    const slots = expandSchedule([item({ times: ['08:00'] })]);
+    const slots = expandSchedule([item({ times: [{ time: '08:00', doseMg: 100 }] })]);
     const motor: MotorEvent = {
       id: 'm1',
       patient: 'local-1',
@@ -152,19 +203,61 @@ describe('markTakenSlots', () => {
     const statuses = markTakenSlots(slots, events);
     expect(statuses[0].takenAt).toBeNull();
   });
+
+  it('uneven single-item regimen: an event scheduled for 18:00 ticks the 50mg slot specifically', () => {
+    const slots = expandSchedule([
+      item({
+        times: [
+          { time: '08:00', doseMg: 100 },
+          { time: '12:00', doseMg: 100 },
+          { time: '18:00', doseMg: 50 },
+        ],
+      }),
+    ]);
+    const ev = doseEvent({ doseMg: 50, scheduledTime: '18:00' });
+    const statuses = markTakenSlots(slots, [ev]);
+    const evening = statuses.find((s) => s.slot.time === '18:00')!;
+    expect(evening.slot.doseMg).toBe(50);
+    expect(evening.takenAt).toBe(ev.at);
+    // The two 100mg slots stay pending — the event only ticks its own time.
+    expect(statuses.filter((s) => s.slot.time !== '18:00').every((s) => s.takenAt === null)).toBe(true);
+  });
 });
 
 describe('extraDoseChoices', () => {
   it('dedupes identical (drug, doseMg) across items; preserves schedule order; keeps distinct doseMg separate', () => {
     const items = [
-      item({ id: 'a', drug: 'levodopa', doseMg: 100, times: ['08:00', '14:00'] }),
-      item({ id: 'b', drug: 'levodopa', doseMg: 50, times: ['20:00'] }),
-      item({ id: 'c', drug: 'rotigotine', doseMg: 4, times: ['08:00'] }),
+      item({
+        id: 'a',
+        drug: 'levodopa',
+        times: [
+          { time: '08:00', doseMg: 100 },
+          { time: '14:00', doseMg: 100 },
+        ],
+      }),
+      item({ id: 'b', drug: 'levodopa', times: [{ time: '20:00', doseMg: 50 }] }),
+      item({ id: 'c', drug: 'rotigotine', times: [{ time: '08:00', doseMg: 4 }] }),
     ];
     const choices = extraDoseChoices(items);
     expect(choices).toEqual([
       { drug: 'levodopa', doseMg: 100 },
       { drug: 'rotigotine', doseMg: 4 },
+      { drug: 'levodopa', doseMg: 50 },
+    ]);
+  });
+
+  it('within a single uneven item, dedupes the repeated 100mg time but keeps the distinct 50mg time', () => {
+    const items = [
+      item({
+        times: [
+          { time: '08:00', doseMg: 100 },
+          { time: '12:00', doseMg: 100 },
+          { time: '18:00', doseMg: 50 },
+        ],
+      }),
+    ];
+    expect(extraDoseChoices(items)).toEqual([
+      { drug: 'levodopa', doseMg: 100 },
       { drug: 'levodopa', doseMg: 50 },
     ]);
   });

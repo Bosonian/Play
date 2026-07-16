@@ -1,11 +1,25 @@
 import { useState } from 'react';
 import { DRUG_CATALOG, type DrugId } from '../../../domain/drugs';
-import { PRESCRIBABLE_DRUG_IDS, validateRegimenItem, type RegimenItem } from '../../../domain/regimen';
+import {
+  PRESCRIBABLE_DRUG_IDS,
+  validateRegimenItem,
+  sortDoseTimes,
+  type DoseTime,
+  type RegimenItem,
+} from '../../../domain/regimen';
 
+// PHASE A (this form): the new dose-per-time model, but the SAME minimal UI
+// as before — one drug, one mg field, N time rows, and the single mg value
+// is copied to every time on submit. This form does NOT let a doctor enter
+// an uneven regimen (100-100-50) or a strength/free-text line — that's
+// Phase B's grid rebuild. Kept this way deliberately (see CLAUDE.md: "make
+// incremental changes, not massive rewrites") rather than half-building the
+// grid UI here.
 export interface RegimenItemDraft {
   drug: DrugId;
-  doseMg: number;
-  times: string[];
+  times: DoseTime[];
+  strengthMg?: number;
+  freeText?: string;
 }
 
 interface RegimenItemFormProps {
@@ -46,10 +60,21 @@ export function RegimenItemForm({ initial, onSave, onCancel }: RegimenItemFormPr
   // Kept as a string (not a number) while editing: an <input type="number">
   // has intermediate states ("", "-", "1.") that aren't valid numbers yet but
   // shouldn't be clobbered mid-keystroke. Number(doseInput) is parsed only at
-  // submit time (see validateRegimenItem's own doseMg check for what counts
-  // as valid: finite and > 0).
-  const [doseInput, setDoseInput] = useState<string>(initial ? String(initial.doseMg) : '');
-  const [times, setTimes] = useState<string[]>(initial ? [...initial.times] : ['']);
+  // submit time.
+  //
+  // JUDGMENT CALL (Phase A limitation, flagged not silently accepted): this
+  // form has ONE dose field, so editing an item whose times[] carry DIFFERENT
+  // doseMg values (an uneven regimen, or anything with strengthMg/freeText
+  // set) can only seed the first time's dose here — saving through this form
+  // overwrites the whole item with that single dose copied to every time, and
+  // drops strengthMg/freeText. Phase B's grid form is what actually supports
+  // editing those shapes; Phase A's minimal form intentionally doesn't try.
+  const [doseInput, setDoseInput] = useState<string>(
+    initial && initial.times.length > 0 ? String(initial.times[0].doseMg) : '',
+  );
+  const [times, setTimes] = useState<string[]>(
+    initial && initial.times.length > 0 ? initial.times.map((t) => t.time) : [''],
+  );
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
 
@@ -78,12 +103,19 @@ export function RegimenItemForm({ initial, onSave, onCancel }: RegimenItemFormPr
     // when the real problem is just an empty row.
     const filledTimes = times.filter((t) => t !== '');
     const doseMg = Number(doseInput);
-    const validationErrors = validateRegimenItem({ doseMg, times: filledTimes });
+    // The one mg value copied to every time — this is the whole Phase A
+    // shape trick (§15 step 6): identical UX, new dose-per-time model.
+    const draftTimes = sortDoseTimes(filledTimes.map((time) => ({ time, doseMg })));
+    const validationErrors = validateRegimenItem({
+      times: draftTimes,
+      strengthMg: undefined,
+      freeText: undefined,
+    });
     setErrors(validationErrors);
     if (validationErrors.length > 0) return;
 
     setSaving(true);
-    onSave({ drug, doseMg, times: filledTimes });
+    onSave({ drug, times: draftTimes, strengthMg: undefined, freeText: undefined });
   }
 
   return (

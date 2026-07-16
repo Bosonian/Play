@@ -28,6 +28,8 @@ import {
 } from './store';
 import type { DoseEvent, Patient, PatientEvent, PatientModel, Consent } from '../../domain/types';
 import type { RegimenItem } from '../../domain/regimen';
+import type { ActivityRow } from '../activity/types';
+import type { FieldReport } from '../report/types';
 
 // Each test gets its own uniquely-named database so tests never share state
 // or race each other (fake-indexeddb keeps separate DBs fully isolated, same
@@ -158,8 +160,10 @@ const regimenItem = (
   id,
   patient,
   drug: 'levodopa',
-  doseMg: 100,
-  times: ['08:00', '12:00'],
+  times: [
+    { time: '08:00', doseMg: 100 },
+    { time: '12:00', doseMg: 100 },
+  ],
   updatedAt: '2026-07-16T00:00:00Z',
   ...overrides,
 });
@@ -168,7 +172,10 @@ describe('store — regimen items', () => {
   it('CRUD round trip: put two items for P-01, one for P-02 -> getRegimenForPatient(P-01) returns exactly the two', async () => {
     const db = freshDb();
     await putRegimenItem(db, regimenItem('r1', 'P-01'));
-    await putRegimenItem(db, regimenItem('r2', 'P-01', { drug: 'rotigotine', doseMg: 8, times: ['08:00'] }));
+    await putRegimenItem(
+      db,
+      regimenItem('r2', 'P-01', { drug: 'rotigotine', times: [{ time: '08:00', doseMg: 8 }] }),
+    );
     await putRegimenItem(db, regimenItem('r3', 'P-02'));
     const forP01 = await getRegimenForPatient(db, 'P-01');
     expect(forP01.map((i) => i.id).sort()).toEqual(['r1', 'r2']);
@@ -186,11 +193,11 @@ describe('store — regimen items', () => {
 
   it('put with same id overwrites (edit semantics, no duplicate row)', async () => {
     const db = freshDb();
-    await putRegimenItem(db, regimenItem('r1', 'P-01', { doseMg: 100 }));
-    await putRegimenItem(db, regimenItem('r1', 'P-01', { doseMg: 150 }));
+    await putRegimenItem(db, regimenItem('r1', 'P-01', { times: [{ time: '08:00', doseMg: 100 }] }));
+    await putRegimenItem(db, regimenItem('r1', 'P-01', { times: [{ time: '08:00', doseMg: 150 }] }));
     const forP01 = await getRegimenForPatient(db, 'P-01');
     expect(forP01).toHaveLength(1);
-    expect(forP01[0].doseMg).toBe(150);
+    expect(forP01[0].times[0].doseMg).toBe(150);
     db.close();
   });
 
@@ -236,16 +243,33 @@ describe('store — regimen items', () => {
     v2db.close();
   });
 
-  it('migration: a v1+v2-only database opened under the v3 schema keeps old rows and gains activityLog + fieldReports', async () => {
+  // Old-shape regimen row, as stored by any device that hasn't yet run the
+  // v4 upgrade — used ONLY by the local pre-v4 Dexie classes below (SPEC
+  // RISK 2). Deliberately NOT the exported RegimenItem: seeding a literal of
+  // this type (rather than the regimenItem() helper, which now builds the
+  // NEW shape) is what makes these migration tests actually exercise the
+  // old->new rewrite instead of vacuously no-op'ing on an already-new row.
+  interface LegacyRegimenItem {
+    id: string;
+    patient: string;
+    drug: RegimenItem['drug'];
+    doseMg: number;
+    times: string[];
+    updatedAt: string;
+  }
+
+  it('migration: a v1+v2-only database opened under makeDb (v3+v4) keeps old rows, gains activityLog + fieldReports, AND migrates the old-shape regimen row to dose-per-time', async () => {
     // Local class declaring ONLY the version-1+version-2 stores, simulating a
-    // device that has never seen the v3 schema — proves the v2->v3 migration
-    // path is additive and non-destructive (SPEC RISK A).
+    // device that has never seen v3 or v4 — proves the v2->v3 migration path
+    // is additive/non-destructive (SPEC RISK A) and that a genuinely
+    // old-shape regimen row survives the later v4 dose-per-time rewrite
+    // (SPEC RISK 2) when both upgrades run together on first open.
     class V2Database extends Dexie {
       patients!: EntityTable<Patient, 'code'>;
       events!: EntityTable<PatientEvent, 'id'>;
       patientModels!: EntityTable<PatientModel, 'patient'>;
       consent!: EntityTable<Consent, 'patient'>;
-      regimenItems!: EntityTable<RegimenItem, 'id'>;
+      regimenItems!: EntityTable<LegacyRegimenItem, 'id'>;
 
       constructor(name: string) {
         super(name);
@@ -265,7 +289,14 @@ describe('store — regimen items', () => {
     const v2db = new V2Database(dbName);
     await v2db.patients.put({ code: 'P-01', createdAt: '2026-07-16T00:00:00Z' });
     await v2db.events.put(dose('legacy-event', '2026-07-16T08:00:00Z'));
-    await v2db.regimenItems.put(regimenItem('legacy-r1', 'P-01'));
+    await v2db.regimenItems.put({
+      id: 'legacy-r1',
+      patient: 'P-01',
+      drug: 'levodopa',
+      doseMg: 100,
+      times: ['08:00', '12:00'],
+      updatedAt: '2026-07-16T00:00:00Z',
+    });
     v2db.close();
 
     const v3db = makeDb(dbName);
@@ -278,6 +309,13 @@ describe('store — regimen items', () => {
     expect(events.map((e) => e.id)).toEqual(['legacy-event']);
     const regimen = await getRegimenForPatient(v3db, 'P-01');
     expect(regimen.map((i) => i.id)).toEqual(['legacy-r1']);
+    // MIGRATED to dose-per-time — the v4 upgrade ran too, since a fresh
+    // open advances through every pending version in one go.
+    expect(regimen[0].times).toEqual([
+      { time: '08:00', doseMg: 100 },
+      { time: '12:00', doseMg: 100 },
+    ]);
+    expect('doseMg' in regimen[0]).toBe(false);
 
     // New v3 tables accept writes.
     await v3db.activityLog.put({
@@ -298,6 +336,92 @@ describe('store — regimen items', () => {
     expect(await v3db.fieldReports.count()).toBe(1);
 
     v3db.close();
+  });
+
+  it('migration: a v1-v3-only database opened under makeDb (v4) rewrites old-shape regimen rows to dose-per-time and leaves a new-shape row untouched', async () => {
+    // Local class declaring ONLY versions 1-3, simulating a device that has
+    // never seen v4 — the direct SPEC RISK 1/2 test: the upgrade must only
+    // touch rows with the old shape ('doseMg' in row), never throw, and
+    // must be a true no-op on rows already in the new shape.
+    class V3Database extends Dexie {
+      patients!: EntityTable<Patient, 'code'>;
+      events!: EntityTable<PatientEvent, 'id'>;
+      patientModels!: EntityTable<PatientModel, 'patient'>;
+      consent!: EntityTable<Consent, 'patient'>;
+      regimenItems!: EntityTable<LegacyRegimenItem, 'id'>;
+      activityLog!: EntityTable<ActivityRow, 'id'>;
+      fieldReports!: EntityTable<FieldReport, 'id'>;
+
+      constructor(name: string) {
+        super(name);
+        this.version(1).stores({
+          patients: '&code, createdAt',
+          events: '&id, patient, at, kind, [patient+at]',
+          patientModels: '&patient',
+          consent: '&patient',
+        });
+        this.version(2).stores({
+          regimenItems: '&id, patient',
+        });
+        this.version(3).stores({
+          activityLog: '&id, at',
+          fieldReports: '&id, status, createdAt',
+        });
+      }
+    }
+
+    const dbName = `test-companion-migration-v4-${Date.now()}`;
+    const v3db = new V3Database(dbName);
+    await v3db.regimenItems.bulkPut([
+      {
+        id: 'legacy-r1',
+        patient: 'P-01',
+        drug: 'levodopa',
+        doseMg: 100,
+        times: ['08:00', '12:00'],
+        updatedAt: '2026-07-16T00:00:00Z',
+      },
+      {
+        id: 'legacy-r2',
+        patient: 'P-01',
+        drug: 'rotigotine',
+        doseMg: 8,
+        times: ['08:00'],
+        updatedAt: '2026-07-16T00:00:00Z',
+      },
+    ]);
+    v3db.close();
+
+    const v4db = makeDb(dbName);
+    const regimen = await getRegimenForPatient(v4db, 'P-01');
+    const r1 = regimen.find((i) => i.id === 'legacy-r1')!;
+    const r2 = regimen.find((i) => i.id === 'legacy-r2')!;
+
+    expect(r1.times).toEqual([
+      { time: '08:00', doseMg: 100 },
+      { time: '12:00', doseMg: 100 },
+    ]);
+    expect('doseMg' in r1).toBe(false);
+
+    expect(r2.times).toEqual([{ time: '08:00', doseMg: 8 }]);
+    expect('doseMg' in r2).toBe(false);
+
+    // Guard no-ops rows already in the new shape: a row written AFTER this
+    // same open (strengthMg + freeText both set) round-trips intact.
+    const newItem: RegimenItem = {
+      id: 'new-1',
+      patient: 'P-01',
+      drug: 'levodopa',
+      times: [],
+      strengthMg: 100,
+      freeText: 'Taper: reduce by 50mg weekly per neurology follow-up.',
+      updatedAt: '2026-07-16T00:00:00Z',
+    };
+    await putRegimenItem(v4db, newItem);
+    const reread = await getRegimenForPatient(v4db, 'P-01');
+    expect(reread.find((i) => i.id === 'new-1')).toEqual(newItem);
+
+    v4db.close();
   });
 
   it('fieldReports.status index: where(status).equals(pending) returns exactly the pending rows', async () => {

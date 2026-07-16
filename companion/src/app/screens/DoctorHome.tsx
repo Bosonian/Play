@@ -3,8 +3,8 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, putRegimenItem, deleteRegimenItem } from '../db/store';
 import { usePatient } from '../patient/usePatient';
 import { safeUuid } from '../lib/uuid';
-import { sortRegimenItems, sortTimes, type RegimenItem } from '../../domain/regimen';
-import { doseLabel } from '../patient/doses';
+import { sortRegimenItems, sortDoseTimes, type RegimenItem } from '../../domain/regimen';
+import { sigLine } from '../../domain/grid';
 import { logEvent } from '../activity/activityLog';
 import { RegimenList } from './doctor/RegimenList';
 import { RegimenItemForm, type RegimenItemDraft } from './doctor/RegimenItemForm';
@@ -52,22 +52,20 @@ export function DoctorHome() {
       id: existingId,
       patient: patient.code,
       drug: draft.drug,
-      doseMg: draft.doseMg,
-      times: sortTimes(draft.times),
+      times: sortDoseTimes(draft.times),
       updatedAt: new Date().toISOString(),
+      ...(draft.strengthMg !== undefined ? { strengthMg: draft.strengthMg } : {}),
+      ...(draft.freeText !== undefined ? { freeText: draft.freeText } : {}),
     };
     await putRegimenItem(db, item);
-    void logEvent(
-      'regimen',
-      `${isEdit ? 'Updated' : 'Added'} regimen item: ${doseLabel(item.drug, item.doseMg)}`,
-    );
+    void logEvent('regimen', `${isEdit ? 'Updated' : 'Added'} regimen item: ${sigLine(item)}`);
     setScreen({ name: 'list' });
     setLastRemoved(null);
   }
 
   async function removeItem(item: RegimenItem) {
     await deleteRegimenItem(db, item.id);
-    void logEvent('regimen', `Removed regimen item: ${doseLabel(item.drug, item.doseMg)}`);
+    void logEvent('regimen', `Removed regimen item: ${sigLine(item)}`);
     setLastRemoved(item);
   }
 
@@ -76,7 +74,7 @@ export function DoctorHome() {
     // Same id -> idempotent restore. updatedAt is deliberately NOT refreshed
     // here: an undo restores the item exactly as it was, not as a new edit.
     await putRegimenItem(db, lastRemoved);
-    void logEvent('regimen', `Restored regimen item: ${doseLabel(lastRemoved.drug, lastRemoved.doseMg)}`);
+    void logEvent('regimen', `Restored regimen item: ${sigLine(lastRemoved)}`);
     setLastRemoved(null);
   }
 

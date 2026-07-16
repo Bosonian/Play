@@ -24,8 +24,8 @@ export interface DoseSlot {
 export function expandSchedule(items: RegimenItem[]): DoseSlot[] {
   const slots: DoseSlot[] = [];
   for (const item of items) {
-    for (const time of item.times) {
-      slots.push({ itemId: item.id, drug: item.drug, doseMg: item.doseMg, time });
+    for (const dt of item.times) {
+      slots.push({ itemId: item.id, drug: item.drug, doseMg: dt.doseMg, time: dt.time });
     }
   }
   return slots.sort((a, b) => {

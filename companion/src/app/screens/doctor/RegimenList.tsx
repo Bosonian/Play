@@ -1,5 +1,6 @@
 import { DRUG_CATALOG } from '../../../domain/drugs';
 import { dailyMg, regimenWarnings, regimenDailyDoses, type RegimenItem } from '../../../domain/regimen';
+import { sigLine } from '../../../domain/grid';
 import { computeLedd } from '../../../domain/ledd';
 
 interface RegimenListProps {
@@ -41,16 +42,16 @@ export function RegimenList({
           {items.map((item) => {
             const spec = DRUG_CATALOG[item.drug];
             const isPatch = spec.formulation === 'transdermal-patch';
+            const isFreeText = (item.freeText ?? '').trim().length > 0;
             return (
               <div key={item.id} className="rounded-sm bg-surface-soft p-3">
                 <p className="text-body font-medium text-fg">{spec.generic}</p>
-                <p className="text-label text-fg-muted">
-                  {isPatch
-                    ? `${item.doseMg} mg/24h · applied ${item.times.join(' · ')}`
-                    : `${item.doseMg} mg · ${item.times.join(' · ')}`}
-                </p>
-                {!isPatch && (
+                <p className="text-label text-fg-muted">{sigLine(item)}</p>
+                {!isPatch && !isFreeText && (
                   <p className="text-caption text-fg-muted">{dailyMg(item)} mg/day</p>
+                )}
+                {isFreeText && (
+                  <p className="text-caption text-fg-muted">Not in LEDD or the patient's dose list.</p>
                 )}
                 <div className="mt-2 flex items-center gap-4">
                   <button
