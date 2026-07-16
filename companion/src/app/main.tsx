@@ -4,6 +4,7 @@ import './index.css';
 import { App } from './App';
 import { db } from './db/store';
 import { runAppOpen } from './activity/activityLog';
+import { drainReports } from './report/queue';
 
 // Bootstrap. This increment has no persisted theme override (see index.css)
 // — there's nothing to await before first paint, so unlike the root Head-in
@@ -25,4 +26,9 @@ if (!rootEl) {
   // double-invoke of effects/renders isn't in play — the module-scoped
   // appOpenRan guard in activityLog.ts is what dedupes repeat calls anyway.
   runAppOpen(db);
+  // Also fire-and-forget, outside React, and also never throws (see
+  // drainReports' own contract in queue.ts) — drains any reports that were
+  // queued before this open (e.g. filed while offline) as soon as a network
+  // path might exist, without blocking first paint on it.
+  drainReports(db);
 }

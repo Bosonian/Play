@@ -21,6 +21,7 @@ interface HomeProps {
   onOpenEvent: (id: string) => void;
   onTakeDose: (slot: DoseSlot) => void;
   onLogAnotherDose: () => void;
+  onReportProblem: () => void;
 }
 
 // Presentational only: props in, callbacks out. The one exception is the
@@ -41,6 +42,7 @@ export function Home({
   onOpenEvent,
   onTakeDose,
   onLogAnotherDose,
+  onReportProblem,
 }: HomeProps) {
   const dateHeading = new Intl.DateTimeFormat('en-GB', {
     weekday: 'long',
@@ -166,6 +168,14 @@ export function Home({
           ))}
         </div>
       )}
+
+      <button
+        type="button"
+        onClick={onReportProblem}
+        className="mt-12 self-start text-label text-fg-muted underline underline-offset-2"
+      >
+        Report a problem
+      </button>
     </div>
   );
 }

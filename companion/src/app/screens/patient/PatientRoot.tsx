@@ -19,13 +19,15 @@ import { State } from './State';
 import { Meal } from './Meal';
 import { Dose } from './Dose';
 import { EventDetail } from './EventDetail';
+import { ReportProblem } from '../ReportProblem';
 
 type PatientScreen =
   | { name: 'home' }
   | { name: 'state' }
   | { name: 'meal' }
   | { name: 'dose' }
-  | { name: 'detail'; eventId: string };
+  | { name: 'detail'; eventId: string }
+  | { name: 'report' };
 
 // Patient-mode router. Plain useState switch, no routing library — this app
 // has four screens and no deep-linking need, so a library would be pure
@@ -190,6 +192,7 @@ export function PatientRoot() {
           onOpenEvent={(id) => setScreen({ name: 'detail', eventId: id })}
           onTakeDose={(slot) => withDebounce(() => logDose(slot.drug, slot.doseMg, slot.time))}
           onLogAnotherDose={() => setScreen({ name: 'dose' })}
+          onReportProblem={() => setScreen({ name: 'report' })}
         />
       )}
       {screen.name === 'state' && (
@@ -225,6 +228,9 @@ export function PatientRoot() {
           onDelete={(ev) => withDebounce(() => deleteFromDetail(ev))}
           onBack={() => setScreen({ name: 'home' })}
         />
+      )}
+      {screen.name === 'report' && (
+        <ReportProblem screen="patient-home" onBack={() => setScreen({ name: 'home' })} />
       )}
     </div>
   );

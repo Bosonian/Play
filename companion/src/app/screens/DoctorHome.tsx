@@ -9,12 +9,16 @@ import { logEvent } from '../activity/activityLog';
 import { RegimenList } from './doctor/RegimenList';
 import { RegimenItemForm, type RegimenItemDraft } from './doctor/RegimenItemForm';
 import { ActivityLogScreen } from './doctor/ActivityLogScreen';
+import { ReportSettings } from './doctor/ReportSettings';
+import { ReportProblem } from './ReportProblem';
 
 type DoctorScreen =
   | { name: 'list' }
   | { name: 'add' }
   | { name: 'edit'; item: RegimenItem }
-  | { name: 'activityLog' };
+  | { name: 'activityLog' }
+  | { name: 'settings' }
+  | { name: 'report' };
 
 // Doctor-mode container: authors the patient's prescribed regimen. This
 // increment's writes are all here — RegimenList and RegimenItemForm are pure
@@ -104,6 +108,14 @@ export function DoctorHome() {
     return <ActivityLogScreen onBack={() => setScreen({ name: 'list' })} />;
   }
 
+  if (screen.name === 'settings') {
+    return <ReportSettings onBack={() => setScreen({ name: 'list' })} />;
+  }
+
+  if (screen.name === 'report') {
+    return <ReportProblem screen="doctor-home" onBack={() => setScreen({ name: 'list' })} />;
+  }
+
   return (
     <>
       <RegimenList
@@ -115,16 +127,32 @@ export function DoctorHome() {
         onRemove={(item) => void removeItem(item)}
         onUndoRemove={() => void undoRemove()}
       />
-      {/* Phase A footer: only the Activity log link. Settings / Report a
-          problem links are Phase B — do not add them here without a spec
-          update. */}
-      <button
-        type="button"
-        onClick={() => setScreen({ name: 'activityLog' })}
-        className="mt-6 text-label text-fg-muted underline underline-offset-2"
-      >
-        Activity log
-      </button>
+      {/* Phase B footer: quiet links, in order. Each is its own button (not
+          a nav bar component) matching the rest of this screen's plain,
+          no-library approach to the four total screens it switches between. */}
+      <div className="mt-6 flex items-center gap-4">
+        <button
+          type="button"
+          onClick={() => setScreen({ name: 'activityLog' })}
+          className="text-label text-fg-muted underline underline-offset-2"
+        >
+          Activity log
+        </button>
+        <button
+          type="button"
+          onClick={() => setScreen({ name: 'settings' })}
+          className="text-label text-fg-muted underline underline-offset-2"
+        >
+          Settings
+        </button>
+        <button
+          type="button"
+          onClick={() => setScreen({ name: 'report' })}
+          className="text-label text-fg-muted underline underline-offset-2"
+        >
+          Report a problem
+        </button>
+      </div>
     </>
   );
 }

@@ -4,12 +4,49 @@ A de-identified, physician-in-the-loop Parkinson's dosing companion. Patients
 log levodopa doses, motor state, and meals; the treating neurologist reviews the
 patterns and adjusts the prescription. The app never prescribes.
 
-## 0.7.0 — Activity log (Phase A of activity log + field reporting)
+## 0.7.0 — Activity log + field reporting
 
-Diagnostic plumbing so a reported problem comes with evidence. This is the
-first of two coupled halves under 0.7.0: **Phase A — the activity log** (here);
-**Phase B — field reporting** (the report form + offline queue + GitHub filing)
-lands next under this same version and reuses the log via an opt-in attachment.
+Two coupled systems so a user-reported problem comes with evidence: an
+in-app report button that files structured GitHub issues, and a local activity
+log that gives each report its context. Built and shipped in two phases under
+one version — **Phase A: the activity log**, **Phase B: field reporting** — and
+coupled by an opt-in, default-off "attach recent log" that snapshots the log at
+filing time.
+
+### Field reporting (Phase B)
+
+- **Report a problem** from patient and doctor Home: free-text description, an
+  optional photo attach (gallery or camera, 3 MB cap), and auto-captured
+  metadata (app version, current screen, ISO timestamp). No typing beyond the
+  description; no network at submit.
+- **Offline-first, never lost.** Submitting writes a `pending` row to a local
+  Dexie queue and returns immediately — it never blocks on, or even mentions,
+  the network. A drain pass runs on every app open (and after each submit, and
+  on a manual "Sync now"); it files each report as a GitHub issue and flips the
+  row to `synced`. A failed attempt stays `failed` and is retried on the next
+  drain. Idempotent by construction: only non-synced rows are attempted, a row
+  flips to synced only on confirmed issue creation, a screenshot uploads once
+  (checkpointed), and a module-level guard prevents concurrent drains — so no
+  report is ever double-filed.
+- **Zero backend.** Issues are filed to a configurable repo with a fixed label
+  via the GitHub REST API; screenshots upload to a repo folder via the contents
+  API and are linked (not inlined, so private-repo images resolve). The *only*
+  file in the whole app that touches the network is `report/githubApi.ts`;
+  everything above it — payload building, issue-body formatting, the queue state
+  machine — is pure and unit-tested with the adapter mocked.
+- **The token stays on-device and out of sight.** A fine-grained PAT is entered
+  in doctor Settings (behind the passcode) and stored only in localStorage. It
+  is write-only in the UI: never pre-filled, never rendered back — a configured
+  token shows as "Access token · configured", nothing more. Honest limits stated
+  in code and copy: this is UI-gating, not encryption; and a repo-write token on
+  a *patient's* device is a documented distribution concern to revisit (narrower
+  scope / a relay / per-device tokens) before any wider rollout.
+- **Public-repo honesty, at the moment it matters.** If the configured repo is
+  public, both Settings and the Report form say so plainly — "publicly visible,
+  including screenshots and attached logs" — and the attach-log caption repeats
+  it and tells the user to skim the log first.
+
+### Activity log (Phase A)
 
 - **The app's own account of what it did.** A local, capped `activityLog` table
   ({id, at, category, message}) recording one exact sentence per state
@@ -47,11 +84,17 @@ the report system needs no further schema change. `APP_VERSION` is a
 hand-maintained constant (bumped with package.json) — no compiler enforcement,
 stated honestly.
 
-Suite is 134 tests (was 123): +11 covering the v2→v3 migration, `logEvent`
-never-throws (including inside a transaction), the 3000→2000 prune (newest
-kept), and the log formatting/capture. Activity-log flow also driven in
-Chromium (events recorded with exact messages, viewer renders, Share copies),
-11/11. Typecheck and web build clean; APK compile is CI-only as before.
+Suite is 160 tests (was 123): +11 for the log (v2→v3 migration, `logEvent`
+never-throws including inside a transaction, the 3000→2000 prune newest-kept,
+log formatting/capture) and +26 for reporting (issue-body formatting with/without
+the fenced log, the queue state machine — offline submit, retry-without-double-
+filing, screenshot checkpoint, at-filing-time log capture — and config
+save/load). Both flows driven in Chromium (activity log 11/11; report + settings
+12/12, with the GitHub adapter mocked: offline queueing, public-repo warning,
+token never in the DOM, sync-drains-to-filed, log records the filing without
+leaking the token). The real GitHub round-trip is verifiable on-device only —
+no PAT and no real network in CI. Typecheck and web build clean; APK compile is
+CI-only as before.
 
 ## 0.6.0 — Patient dose logging against the regimen
 
