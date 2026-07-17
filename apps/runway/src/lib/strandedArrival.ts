@@ -77,3 +77,48 @@ export function arrivalPreviewLine(steps: Pick<DepartureStep, 'name' | 'plannedM
   const totalMinutes = steps.reduce((sum, step) => sum + step.plannedMinutes, 0);
   return `${names} — ${totalMinutes} min.`;
 }
+
+/**
+ * The id of the arrival step that was checked off LAST — the arrival-phase
+ * twin of taskProjection.ts's `lastCheckedUnitId`, mirrored rather than
+ * generalized into one shared helper because that function is typed against
+ * `WorkTask['units']` and this one against `Departure['arrivalSteps']`; the
+ * two types are field-for-field identical (db/types.ts's own comment on
+ * why) but nothing forces a caller here to know that.
+ *
+ * Same lexicographic-max-is-chronological-max fact `lastCheckedUnitId`
+ * leans on: ISO 8601 timestamps sort correctly as plain strings, so a plain
+ * string max IS the chronological max, no `Date` parsing needed. On a tie
+ * (two steps share an identical `checkedAt`), this returns the FIRST one
+ * encountered in list order — an arbitrary but deterministic pick, not a
+ * claim about which was really checked last; there isn't a principled
+ * answer when two stored clocks read the same instant.
+ *
+ * Field bug fix, real user report (field report #14, verbatim): "Accidental
+ * touch caused earlier input that departure called punctual to work
+ * finished. And it can't be edited and continued from history now." — the
+ * arrival-phase mirror of TaskRun.tsx's own field-bug-fix Reopen (0.34.1):
+ * checking the last arrival step auto-resolves a departure to 'done' with
+ * no confirmation (Runway.tsx's `toggleArrivalStep`), so a stray tap does
+ * it exactly as easily as a deliberate one. This is the missing half
+ * Runway.tsx's Reopen action needs — a step *id* to clear `checkedAt` on,
+ * not just a fact that something was checked.
+ *
+ * `arrivalSteps ?? []` — same undefined-as-null rule as every other reader
+ * of this field in this module: a row saved before arrival steps existed
+ * has no `arrivalSteps` property at all, and must read as "nothing to
+ * reopen", never throw. `null` when no arrival step has been checked at
+ * all, or the list is empty — both read the same as "nothing to reopen".
+ */
+export function lastCheckedArrivalStepId(departure: Pick<Departure, 'arrivalSteps'>): string | null {
+  const steps = departure.arrivalSteps ?? [];
+  let latestId: string | null = null;
+  let latestAt: string | null = null;
+  for (const step of steps) {
+    if (step.checkedAt !== null && (latestAt === null || step.checkedAt > latestAt)) {
+      latestAt = step.checkedAt;
+      latestId = step.id;
+    }
+  }
+  return latestId;
+}

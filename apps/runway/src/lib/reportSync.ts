@@ -292,6 +292,20 @@ async function syncOneReport(report: FieldReport, token: string, repo: string): 
   void logEvent('report', 'Report synced.');
 }
 
+// Field report #14/#15 (sync race, discovered while fixing #14 itself): the
+// SAME field report arrived on GitHub as two identical issues, filed
+// seconds apart. Root cause: `syncPendingReports` reads every 'pending' row
+// BEFORE it writes 'synced' back onto any of them — see `syncOneReport`
+// below, whose write only lands after the GitHub POST resolves. Two calls
+// overlapping in that window (Save's own fire-and-forget call racing an
+// app-open call, or a Retry tap landing mid-drain) each independently read
+// the same still-'pending' row and each filed it as its own issue. Module-
+// level state, not a per-call flag, because the whole point is coordinating
+// across SEPARATE invocations of this exported function — a variable
+// captured inside the function body would reset on every call and could
+// never see a sibling call already in flight.
+let inFlightSync: Promise<void> | null = null;
+
 /**
  * Runs the pending-reports queue against GitHub Issues, sequentially — one
  * report at a time, not Promise.all — because field reports are rare
@@ -299,14 +313,39 @@ async function syncOneReport(report: FieldReport, token: string, repo: string): 
  * gain from parallelism, and sequential keeps a single bad response from
  * racing another report's write to the same Dexie row's error state.
  *
- * Never throws: every network/parse failure this function's own helpers
+ * Single-flight guard (field report #14/#15, see `inFlightSync`'s own
+ * comment above for the bug this fixes): a call that arrives while a drain
+ * is already running does NOT start a second, parallel drain — it just
+ * awaits the SAME promise the first call is already running. This is the
+ * classic single-flight/mutex pattern, not a queue: a call that arrives
+ * AFTER the in-flight one has already finished starts a genuinely fresh
+ * drain (`inFlightSync` is reset to `null` in the `finally` below), and a
+ * report saved while a drain was running simply waits for whichever call
+ * happens next (this one returning, main.tsx's next app-open, a manual
+ * Retry) rather than this function queuing its own re-run — every real call
+ * site (ReportProblem's Save and Retry, main.tsx's app-open) already
+ * re-invokes this on its own trigger, so a queued re-run here would just be
+ * complexity nothing needs.
+ *
+ * Never throws: every network/parse failure the inner drain's own helpers
  * can produce is already caught and turned into a Dexie write (or a
- * deliberate no-write for 'pending'); the outer try/catch here is only a
- * backstop for something unexpected — a Dexie read failure, for
- * instance — so a call site (main.tsx's fire-and-forget, ReportProblem's
- * Retry button) never needs its own try/catch around this.
+ * deliberate no-write for 'pending'); the try/catch inside the inner
+ * function is only a backstop for something unexpected — a Dexie read
+ * failure, for instance — so a call site (main.tsx's fire-and-forget,
+ * ReportProblem's Retry button) never needs its own try/catch around this.
  */
-export async function syncPendingReports(): Promise<void> {
+export function syncPendingReports(): Promise<void> {
+  if (inFlightSync) return inFlightSync;
+  inFlightSync = runSyncPendingReports().finally(() => {
+    inFlightSync = null;
+  });
+  return inFlightSync;
+}
+
+/** The actual drain — split out from `syncPendingReports` above so that
+ * function's own body stays just the mutex, readable as its own thing
+ * rather than tangled up with the queue-reading loop it guards. */
+async function runSyncPendingReports(): Promise<void> {
   try {
     const { token, repo } = await readReportConfig();
     // No token configured: reports stay 'pending' forever, which IS the
@@ -320,6 +359,7 @@ export async function syncPendingReports(): Promise<void> {
     }
   } catch {
     // Genuinely unexpected — swallowed rather than propagated, per this
-    // function's "never throws" contract above.
+    // module's "never throws" contract (stated on `syncPendingReports`
+    // above).
   }
 }

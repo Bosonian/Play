@@ -1,6 +1,28 @@
-import { describe, expect, it } from 'vitest';
-import { buildIssuePayload, classifySyncError } from './reportSync';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FieldReport } from '../db/types';
+
+// Mocks for the single-flight mutex tests at the bottom of this file — same
+// "mock db, don't spin up a real IndexedDB" precedent as eventLog.test.ts.
+// `readReportConfig` and `logEvent` are mocked out too, so a drain that
+// actually runs its body (rather than short-circuiting on the "no token"
+// branch) never reaches for a Dexie table or settings row this file never
+// sets up. `buildIssuePayload`/`classifySyncError` below don't touch `db`
+// at all, so mocking it doesn't affect those tests.
+const sortByMock = vi.fn();
+const equalsMock = vi.fn(() => ({ sortBy: sortByMock }));
+const whereMock = vi.fn(() => ({ equals: equalsMock }));
+const updateMock = vi.fn();
+
+vi.mock('../db/db', () => ({
+  db: { fieldReports: { where: whereMock, update: updateMock } },
+}));
+
+const readReportConfigMock = vi.fn();
+vi.mock('./reportSettings', () => ({ readReportConfig: readReportConfigMock }));
+
+vi.mock('./eventLog', () => ({ logEvent: vi.fn() }));
+
+const { buildIssuePayload, classifySyncError, syncPendingReports } = await import('./reportSync');
 
 function makeReport(overrides: Partial<FieldReport> = {}): FieldReport {
   return {
@@ -104,5 +126,71 @@ describe('classifySyncError', () => {
 
   it('classifies a null status (network error or timeout) as pending', () => {
     expect(classifySyncError(null)).toBe('pending');
+  });
+});
+
+// Field report #14/#15: the same field report arrived as two identical
+// GitHub issues, filed seconds apart — two concurrent `syncPendingReports`
+// drains each read the same still-'pending' row before either write landed
+// 'synced'. These tests pin the module-level single-flight guard that fixes
+// it, not the drain's own body (already covered by `buildIssuePayload`/
+// `classifySyncError` above and by the real GitHub-facing behavior, which
+// isn't mocked here).
+describe('syncPendingReports (single-flight mutex)', () => {
+  beforeEach(() => {
+    readReportConfigMock.mockReset();
+    whereMock.mockClear();
+    equalsMock.mockClear();
+    sortByMock.mockReset();
+    // No pending reports for every test in this block — the guard's own
+    // coordination is what's under test here, not the drain's queue-walking
+    // body (already exercised by the classify/payload tests above).
+    sortByMock.mockResolvedValue([]);
+  });
+
+  it('a second call while one is still in flight returns the SAME promise instead of starting a parallel drain', async () => {
+    let resolveConfig!: (value: { token: string; repo: string }) => void;
+    readReportConfigMock.mockImplementation(
+      () =>
+        new Promise<{ token: string; repo: string }>((resolve) => {
+          resolveConfig = resolve;
+        }),
+    );
+
+    const first = syncPendingReports();
+    const second = syncPendingReports();
+
+    // Both calls are in flight at once. Only the FIRST actually started a
+    // drain — the second awaited it instead of reading its own config,
+    // which is exactly the coordination that stops two drains from both
+    // reading the same 'pending' row before either marks it 'synced'.
+    expect(readReportConfigMock).toHaveBeenCalledTimes(1);
+
+    resolveConfig({ token: '', repo: 'Bosonian/Play' });
+    await expect(first).resolves.toBeUndefined();
+    await expect(second).resolves.toBeUndefined();
+    expect(readReportConfigMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a call made AFTER the in-flight drain finished starts a genuinely fresh one, not a queued extra run', async () => {
+    readReportConfigMock.mockResolvedValue({ token: '', repo: 'Bosonian/Play' });
+
+    await syncPendingReports();
+    await syncPendingReports();
+
+    expect(readReportConfigMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('the guard clears even when the drain hits an unexpected error, so a later call is not stuck awaiting a dead promise', async () => {
+    readReportConfigMock.mockRejectedValueOnce(new Error('unexpected'));
+    // Swallowed per this module's "never throws" contract — the outer
+    // single-flight promise still resolves, and its `finally` still clears
+    // `inFlightSync`.
+    await expect(syncPendingReports()).resolves.toBeUndefined();
+
+    readReportConfigMock.mockResolvedValueOnce({ token: '', repo: 'Bosonian/Play' });
+    await syncPendingReports();
+
+    expect(readReportConfigMock).toHaveBeenCalledTimes(2);
   });
 });

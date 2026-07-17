@@ -5,6 +5,7 @@ import type { Screen } from '../App';
 import { ScreenHeader } from '../ui/ScreenHeader';
 import { medianMinutes, slipMinutes } from '../lib/calibration';
 import { formatDateDisplay, formatTime } from '../lib/format';
+import { lastCheckedArrivalStepId } from '../lib/strandedArrival';
 import { deriveTaskUnitActuals, taskDeadlineResult, taskFinishedAt } from '../lib/taskProjection';
 import { TextAction } from '../ui/TextAction';
 import { Card } from '../ui/Card';
@@ -122,8 +123,22 @@ export function History({ onNavigate }: HistoryProps) {
       <div className="flex flex-col gap-2">
         {entries?.map((departure) => {
           const slip = slipMinutes(departure);
-          return (
-            <div key={departure.id} className="rounded-xl border border-slate-800/60 bg-surface p-4">
+          // Field bug fix (0.41.2, field report #14): see this block's own
+          // comment further down for the narrower truth this replaces —
+          // "no reopen destination" was true for every departure until
+          // Runway.tsx's terminal view grew a Reopen action of its own.
+          // 'left' is always tappable: it either lands on the LIVE arrival
+          // checklist (a departure with arrival steps, `arrivalPhaseActive`
+          // in Runway.tsx) or the plain "This departure is finished" note
+          // (one with none) — never a broken destination either way.
+          // 'done' is tappable only with a checked arrival step to reopen —
+          // `lastCheckedArrivalStepId` is exactly the same predicate
+          // Runway.tsx's own Reopen action gates on, reused here so the two
+          // places agree by construction rather than by two separately
+          // maintained conditions.
+          const isTappable = departure.status === 'left' || lastCheckedArrivalStepId(departure) !== null;
+          const content = (
+            <>
               <div className="flex items-center justify-between">
                 <p className="text-xl font-medium text-slate-100">{departure.name}</p>
                 <p className="text-sm text-slate-500">{formatDateDisplay(new Date(departure.appointmentAt))}</p>
@@ -143,6 +158,15 @@ export function History({ onNavigate }: HistoryProps) {
                   {arrivalResultLabel(departure)}
                 </p>
               </div>
+            </>
+          );
+          return isTappable ? (
+            <Card key={departure.id} onClick={() => onNavigate({ name: 'runway', departureId: departure.id })}>
+              {content}
+            </Card>
+          ) : (
+            <div key={departure.id} className="rounded-xl border border-slate-800/60 bg-surface p-4">
+              {content}
             </div>
           );
         })}
@@ -164,12 +188,15 @@ export function History({ onNavigate }: HistoryProps) {
               real <button>, same component Home's own task/template/
               departure rows already use) makes the row tappable, landing on
               TaskRun's done summary — where "Reopen" now lives.
-              Deliberately asymmetric: the departure rows just above this
-              section are still plain, non-tappable divs. They're left that
-              way this increment rather than made tappable for consistency —
-              a finished/abandoned departure has no equivalent "reopen"
-              destination to land on, so tapping one here would just be a
-              dead end dressed up as an affordance. */}
+              Narrower asymmetry than before (0.34.1 → 0.41.2): the departure
+              rows just above this section are tappable too now, for 'left'
+              and for 'done' with a checked arrival step to reopen — see that
+              block's own comment for the exact predicate. What's STILL a
+              plain, non-tappable div up there is only the arrival-stepless
+              'done' departure — a completion confirmed through Home's
+              explicit Early/On time/Late buttons, with no arrival checklist
+              and therefore no reopen destination to land on; tapping one
+              would still be a dead end dressed up as an affordance. */}
           {finishedTasks.map((task) => {
             const finishedAt = taskFinishedAt(task);
             const totalMinutes = deriveTaskUnitActuals(task).reduce((sum, actual) => sum + actual.actualMinutes, 0);

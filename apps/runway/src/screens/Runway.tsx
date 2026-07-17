@@ -30,7 +30,7 @@ import { getCurrentSsid } from '../native/wifi';
 import { nextOccurrenceOf } from '../lib/nextOccurrence';
 import { pushBackOverride } from '../lib/backOverride';
 import { logEvent } from '../lib/eventLog';
-import { arrivalPreviewLine } from '../lib/strandedArrival';
+import { arrivalPreviewLine, lastCheckedArrivalStepId } from '../lib/strandedArrival';
 
 /** Same confirm copy as Home's "Remove" action on a planned departure (M1) —
  * abandoning from either screen is the same operation with the same
@@ -1014,10 +1014,89 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
   }
 
   if (TERMINAL_STATUSES.includes(departure.status)) {
+    // Field bug fix (0.41.2), real user report #14 verbatim: "Accidental
+    // touch caused earlier input that departure called punctual to work
+    // finished. And it can't be edited and continued from history now." —
+    // mirrors TaskRun.tsx's own handleReopen (0.34.1) for a departure whose
+    // arrival phase resolved from a stray last-check-off, not a deliberate
+    // one.
+    //
+    // Only offered for 'done' with at least one checked arrival step —
+    // `lastCheckedArrivalStepId` (strandedArrival.ts) is `null` for every
+    // other case reaching this branch, which quietly covers the two cases
+    // that must NOT get Reopen without a separate guard:
+    //   - A 'done' departure with NO arrival steps at all — that completion
+    //     came from Home's explicit Early/On time/Late buttons
+    //     (Home.tsx's recordArrival/confirmLate), a deliberate chosen
+    //     confirmation, not a stray touch. Same reasoning TaskRun.tsx's
+    //     handleAbandon branch gives for withholding Reopen from an
+    //     abandoned task: an explicit action isn't the misfire this exists
+    //     to correct.
+    //   - 'left' or 'abandoned' — a 'left' departure WITH arrival steps
+    //     never reaches this branch at all (the `arrivalPhaseActive` guard
+    //     above returns first); a 'left' departure with none has nothing
+    //     checked to reopen; 'abandoned' is its own explicit action, same
+    //     exclusion as above.
+    const reopenableArrivalStepId =
+      departure.status === 'done' ? lastCheckedArrivalStepId(departure) : null;
+
+    // Captured as plain locals, not read off `departure` inside the closure
+    // below — same reasoning TaskRun.tsx's own handleReopen comment gives:
+    // TS can't carry the `if (!departure) return` narrowing above into a
+    // nested function DECLARATION (unlike the arrow-function `const`s
+    // elsewhere in this component — see this file's own header comment on
+    // why those two forms differ), because a hoisted declaration could, in
+    // principle, run before that guard.
+    const departureId = departure.id;
+    const departureName = departure.name;
+
+    // Semantics: undoes exactly the LAST arrival-step check-off — status
+    // back to 'left', that one step's `checkedAt` cleared. Landing on
+    // 'left' (not 'running' or 'planned') is what makes the
+    // `arrivalPhaseActive` branch at the top of this component render
+    // naturally on the next tick: that branch's own gate is
+    // `status === 'left' && hasArrivalSteps`, both true immediately after
+    // this write, so the live arrival checklist reappears with the
+    // reopened step unchecked — no separate "which screen now" logic
+    // needed here. It also makes `strandedInArrival` (strandedArrival.ts)
+    // true again, so Home's "Waiting on arrival" card comes back for this
+    // departure exactly as it would for one genuinely mid-journey.
+    async function handleReopenArrival() {
+      void hapticImpact('light');
+      await db.departures.where('id').equals(departureId).modify((d) => {
+        const stepId = lastCheckedArrivalStepId(d);
+        if (stepId === null) return; // guarded above too — defensive, not a real path
+        const step = (d.arrivalSteps ?? []).find((x) => x.id === stepId);
+        if (!step) return;
+        step.checkedAt = null;
+        d.status = 'left';
+        // These described a completion that no longer stands the moment
+        // its last check-off is undone — a departure back in the arrival
+        // phase has no result to report yet.
+        d.arrivalResult = null;
+        d.arrivalLateMinutes = null;
+        // Deliberately NOT touched: `arrivedAt` (the building arrival was
+        // real and separately recorded — handleArrived's own explicit tap
+        // — undoing the checklist's last item doesn't undo having
+        // physically gotten there) or `leftAt` (the door was still walked
+        // through at that moment; only the arrival-phase completion was
+        // premature).
+      });
+      void logEvent('departure', `Departure reopened: ${departureName}.`);
+      void refreshWidgets();
+      void refreshDayGauge();
+    }
+
     return (
       <div className="mx-auto flex min-h-screen max-w-lg flex-col items-center justify-center gap-2 px-4 pb-12 pt-safe-top text-center">
         <p className="text-lg text-slate-100">{departure.name}</p>
         <p className="text-slate-400">This departure is finished.</p>
+        {/* Quiet on purpose (TextAction, never Button) — same weight and
+            copy as TaskRun.tsx's own Reopen action, see handleReopenArrival's
+            comment above for the semantics. */}
+        {reopenableArrivalStepId !== null && (
+          <TextAction onClick={() => void handleReopenArrival()}>Reopen — undo the last check-off.</TextAction>
+        )}
         <Button onClick={() => onNavigate({ name: 'home' })} className="mt-8 w-full">
           Back to home
         </Button>

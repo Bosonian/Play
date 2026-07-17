@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { arrivalPreviewLine, strandedArrivalLine, strandedInArrival } from './strandedArrival';
+import { arrivalPreviewLine, lastCheckedArrivalStepId, strandedArrivalLine, strandedInArrival } from './strandedArrival';
 import type { DepartureStep } from '../db/types';
 
 function makeStep(overrides: Partial<DepartureStep> = {}): DepartureStep {
@@ -74,5 +74,37 @@ describe('arrivalPreviewLine', () => {
 
   it('returns the empty string for an empty list (the caller length-guards before rendering)', () => {
     expect(arrivalPreviewLine([])).toBe('');
+  });
+});
+
+describe('lastCheckedArrivalStepId', () => {
+  it('returns the id of the step with the MAX checkedAt, regardless of list order', () => {
+    const steps = [
+      makeStep({ id: 'a', checkedAt: '2026-07-14T08:10:00.000Z' }),
+      makeStep({ id: 'b', checkedAt: '2026-07-14T08:25:00.000Z' }),
+      makeStep({ id: 'c', checkedAt: '2026-07-14T08:05:00.000Z' }),
+    ];
+    expect(lastCheckedArrivalStepId({ arrivalSteps: steps })).toBe('b');
+  });
+
+  it('on a tied checkedAt, returns the first one encountered in list order', () => {
+    const steps = [
+      makeStep({ id: 'a', checkedAt: '2026-07-14T08:10:00.000Z' }),
+      makeStep({ id: 'b', checkedAt: '2026-07-14T08:10:00.000Z' }),
+    ];
+    expect(lastCheckedArrivalStepId({ arrivalSteps: steps })).toBe('a');
+  });
+
+  it('returns null when no arrival step has been checked', () => {
+    const steps = [makeStep({ id: 'a' }), makeStep({ id: 'b' })];
+    expect(lastCheckedArrivalStepId({ arrivalSteps: steps })).toBeNull();
+  });
+
+  it('returns null for an empty arrival-steps list', () => {
+    expect(lastCheckedArrivalStepId({ arrivalSteps: [] })).toBeNull();
+  });
+
+  it('returns null for a legacy row with arrivalSteps undefined, not a throw', () => {
+    expect(lastCheckedArrivalStepId({ arrivalSteps: undefined as unknown as DepartureStep[] })).toBeNull();
   });
 });
