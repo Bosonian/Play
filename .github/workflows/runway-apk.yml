@@ -90,8 +90,10 @@ jobs:
         id: vars
         run: |
           VERSION_NAME=$(grep -m1 'versionName' apps/runway/android/app/build.gradle | sed -E 's/.*versionName "([^"]+)".*/\1/')
+          VERSION_CODE=$(grep -m1 'versionCode' apps/runway/android/app/build.gradle | sed -E 's/.*versionCode ([0-9]+).*/\1/')
           SHORT_SHA=$(git rev-parse --short HEAD)
           echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
+          echo "version_code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
           echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Rename APK for release
@@ -99,11 +101,19 @@ jobs:
           cp apps/runway/android/app/build/outputs/apk/release/app-release.apk \
              apps/runway/android/app/build/outputs/apk/release/runway-latest.apk
 
+      # Update-check increment (0.42.0): `name` is no longer just cosmetic —
+      # src/lib/updateCheck.ts's parseReleaseName parses this exact string
+      # ("Runway v{versionName} ({versionCode})") to decide whether a newer
+      # build exists. Every release before this one carries the old fixed
+      # name "Runway (latest build)"; parseReleaseName treats that shape (and
+      # anything else unstamped) as "no signal", never as an update, so old
+      # releases already published don't need to be touched — the tag is
+      # always re-published fresh on the next push anyway.
       - name: Publish / refresh runway-latest release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: runway-latest
-          name: Runway (latest build)
+          name: Runway v${{ steps.vars.outputs.version_name }} (${{ steps.vars.outputs.version_code }})
           prerelease: true
           files: apps/runway/android/app/build/outputs/apk/release/runway-latest.apk
           body: |

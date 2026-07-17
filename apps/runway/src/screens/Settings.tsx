@@ -31,6 +31,8 @@ import {
   type BondedDevice,
 } from '../native/bluetooth';
 import { carChooserMessage } from '../lib/transit';
+import { APP_VERSION, APP_VERSION_CODE } from '../lib/appVersion';
+import { AVAILABLE_UPDATE_SETTING, checkForUpdate, parseAvailableUpdate } from '../lib/updateCheck';
 
 interface SettingsProps {
   onNavigate: (screen: Screen) => void;
@@ -398,6 +400,34 @@ export function Settings({ onNavigate }: SettingsProps) {
     void logEvent('transit', 'Car Bluetooth watching stopped.');
   }
 
+  // Update-check increment (0.42.0). `availableUpdate` is read the same way
+  // Home.tsx reads it (useLiveQuery + parseAvailableUpdate) so this section
+  // can name the pending version in its "Update available" feedback line
+  // without re-deriving that JSON parse a third time. `updateCheckOutcome`
+  // is purely local, transient UI state — not persisted — because it only
+  // describes THIS tap's result; the underlying `availableUpdate` row (and
+  // Home's card) is the durable record of whether an update is pending.
+  const availableUpdateSetting = useLiveQuery(() => db.settings.get(AVAILABLE_UPDATE_SETTING), []);
+  const availableUpdate = parseAvailableUpdate(availableUpdateSetting?.value);
+  const [updateCheckOutcome, setUpdateCheckOutcome] = useState<
+    'idle' | 'checking' | 'upToDate' | 'available' | 'error'
+  >('idle');
+
+  async function handleCheckForUpdates() {
+    setUpdateCheckOutcome('checking');
+    // `force: true` — an explicit tap here is exactly what the throttle's
+    // `force` param exists for (see updateCheck.ts's own doc comment): a
+    // person who just asked "check now" should never get a silent no-op
+    // because the last background check happened 20 minutes ago.
+    const outcome = await checkForUpdate(true);
+    // 'throttled' can't actually happen with force:true, but the return
+    // type includes it for main.tsx's unforced startup call — mapped to
+    // 'upToDate' here defensively rather than left to fall through to
+    // nothing rendering, which would read as this button silently doing
+    // nothing.
+    setUpdateCheckOutcome(outcome === 'throttled' ? 'upToDate' : outcome);
+  }
+
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-6 px-4 pb-12 pt-safe-top">
       <div className="pt-8">
@@ -706,6 +736,30 @@ export function Settings({ onNavigate }: SettingsProps) {
         <TextAction onClick={() => onNavigate({ name: 'activityLog' })} className="self-start">
           View activity log
         </TextAction>
+      </section>
+
+      {/* Update-check increment (0.42.0). Last section — an about/version
+          line, same "trailing, low-stakes" position Activity log already
+          occupies just above it. */}
+      <section className="flex flex-col gap-3 border-t border-slate-800 pt-6">
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Updates</h2>
+        <p className="text-sm text-slate-500">
+          Version {APP_VERSION} ({APP_VERSION_CODE}).
+        </p>
+        <TextAction
+          onClick={() => void handleCheckForUpdates()}
+          disabled={updateCheckOutcome === 'checking'}
+          className="self-start disabled:opacity-40"
+        >
+          {updateCheckOutcome === 'checking' ? 'Checking.' : 'Check for updates'}
+        </TextAction>
+        {updateCheckOutcome === 'upToDate' && <p className="text-sm text-slate-500">Up to date.</p>}
+        {updateCheckOutcome === 'available' && availableUpdate && (
+          <p className="text-sm text-slate-500">Update available: v{availableUpdate.version} — see Home.</p>
+        )}
+        {updateCheckOutcome === 'error' && (
+          <p className="text-sm text-amber-400">Could not check. Try again later.</p>
+        )}
       </section>
     </div>
   );

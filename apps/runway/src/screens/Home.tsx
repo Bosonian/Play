@@ -41,6 +41,8 @@ import { useNow } from '../hooks/useNow';
 import { refreshWidgets } from '../native/widgets';
 import { refreshDayGauge } from '../lib/dayGaugeRefresh';
 import { logEvent } from '../lib/eventLog';
+import { APP_VERSION, APP_VERSION_CODE } from '../lib/appVersion';
+import { AVAILABLE_UPDATE_SETTING, parseAvailableUpdate } from '../lib/updateCheck';
 
 /** Cap on "From your calendar" cards shown at once (E1; CLAUDE.md's
  * "defaults lean toward less, not more") — same shape as
@@ -110,6 +112,21 @@ const MAX_VISIBLE_CAPTURED = 3;
  * once the underlying data changes enough that computeSuggestions would
  * stop proposing it anyway, or after a reload, it's eligible to resurface. */
 const dismissedSuggestions = new Set<string>();
+
+/** Update-check increment (0.42.0). Same module-level, session-only Set
+ * idiom as `dismissedSuggestions` above, keyed by `versionCode` rather than
+ * a template+step pair — there's only ever at most one available update at
+ * a time, but keying on the version rather than a bare boolean means
+ * dismissing "v0.42.1 available" and then, later in the SAME session,
+ * discovering v0.42.2 (e.g. after a Settings "Check now" tap) still shows
+ * the newer card: a dismissal is "I've seen this specific update", not "stop
+ * telling me about updates ever". Reappears next app open, same as every
+ * other dismissal on this screen — see this file's own header comment on
+ * why "for this session" means exactly that and no more: an update
+ * reminder that could be permanently killed would defeat its own purpose,
+ * but one that re-nagged on every single render within a session would just
+ * be noise. */
+const dismissedUpdateVersions = new Set<number>();
 
 function suggestionKey(suggestion: Suggestion): string {
   return `${suggestion.templateId}::${suggestion.stepName}`;
@@ -646,6 +663,36 @@ export function Home({ onNavigate }: HomeProps) {
     if (departure.templateId) void applyAutoLearn(departure.templateId);
   }
 
+  // Update-check increment (0.42.0). checkForUpdate (main.tsx startup call,
+  // 6h-throttled) is what actually writes this row; Home only ever reads it.
+  // Re-guarded against APP_VERSION_CODE HERE, at render, rather than trusting
+  // the row on its own — a phone that just installed the exact build this
+  // row was advertising still has the OLD row sitting in Dexie until the
+  // next check overwrites or clears it (checkForUpdate only runs once per 6h
+  // and once at this app open, which may well be BEFORE the update check
+  // that would clear it completes). Without this re-guard, a just-updated
+  // app could tell Deepak to update to the version he's already running.
+  const availableUpdateSetting = useLiveQuery(() => db.settings.get(AVAILABLE_UPDATE_SETTING), []);
+  const availableUpdate = parseAvailableUpdate(availableUpdateSetting?.value);
+  const showUpdateCard =
+    availableUpdate !== null &&
+    availableUpdate.versionCode > APP_VERSION_CODE &&
+    !dismissedUpdateVersions.has(availableUpdate.versionCode);
+
+  function dismissUpdateCard(versionCode: number) {
+    dismissedUpdateVersions.add(versionCode);
+    setDismissTick((tick) => tick + 1);
+  }
+
+  function downloadUpdate(version: string) {
+    // _blank, same as any other "open this in the browser" affordance this
+    // app has (none currently do — this is the first) — v1 scope is
+    // download-via-browser only; an in-app APK download + self-install
+    // (REQUEST_INSTALL_PACKAGES) is deliberately deferred, see CHANGELOG.md.
+    window.open('https://github.com/Bosonian/Play/releases/download/runway-latest/runway-latest.apk', '_blank');
+    void logEvent('lifecycle', `Update download opened: v${version}.`);
+  }
+
   // Quick-capture increment (E2). `undefined` while the settings read is
   // still in flight is treated as "no key" (same convention as every other
   // config-gated section on this screen) — the capture box simply doesn't
@@ -725,6 +772,28 @@ export function Home({ onNavigate }: HomeProps) {
       <header className="pt-8">
         <h1 className="text-2xl font-semibold text-slate-100">Runway</h1>
       </header>
+
+      {/* Update-check increment (0.42.0). Placed FIRST — above the first-run
+          card, the permission banners, and (per spec) above the create
+          buttons — because an available update is meta-app: it's about
+          Runway itself, not about anything Deepak is trying to do today.
+          Every other card on this screen is either day content (Tasks,
+          Upcoming, To arm) or a one-time/permission concern scoped to using
+          the app correctly; this is neither, so it leads. */}
+      {showUpdateCard && availableUpdate && (
+        <div className="flex flex-col gap-3 rounded-xl border border-sky-800/60 bg-sky-950/30 p-4">
+          <div>
+            <p className="font-medium text-slate-100">Update available: v{availableUpdate.version}.</p>
+            <p className="text-sm text-slate-400">You have v{APP_VERSION}.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button onClick={() => downloadUpdate(availableUpdate.version)} className="flex-1">
+              Download
+            </Button>
+            <TextAction onClick={() => dismissUpdateCard(availableUpdate.versionCode)}>Not now</TextAction>
+          </div>
+        </div>
+      )}
 
       {showFirstRunCard && (
         <div className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">

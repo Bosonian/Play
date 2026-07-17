@@ -12,6 +12,7 @@ import { materializeScheduledDepartures, materializeStudyBlockAlarms } from './l
 import { syncPendingReports } from './lib/reportSync';
 import { logEvent, pruneEventLog } from './lib/eventLog';
 import { syncTransitEvents } from './lib/transitSync';
+import { checkForUpdate } from './lib/updateCheck';
 
 // Registered here, before the first render, rather than inside App — this
 // is the earliest point in the app's lifecycle a listener can attach, which
@@ -111,6 +112,13 @@ void logEvent('lifecycle', 'App started.');
 // no-op on web and on any phone with no watched car configured yet (see
 // transitSync.ts's own doc comment for why this never throws).
 void syncTransitEvents();
+
+// Update-check increment (0.42.0): same fire-and-forget, run-on-every-open
+// shape as every other startup call above — checkForUpdate's own 6h
+// throttle (not a call-site guard here) is what keeps this from hitting
+// GitHub's API on every single app open; see updateCheck.ts's doc comment.
+// Never blocks the first render, never throws.
+void checkForUpdate();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

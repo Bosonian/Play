@@ -7,15 +7,18 @@ android {
         applicationId "de.bosonian.runway"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        // LOUD NOTE: versionName here and APP_VERSION in
-        // src/lib/appVersion.ts are two separate, hand-maintained strings
-        // that must move together on every release — APP_VERSION is what
-        // gets stamped onto every field report (ReportProblem.tsx), and a
-        // mismatch would mean a report claims a build that isn't this one.
-        // A build-time injection would remove the duplication; see
-        // appVersion.ts and README.md's v1.5 list.
-        versionCode 58
-        versionName "0.41.2"
+        // LOUD NOTE: versionCode/versionName here and APP_VERSION_CODE/
+        // APP_VERSION in src/lib/appVersion.ts are now THREE separate,
+        // hand-maintained values that must move together on every release
+        // — APP_VERSION is what gets stamped onto every field report
+        // (ReportProblem.tsx), and APP_VERSION_CODE is what
+        // src/lib/updateCheck.ts compares against a published release's
+        // stamped versionCode (see that file). A mismatch means a report
+        // claims a build that isn't this one, or worse, the in-app update
+        // check silently breaks. A build-time injection would remove the
+        // duplication; see appVersion.ts and README.md's v1.5 list.
+        versionCode 59
+        versionName "0.42.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
