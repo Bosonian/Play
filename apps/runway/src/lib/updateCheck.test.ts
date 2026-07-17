@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { APP_VERSION_CODE } from './appVersion';
 
 // Same "mock db, don't spin up a real IndexedDB" precedent as
 // eventLog.test.ts/reportSync.test.ts — checkForUpdate only ever calls
@@ -12,10 +13,14 @@ vi.mock('../db/db', () => ({
 const logEventMock = vi.fn();
 vi.mock('./eventLog', () => ({ logEvent: logEventMock }));
 
-// APP_VERSION_CODE is real (not mocked) — it's 59 after this increment's
-// housekeeping bump, so every test below compares against that fixed
-// number rather than an arbitrary stand-in.
+// APP_VERSION_CODE is real (not mocked) — fixtures that need a "newer"
+// release derive it (NEWER_CODE below) so version bumps can't flip them.
 const { checkForUpdate, parseAvailableUpdate, parseReleaseName } = await import('./updateCheck');
+
+// Derived, never hardcoded: the 0.42.1 review caught the original literal
+// (60) silently becoming the CURRENT version on the next bump, flipping the
+// "newer release" fixtures into "same version" and failing the test.
+const NEWER_CODE = APP_VERSION_CODE + 1;
 
 describe('parseReleaseName', () => {
   it('parses a well-formed stamped release name', () => {
@@ -121,7 +126,7 @@ describe('checkForUpdate', () => {
     getMock.mockResolvedValue(undefined);
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response(JSON.stringify({ name: 'Runway v0.43.0 (60)' }), { status: 200 })),
+      vi.fn(async () => new Response(JSON.stringify({ name: `Runway v0.43.0 (${NEWER_CODE})` }), { status: 200 })),
     );
 
     const outcome = await checkForUpdate();
@@ -129,7 +134,7 @@ describe('checkForUpdate', () => {
     expect(outcome).toBe('available');
     expect(putMock).toHaveBeenCalledWith({
       key: 'availableUpdate',
-      value: JSON.stringify({ version: '0.43.0', versionCode: 60 }),
+      value: JSON.stringify({ version: '0.43.0', versionCode: NEWER_CODE }),
     });
     expect(logEventMock).toHaveBeenCalledWith('lifecycle', 'Update check: v0.43.0 available.');
   });
@@ -207,7 +212,7 @@ describe('checkForUpdate', () => {
     putMock.mockRejectedValue(new Error('IndexedDB is broken'));
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response(JSON.stringify({ name: 'Runway v0.43.0 (60)' }), { status: 200 })),
+      vi.fn(async () => new Response(JSON.stringify({ name: `Runway v0.43.0 (${NEWER_CODE})` }), { status: 200 })),
     );
 
     const outcome = await checkForUpdate();

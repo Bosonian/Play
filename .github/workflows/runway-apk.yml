@@ -89,8 +89,13 @@ jobs:
       - name: Compute release metadata
         id: vars
         run: |
-          VERSION_NAME=$(grep -m1 'versionName' apps/runway/android/app/build.gradle | sed -E 's/.*versionName "([^"]+)".*/\1/')
-          VERSION_CODE=$(grep -m1 'versionCode' apps/runway/android/app/build.gradle | sed -E 's/.*versionCode ([0-9]+).*/\1/')
+          # Anchored to the line START (allowing leading whitespace only) so a
+          # comment MENTIONING versionName/versionCode higher up in the file
+          # can never be the -m1 match — exactly what broke the first stamped
+          # release (v0.42.0): build.gradle's LOUD NOTE comment gained both
+          # tokens and grep grabbed the comment instead of the field.
+          VERSION_NAME=$(grep -m1 -E '^[[:space:]]*versionName "' apps/runway/android/app/build.gradle | sed -E 's/.*versionName "([^"]+)".*/\1/')
+          VERSION_CODE=$(grep -m1 -E '^[[:space:]]*versionCode [0-9]' apps/runway/android/app/build.gradle | sed -E 's/.*versionCode ([0-9]+).*/\1/')
           SHORT_SHA=$(git rev-parse --short HEAD)
           echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
           echo "version_code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
