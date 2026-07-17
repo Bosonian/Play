@@ -1,8 +1,16 @@
+import { useEffect, useRef, useState } from 'react';
 import type { DepartureStep } from '../db/types';
 import { elapsedSecondsSince } from '../lib/currentStepElapsed';
+import { isSecondTap } from '../lib/doubleTap';
 import { focusTone } from '../lib/focusTone';
 import type { FocusTone } from '../lib/focusTone';
 import { formatCountdown, formatTime } from '../lib/format';
+
+/** How long the "Double-tap to check off." hint stays on screen after a
+ * first tap, in milliseconds. Long enough to read at a glance, short
+ * enough that it's gone well before it could be mistaken for a permanent
+ * label sitting next to the countdown. */
+const HINT_VISIBLE_MS = 1400;
 
 interface StepFocusProps {
   step: DepartureStep;
@@ -38,9 +46,17 @@ interface StepFocusProps {
    */
   bottomLine?: { label: string; time: Date };
   onBack: () => void;
-  /** Whole-screen tap-to-check-and-advance. Only ever provided by the
-   * caller when `isCurrentStep` is true - a step that hasn't started yet
-   * has no "done" action, so there's nothing to wire up here for it. */
+  /** Whole-screen tap-to-check-and-advance - called only on a confirmed
+   * DOUBLE-tap (field report #14: a single-tap version of this let a
+   * pocket brush falsely finish a real departure step). The gating itself
+   * lives inside this component (see the container's `onClick` below,
+   * `handleTap`); this prop is invoked exactly where the old single-tap
+   * version invoked it, so callers (Runway.tsx/TaskRun.tsx) are unchanged
+   * - the haptic they fire from inside their own check+advance handler
+   * still happens, just one confirmed double-tap later than before. Only
+   * ever provided by the caller when `isCurrentStep` is true - a step that
+   * hasn't started yet has no "done" action, so there's nothing to wire up
+   * here for it. */
   onTap?: () => void;
   /** Backdating increment: "the step already finished, a while ago" — a
    * small, quiet escape hatch beside the back chevron, deliberately NOT
@@ -90,6 +106,64 @@ export function StepFocus({ step, isCurrentStep, anchorIso, now, bottomLine, onB
   const tone = focusTone(remainingSeconds, plannedSeconds);
   const phase: FocusTone['phase'] = isCurrentStep ? tone.phase : 'calm';
 
+  // Double-tap check-off guard (field report #14: a pocket brush falsely
+  // finished a real departure step when ANY tap checked it off). This ref
+  // - not state - holds the timestamp of the last unconfirmed tap:
+  // `isSecondTap` (doubleTap.ts) is the whole debounce, comparing this
+  // value against the next tap's own `Date.now()`, so no timer is needed
+  // to "arm" or "expire" it. A tap that arrives too late to count just
+  // fails the check and becomes the new stored timestamp itself (see
+  // `handleTap` below) - that's what makes a tap 10s after the last one
+  // read as a fresh first tap with no extra bookkeeping. A ref rather than
+  // state because writing it must never trigger a re-render on its own;
+  // only the hint (below) needs one.
+  const lastTapAtRef = useRef<number | null>(null);
+
+  // The "Double-tap to check off." hint IS state, because it has to
+  // re-render the hint text in and out. `hintTimeoutRef` holds the
+  // setTimeout id that hides it again ~1.4s after a first tap - this is
+  // the one place in this file that genuinely needs a timer, unlike the
+  // tap-window debounce above.
+  const [hintVisible, setHintVisible] = useState(false);
+  const hintTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Belt-and-braces cleanup: if StepFocus unmounts (back chevron, or the
+  // caller clearing focusStepId after a confirmed check-off) while a hint
+  // is still showing, don't leave a stray timeout trying to setState on an
+  // unmounted component.
+  useEffect(() => {
+    return () => {
+      if (hintTimeoutRef.current) clearTimeout(hintTimeoutRef.current);
+    };
+  }, []);
+
+  const handleTap = () => {
+    if (!onTap) return;
+    const nowMs = Date.now();
+
+    if (isSecondTap(lastTapAtRef.current, nowMs)) {
+      // Confirmed double-tap: run the existing check-and-advance path
+      // unchanged, haptic included (it lives inside `onTap` itself - see
+      // that prop's own doc comment). Reset the ref so a stray third tap
+      // right after can't chain into a false second double-tap.
+      lastTapAtRef.current = null;
+      setHintVisible(false);
+      if (hintTimeoutRef.current) clearTimeout(hintTimeoutRef.current);
+      onTap();
+      return;
+    }
+
+    // First tap (or the window since the last one expired): store the
+    // timestamp and show the teaching hint. Deliberately NO haptic here -
+    // a pocket brush must produce zero feedback, not even a buzz that
+    // could tip someone off mid-pocket that something happened. Only a
+    // CONFIRMED double-tap above ever fires haptic feedback.
+    lastTapAtRef.current = nowMs;
+    setHintVisible(true);
+    if (hintTimeoutRef.current) clearTimeout(hintTimeoutRef.current);
+    hintTimeoutRef.current = setTimeout(() => setHintVisible(false), HINT_VISIBLE_MS);
+  };
+
   return (
     <div
       // pb-safe-bottom here, pb-8 on the inner wrapper below (not both on
@@ -102,10 +176,16 @@ export function StepFocus({ step, isCurrentStep, anchorIso, now, bottomLine, onB
       // The wet-hands case: mid-shower, hands full of toothpaste, whatever
       // - a single small "done" button is a bad target when you're not
       // free to aim carefully. The entire screen (minus the back chevron
-      // below) is the tap target instead, so a clumsy, distracted, or
-      // one-handed tap still lands. Only wired when `onTap` is provided
-      // (current step only) - see this prop's own doc comment.
-      onClick={onTap}
+      // and "Done earlier", both excluded below) is the tap target instead,
+      // so a clumsy, distracted, or one-handed tap still lands - but as of
+      // field report #14, landing once only shows a hint, never checks the
+      // step off. A CONFIRMED DOUBLE-tap is what actually checks off and
+      // advances (`handleTap` above) - still aim-free (any two taps
+      // anywhere on the glass within the window count), just no longer
+      // single-touch-fireable by an undeliberate brush. Only wired when
+      // `onTap` is provided (current step only) - see that prop's own doc
+      // comment.
+      onClick={onTap ? handleTap : undefined}
       role={onTap ? 'button' : undefined}
       tabIndex={onTap ? 0 : undefined}
       onKeyDown={
@@ -113,7 +193,7 @@ export function StepFocus({ step, isCurrentStep, anchorIso, now, bottomLine, onB
           ? (e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                onTap();
+                handleTap();
               }
             }
           : undefined
@@ -140,7 +220,17 @@ export function StepFocus({ step, isCurrentStep, anchorIso, now, bottomLine, onB
           as one family of quiet controls at the top of the screen. Doesn't
           touch the landscape name/digits/bottom-line pinning below, which
           is absolutely positioned independent of this row's height either
-          way. */}
+          way.
+
+          Both stay SINGLE-tap even after field report #14's double-tap
+          change to the whole-glass surface above - the double-tap gate
+          exists because the glass is a large, unaimed, aim-free target a
+          pocket brush can land on by accident. These two buttons are the
+          opposite: small, deliberately AIMED targets (a 44px chevron, a
+          short text button) that a stray brush is unlikely to hit at all,
+          so the extra confirmation step would only slow down a genuinely
+          deliberate tap without buying any real accidental-touch
+          protection. */}
       <div className="relative z-10 mt-safe-top flex items-center justify-between">
         <button
           type="button"
@@ -227,6 +317,15 @@ export function StepFocus({ step, isCurrentStep, anchorIso, now, bottomLine, onB
           {formatCountdown(remainingSeconds)}
         </p>
         {!isCurrentStep && <p className="text-sm text-slate-500">Starts when the steps before it are done.</p>}
+        {/* Double-tap hint (field report #14): shares the same slot/style
+            the "Starts when..." line above uses (`text-sm text-slate-500`,
+            centered under the digits) rather than inventing a second
+            instruction spot - the two are mutually exclusive anyway (this
+            one only ever shows for the current step, which is exactly the
+            case the line above excludes itself from). Small and
+            slate-toned on purpose: it must read as a quiet aside, never as
+            something that could be mistaken for the countdown itself. */}
+        {isCurrentStep && hintVisible && <p className="text-sm text-slate-500">Double-tap to check off.</p>}
       </div>
 
       {/* landscape: same "pin to the true edge of the rotated viewport"
