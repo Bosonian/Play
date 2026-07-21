@@ -20,6 +20,7 @@ import { setNavigationRef } from './lib/navigationRef';
 import { registerBackGesture } from './native/backGesture';
 import { refreshDayGauge } from './lib/dayGaugeRefresh';
 import { logEvent } from './lib/eventLog';
+import { ErrorBoundary } from './ui/ErrorBoundary';
 
 // Navigation as plain React state, not a router library. There's no
 // deep-linkable URL requirement in increment 1 (no shareable departure
@@ -302,9 +303,18 @@ export default function App() {
   // `motion-safe:` (see tailwind.config.ts) means a reduced-motion user gets
   // the new screen at full opacity immediately, with no animation property
   // applied at all.
+  //
+  // Field report #16 (blank-page increment): ErrorBoundary wraps the fade
+  // wrapper, not the other way around — its `onReset` navigates home, which
+  // remounts this whole div under a fresh `key`, which gives the boundary
+  // itself a fresh instance (and a fresh `error: null` state) for free. Every
+  // screen renders through this one boundary; see ErrorBoundary.tsx's own
+  // doc comment for why this exists and what it does and doesn't fix.
   return (
-    <div key={screen.name} className="motion-safe:animate-fade-in">
-      {renderScreen()}
-    </div>
+    <ErrorBoundary onReset={() => setScreen({ name: 'home' })}>
+      <div key={screen.name} className="motion-safe:animate-fade-in">
+        {renderScreen()}
+      </div>
+    </ErrorBoundary>
   );
 }
