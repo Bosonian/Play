@@ -26,8 +26,16 @@ import { logEvent } from './eventLog';
  * absorb today's arrival tap. 12 hours is generous enough to cover a departure
  * whose appointment slipped or was re-anchored earlier the same day, while
  * still excluding anything that's clearly a different day's business.
+ *
+ * Exported (car-disconnect arrival increment, 0.44.0) and reused as-is by
+ * `bluetoothArrival.ts`'s `resolveCarArrival` for its own freshness gate — a
+ * car-Bluetooth disconnect too far from `now` deserves exactly the same
+ * "don't let a stale signal fire today's arrival" treatment as a stale
+ * `runway://arrived` tap, so this stays the one place that window is
+ * defined rather than drifting into two constants that could silently
+ * diverge.
  */
-const ARRIVAL_MATCH_WINDOW_MS = 12 * 60 * 60_000;
+export const ARRIVAL_MATCH_WINDOW_MS = 12 * 60 * 60_000;
 
 /**
  * Pure selection logic for `recordExternalArrival` below — given every

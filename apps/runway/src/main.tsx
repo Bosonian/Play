@@ -12,6 +12,7 @@ import { materializeScheduledDepartures, materializeStudyBlockAlarms } from './l
 import { syncPendingReports } from './lib/reportSync';
 import { logEvent, pruneEventLog } from './lib/eventLog';
 import { syncTransitEvents } from './lib/transitSync';
+import { syncBluetoothArrival } from './lib/bluetoothArrivalSync';
 import { checkForUpdate } from './lib/updateCheck';
 
 // Registered here, before the first render, rather than inside App — this
@@ -112,6 +113,18 @@ void logEvent('lifecycle', 'App started.');
 // no-op on web and on any phone with no watched car configured yet (see
 // transitSync.ts's own doc comment for why this never throws).
 void syncTransitEvents();
+
+// Car-disconnect arrival increment (0.44.0): reads the SAME native ring
+// syncTransitEvents just read, but for its DISCONNECT half rather than
+// matched connect-to-disconnect windows — see bluetoothArrivalSync.ts's own
+// doc comment for why "left" + "arrivalSteps present" is enough to pick a
+// candidate, and bluetoothArrival.ts's resolveCarArrival for the fresh-start
+// vs. re-anchor-forward vs. do-nothing decision. Placed after
+// syncTransitEvents purely for readability (both read the ring; keeping them
+// adjacent makes this list easier to scan) — the two are independent reads
+// of the same data and neither's outcome depends on the other having run
+// first.
+void syncBluetoothArrival();
 
 // Update-check increment (0.42.0): same fire-and-forget, run-on-every-open
 // shape as every other startup call above — checkForUpdate's own 6h

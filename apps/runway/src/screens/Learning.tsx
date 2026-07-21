@@ -4,12 +4,15 @@ import type { Screen } from '../App';
 import { ScreenHeader } from '../ui/ScreenHeader';
 import { medianMinutes, slipMinutes, slipTrend } from '../lib/calibration';
 import { learningReport } from '../lib/learning';
+import type { LearningReportEntry } from '../lib/learning';
 import { biasFromPairs, globalBias, guessPairs } from '../lib/estimateBias';
 import type { Bias, GuessActualPair } from '../lib/estimateBias';
 import { measuredPaceHoursPerWeek } from '../lib/examProjection';
 import { transitMeasurementSummaries } from '../lib/transit';
-import type { TransitMeasurementsByName } from '../lib/transit';
+import type { TransitMeasurementsByName, TransitMeasurementSummary } from '../lib/transit';
 import { TRANSIT_MEASUREMENTS_SETTING } from '../lib/transitSettings';
+import { safely } from '../lib/safely';
+import { logEvent } from '../lib/eventLog';
 
 /** "on time" / "N min late" / "N min early" — the same three-way phrasing
  * this screen's own median-slip line below already uses (History.tsx and
@@ -73,6 +76,29 @@ interface LearningProps {
  * record's distillation into "what the app now believes", so it makes sense
  * one level down from the log it's summarizing rather than sitting as a
  * peer entry point of its own.
+ *
+ * INVARIANT (field report #16, "What runway has learned button leads to a
+ * blank page" — still reproducing on v0.43.1's error boundary, because a
+ * boundary only catches THROWS, and the old code's `if (...) return null`
+ * guard didn't throw): this screen renders the header unconditionally and
+ * degrades every data section independently; it can show empty, it can
+ * show partial, it can never show blank. Concretely: (1) `useLiveQuery`
+ * returns `undefined` both while a query is still loading AND permanently,
+ * if the query throws internally — dexie-react-hooks only rethrows (for an
+ * error boundary to catch) when the underlying `liveQuery` observable calls
+ * `observer.error`, which Dexie's own `liveQuery` implementation
+ * deliberately does NOT do for a `DatabaseClosedError`/`AbortError` (see
+ * node_modules/dexie/dist/dexie.mjs's `liveQuery`) — so a closed-connection
+ * hiccup can leave a query silently stuck at `undefined` forever, with
+ * nothing for a boundary to ever catch. The old `return null` guard turned
+ * that stuck `undefined` into a permanently blank screen with no way back;
+ * below, the same stuck state instead renders the header (so there's always
+ * a way back) plus a "Loading…" line, distinguished from a query that has
+ * actually resolved to empty. (2) Every pure computation this render
+ * depends on is wrapped in `safely` (src/lib/safely.ts) — a throw from any
+ * one of them degrades that section alone (logged via eventLog.ts, surfaced
+ * once as "Some learning data could not be shown.") rather than crashing
+ * the whole render.
  */
 export function Learning({ onNavigate }: LearningProps) {
   const departures = useLiveQuery(() => db.departures.toArray(), []);
@@ -86,18 +112,71 @@ export function Learning({ onNavigate }: LearningProps) {
     async () => (exam ? db.sprints.where('examId').equals(exam.id).toArray() : []),
     [exam],
   );
+  const transitMeasurementsSetting = useLiveQuery(() => db.settings.get(TRANSIT_MEASUREMENTS_SETTING), []);
 
-  if (!departures || !tasks || !sprints) return null;
+  // The header — including its back button — renders in EVERY branch below,
+  // loading or loaded, so Deepak is never stranded on a screen with no way
+  // out. Kept as one JSX value rather than a small component so there's
+  // exactly one place this gets built, not two copies that could drift.
+  const header = (
+    <div className="pt-8">
+      <ScreenHeader title="Learning" onBack={() => onNavigate({ name: 'history' })} />
+    </div>
+  );
 
-  const report = learningReport(departures, tasks);
+  // "Still loading" (undefined) is a different state from "loaded and
+  // genuinely empty" ([]) — the old `!departures || !tasks || !sprints`
+  // guard couldn't tell them apart because it returned null either way,
+  // which is exactly what made a permanently-stuck-undefined query
+  // indistinguishable from a slow one. `transitMeasurementsSetting` and
+  // `exam` are deliberately NOT part of this gate: both were already
+  // optional in the original code (a missing settings row or a
+  // not-yet-created exam are normal, valid states, not loading states).
+  if (departures === undefined || tasks === undefined || sprints === undefined) {
+    return (
+      <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-6 px-4 pb-12 pt-safe-top">
+        {header}
+        <p className="text-sm text-slate-500">Loading…</p>
+      </div>
+    );
+  }
+
+  // Collects every section label that failed this render, purely so the
+  // JSX below can show one "Some learning data could not be shown." line
+  // if `failedSections.length > 0` — never more than one line, regardless
+  // of how many sections failed. `logEvent` is fire-and-forget (its own
+  // contract, eventLog.ts) so a logging failure here can never be the
+  // reason this screen itself fails to render.
+  const failedSections: string[] = [];
+  function handleSectionFailure(label: string, err: unknown) {
+    failedSections.push(label);
+    console.warn(`Runway: Learning section failed: ${label}.`, err);
+    void logEvent('lifecycle', `Learning section failed: ${label}.`);
+  }
+
+  const report = safely<LearningReportEntry[]>(
+    () => learningReport(departures, tasks),
+    [],
+    'Steps and tasks',
+    handleSectionFailure,
+  );
 
   // Estimation-bias increment (0.30.0): every manual guess/actual pair,
   // name-keyed — see estimateBias.ts's own header comment for why this is a
   // narrower question than learningReport's "how long does this really
   // take" (only Deepak's OWN felt guesses count, never a learned prefill he
-  // never touched).
-  const pairsByName = guessPairs(departures, tasks);
-  const overallBias = globalBias(pairsByName);
+  // never touched). One label ("Your guesses") covers both calls — if
+  // guessPairs throws, pairsByName falls back to an empty Map, and
+  // globalBias(emptyMap) then just returns null on its own (no second
+  // throw, no double-count in failedSections) rather than needing its own
+  // separate wrapper.
+  const pairsByName = safely<Map<string, GuessActualPair[]>>(
+    () => guessPairs(departures, tasks),
+    new Map(),
+    'Your guesses',
+    handleSectionFailure,
+  );
+  const overallBias = safely<Bias | null>(() => globalBias(pairsByName), null, 'Your guesses', handleSectionFailure);
 
   // Same slip computation History.tsx uses (slipMinutes over left/done
   // departures, medianMinutes, a 3-slip evidence floor) but over ALL
@@ -106,23 +185,40 @@ export function Learning({ onNavigate }: LearningProps) {
   // screen is asking a different question, "what has the app learned over
   // all of history", so the all-time median belongs here even though the
   // two numbers can legitimately differ.
-  const slips = departures
-    .filter((departure) => departure.status === 'left' || departure.status === 'done')
-    .map(slipMinutes)
-    .filter((value): value is number => value !== undefined);
-  const medianSlip = slips.length >= 3 ? medianMinutes(slips) : null;
+  const slips = safely<number[]>(
+    () =>
+      departures
+        .filter((departure) => departure.status === 'left' || departure.status === 'done')
+        .map(slipMinutes)
+        .filter((value): value is number => value !== undefined),
+    [],
+    'Departures',
+    handleSectionFailure,
+  );
+  const medianSlip = safely<number | null>(
+    () => (slips.length >= 3 ? medianMinutes(slips) : null),
+    null,
+    'Departures',
+    handleSectionFailure,
+  );
 
   // Slip-trend increment: calibration.ts's `slipTrend` needs its input in
   // chronological (OLDEST first) order — the opposite of History.tsx's own
   // most-recent-first `.reverse()` — see slipTrend's own doc comment for
   // why getting this backwards would silently swap "earliest" and "latest".
-  const chronologicalSlips = departures
-    .filter((departure) => departure.status === 'left' || departure.status === 'done')
-    .slice()
-    .sort((a, b) => a.appointmentAt.localeCompare(b.appointmentAt))
-    .map(slipMinutes)
-    .filter((value): value is number => value !== undefined);
-  const trend = slipTrend(chronologicalSlips);
+  const chronologicalSlips = safely<number[]>(
+    () =>
+      departures
+        .filter((departure) => departure.status === 'left' || departure.status === 'done')
+        .slice()
+        .sort((a, b) => a.appointmentAt.localeCompare(b.appointmentAt))
+        .map(slipMinutes)
+        .filter((value): value is number => value !== undefined),
+    [],
+    'Departures',
+    handleSectionFailure,
+  );
+  const trend = safely(() => slipTrend(chronologicalSlips), null, 'Departures', handleSectionFailure);
 
   // Measured pace only, never the labeled 4 h/week default — that default
   // is a stated ASSUMPTION (examProjection.ts's DEFAULT_PACE_HOURS_PER_WEEK,
@@ -130,36 +226,58 @@ export function Learning({ onNavigate }: LearningProps) {
   // logged"), not something the app learned from Deepak's own history. A
   // screen about what's been learned has no business showing a number that
   // was never learned.
-  const pace = exam ? measuredPaceHoursPerWeek(new Date(), sprints) : null;
+  const pace = safely<number | null>(
+    () => (exam ? measuredPaceHoursPerWeek(new Date(), sprints) : null),
+    null,
+    'Prüfung',
+    handleSectionFailure,
+  );
 
   // Car Bluetooth transit increment (0.36.0): the measured-drive store is a
   // single JSON settings row (src/lib/transitSettings.ts), not a table this
   // component has anywhere else to read from — see that file's own comment
-  // for why a keyed row is enough for one car's drive history. Parsed the
-  // same defensive way transitSync.ts's own reader does: a missing or
-  // corrupt row degrades to "nothing measured yet", never a crash.
-  const transitMeasurementsSetting = useLiveQuery(() => db.settings.get(TRANSIT_MEASUREMENTS_SETTING), []);
-  let transitSummaries: ReturnType<typeof transitMeasurementSummaries> = [];
-  if (transitMeasurementsSetting) {
-    try {
-      transitSummaries = transitMeasurementSummaries(JSON.parse(transitMeasurementsSetting.value) as TransitMeasurementsByName);
-    } catch {
-      transitSummaries = [];
-    }
-  }
+  // for why a keyed row is enough for one car's drive history. The
+  // JSON.parse (a plausible corruption point for anything hand-edited or
+  // written by an older app version) and transitMeasurementSummaries are
+  // both inside the same `safely` call — a missing or corrupt row degrades
+  // to "nothing measured yet", same as before, now via the same wrapper
+  // (and the same failure-tracking/logging) every other section uses rather
+  // than a bespoke try/catch.
+  const transitSummaries = transitMeasurementsSetting
+    ? safely<TransitMeasurementSummary[]>(
+        () =>
+          transitMeasurementSummaries(JSON.parse(transitMeasurementsSetting.value) as TransitMeasurementsByName),
+        [],
+        'Transit',
+        handleSectionFailure,
+      )
+    : [];
 
-  const isEmpty = report.length === 0 && medianSlip === null && pace === null && transitSummaries.length === 0;
+  const anyFailed = failedSections.length > 0;
+  // Only claims "nothing learned yet" when every section genuinely
+  // resolved empty — if a section instead THREW, its fallback is also
+  // empty, and showing "nothing learned yet" on top of a silent failure
+  // would misdescribe what actually happened. `anyFailed` takes priority:
+  // the "Some learning data could not be shown." line below covers that
+  // case instead.
+  const isEmpty = !anyFailed && report.length === 0 && medianSlip === null && pace === null && transitSummaries.length === 0;
 
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-6 px-4 pb-12 pt-safe-top">
-      <div className="pt-8">
-        <ScreenHeader title="Learning" onBack={() => onNavigate({ name: 'history' })} />
-      </div>
+      {header}
 
       <p className="text-sm text-slate-500">
         Estimates come from your recent natural runs. Rushed runs are kept separate — squeezing a
         morning never shrinks tomorrow's plan.
       </p>
+
+      {/* One line, at most, regardless of how many sections in
+          `failedSections` actually failed — a per-section error message
+          would read as more alarming than a single Learning card refusing
+          to draw part of itself deserves, and "which section" is already in
+          the (opt-in, never-leaves-the-device) event log for anyone who
+          needs to trace it further. */}
+      {anyFailed && <p className="text-sm text-slate-500">Some learning data could not be shown.</p>}
 
       {isEmpty && (
         <p className="text-sm text-slate-500">
@@ -188,9 +306,18 @@ export function Learning({ onNavigate }: LearningProps) {
           {report.map((entry) => {
             // Estimation-bias increment: per-name evidence floor (3, not
             // globalBias's 5) — see PER_NAME_MIN_PAIRS's own comment above
-            // for why the asymmetry is deliberate.
+            // for why the asymmetry is deliberate. Wrapped per-entry (not
+            // just once for the whole list) so one malformed name's pairs
+            // can't take out every OTHER entry's card too — this runs
+            // inside `report.map`, so an unwrapped throw here would fail
+            // the entire "Steps and tasks" section, not just this row.
             const namedPairs = pairsByName.get(entry.name) ?? [];
-            const namedBias = biasFromPairs(namedPairs, PER_NAME_MIN_PAIRS);
+            const namedBias = safely<Bias | null>(
+              () => biasFromPairs(namedPairs, PER_NAME_MIN_PAIRS),
+              null,
+              'Steps and tasks',
+              handleSectionFailure,
+            );
             return (
               <div key={entry.name} className="rounded-xl border border-slate-800/60 bg-surface p-4">
                 <p className="text-slate-100">{entry.name}</p>

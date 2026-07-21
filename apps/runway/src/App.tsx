@@ -19,6 +19,7 @@ import { ActivityLog } from './screens/ActivityLog';
 import { setNavigationRef } from './lib/navigationRef';
 import { registerBackGesture } from './native/backGesture';
 import { refreshDayGauge } from './lib/dayGaugeRefresh';
+import { syncBluetoothArrival } from './lib/bluetoothArrivalSync';
 import { logEvent } from './lib/eventLog';
 import { ErrorBoundary } from './ui/ErrorBoundary';
 
@@ -228,6 +229,14 @@ export default function App() {
     function handleVisibilityChange() {
       if (document.visibilityState === 'visible') {
         void refreshDayGauge();
+        // Car-disconnect arrival increment (0.44.0): mirrors this same
+        // resume signal, not just main.tsx's cold-start call — the whole
+        // point of watching the car's Bluetooth disconnect is that it can
+        // happen while Runway is closed (phone in a pocket on the walk in),
+        // so the app needs to notice it the moment it's reopened, not only
+        // on a full process restart. Same fire-and-forget, never-throws
+        // contract as every other call site of this function.
+        void syncBluetoothArrival();
         void logEvent('lifecycle', 'App resumed.');
       } else {
         void logEvent('lifecycle', 'App backgrounded.');

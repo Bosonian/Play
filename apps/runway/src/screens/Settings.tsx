@@ -613,10 +613,17 @@ export function Settings({ onNavigate }: SettingsProps) {
           </div>
         )}
 
+        {/* Car-disconnect arrival increment (0.44.0): rewritten to name what
+            "Choose car" now does beyond drive timing — the disconnect is
+            also the arrival anchor. Discoverability fix per the field
+            report ("I don't see the option at all to say which bluetooth
+            belongs to the car"): the "Choose car" action above is unchanged
+            in position, this caption is what now explains its full effect. */}
         <p className="text-sm text-slate-500">
-          Drives are measured from your car&apos;s Bluetooth connect to disconnect and refine
-          travel-time suggestions. Samsung may stop delivering Bluetooth events to apps it puts to
-          sleep — exclude Runway from battery optimization if drives stop appearing.
+          Your car&apos;s Bluetooth connect-to-disconnect measures each drive AND marks your
+          arrival — the disconnect (you parked and got out) is when the walk-in begins, more
+          accurate than Wi-Fi in the car park. Samsung may stop delivering Bluetooth events to
+          apps it puts to sleep — exclude Runway from battery optimization if this stops working.
         </p>
       </section>
 

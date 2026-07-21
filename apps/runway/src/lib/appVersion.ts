@@ -17,7 +17,7 @@
 // via a Vite define, or the reverse) would remove the duplication, but
 // that's a v1.5 candidate, not this increment's problem to solve (see
 // README.md's v1.5 list).
-export const APP_VERSION = '0.43.1';
+export const APP_VERSION = '0.44.0';
 
 /** android/app/build.gradle's `versionCode` — a plain incrementing integer
  * Android uses to decide "is this build newer", independent of the
@@ -25,4 +25,4 @@ export const APP_VERSION = '0.43.1';
  * number updateCheck.ts's comparisons are actually built on: two strings
  * can't be reliably ordered ("0.42.0" vs "0.9.0" as text), but two
  * versionCodes always can. */
-export const APP_VERSION_CODE = 62;
+export const APP_VERSION_CODE = 63;
