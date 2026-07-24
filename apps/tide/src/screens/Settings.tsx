@@ -96,6 +96,14 @@ export function Settings({ onNavigate }: SettingsProps) {
   const selectedStepSources = parseStepSourcesValue(stepSourcesSetting?.value);
   const [stepSources, setStepSources] = useState<StepSourceJs[] | null>(null);
   const [stepSourcesLoading, setStepSourcesLoading] = useState(false);
+  // Chosen sources that wrote NOTHING today, so don't appear in the
+  // discovered list (review fix, 0.6.1). These still need a row: the filter
+  // is live, Home's movement line has gone quiet because of it, and without
+  // a row there would be nothing selected on screen and no visible reason
+  // why. See the rows this drives, further down.
+  const missingSelectedSources = selectedStepSources.filter(
+    (packageName) => !(stepSources ?? []).some((source) => source.packageName === packageName),
+  );
 
   async function refreshStepSources() {
     setStepSourcesLoading(true);
@@ -262,24 +270,33 @@ export function Settings({ onNavigate }: SettingsProps) {
                   {stepSourcesLoading ? 'Loading.' : 'Refresh'}
                 </TextAction>
               </div>
+              {/* Copy names active energy too (review fix, 0.6.1): the chosen
+                  source filters BOTH native reads (healthSync.ts passes it to
+                  readSteps and readActiveEnergy alike — the same double-count
+                  risk applies to energy). Filtering both is the right call;
+                  saying only "steps" while silently governing energy was not,
+                  per CLAUDE.md's exact-copy rule. */}
               <p className="text-sm text-slate-500">
                 Health Connect may hold steps from more than one source. Counting all of them adds the same
-                walk twice.
+                walk twice. The source chosen here is used for steps and active energy.
               </p>
 
               {stepSources === null && stepSourcesLoading && (
                 <p className="text-sm text-slate-500">Loading today&apos;s sources.</p>
               )}
 
-              {stepSources !== null && stepSources.length === 0 && (
-                <p className="text-sm text-slate-500">No step sources found for today yet.</p>
+              {stepSources !== null && stepSources.length === 0 && missingSelectedSources.length === 0 && (
+                // No "yet" (review fix, 0.6.1): "yet" implies waiting will
+                // help, and the most likely cause is a declined steps
+                // permission, which waiting never fixes. State both honestly.
+                <p className="text-sm text-slate-500">
+                  No step sources found for today. Health Connect returns nothing here if the steps
+                  permission was declined.
+                </p>
               )}
 
-              {stepSources !== null && stepSources.length > 0 && (
+              {stepSources !== null && (stepSources.length > 0 || missingSelectedSources.length > 0) && (
                 <div className="flex flex-col gap-2">
-                  {/* "All sources" — the plain sum of every row below, and
-                      (see the note beneath) exactly what Tide counts by
-                      default (empty selection) until one row is chosen. */}
                   <Button
                     type="button"
                     aria-pressed={selectedStepSources.length === 0}
@@ -306,9 +323,37 @@ export function Settings({ onNavigate }: SettingsProps) {
                       </Button>
                     );
                   })}
+                  {/* A chosen source that wrote nothing today (review fix,
+                      0.6.1). Without this row it would simply VANISH from the
+                      list — leaving nothing highlighted, no hint that a filter
+                      is still active, and a movement line that silently
+                      disappeared from Home. Rendering it selected, with an
+                      honest "nothing today", is what makes the situation
+                      legible and one tap recoverable. */}
+                  {missingSelectedSources.map((packageName) => (
+                    <Button
+                      key={packageName}
+                      type="button"
+                      aria-pressed
+                      variant="primary"
+                      className="flex items-center justify-between px-3 py-2 text-sm"
+                      onClick={() => void selectStepSource(packageName)}
+                    >
+                      <span>{stepSourceLabel(packageName)}</span>
+                      <span>nothing today</span>
+                    </Button>
+                  ))}
+                  {/* Describes the DEFAULT without equating its number to the
+                      sum above (review fix, 0.6.1): the sum is a client-side
+                      addition of per-source aggregates, while the unfiltered
+                      read Tide actually performs is Health Connect's own
+                      cross-source aggregate, which may dedup slightly below
+                      that sum. Claiming they are the same figure would be a
+                      small, avoidable inaccuracy. */}
                   <p className="text-xs text-slate-600">
-                    &quot;All sources&quot; adds every row above together — that combined total is what Tide
-                    counts today unless one source is chosen.
+                    With &quot;All sources&quot; chosen, Tide counts every source Health Connect holds. The
+                    figure beside it adds the rows above together, which can differ slightly from the
+                    combined total Health Connect reports.
                   </p>
                 </div>
               )}

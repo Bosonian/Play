@@ -70,7 +70,21 @@ export const MOVEMENT_STEP_SOURCES_SETTING = 'movementStepSources';
  */
 export function parseStepSourcesValue(value: string | undefined): string[] {
   if (!value) return [];
-  return value.split(',');
+  // Trims, drops empty segments, and de-duplicates (review hardening, 0.6.1).
+  // Not defensiveness for its own sake: an empty segment would become
+  // `DataOrigin("")` in HealthConnectPlugin.dataOriginFilterFrom — a
+  // NON-empty filter that matches no records — and a non-empty filter that
+  // matches nothing reads as zero steps, the one failure mode this whole
+  // feature must never produce. No current writer can emit such a value
+  // (only `''` or exact Health Connect package names, which cannot contain
+  // commas), so this guards a corrupted/hand-edited row rather than a live
+  // bug — cheap insurance against the expensive symptom.
+  const unique = new Set<string>();
+  for (const part of value.split(',')) {
+    const trimmed = part.trim();
+    if (trimmed !== '') unique.add(trimmed);
+  }
+  return [...unique];
 }
 
 /** The pure serialise half — a plain comma-join, but named and exported

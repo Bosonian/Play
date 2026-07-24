@@ -46,6 +46,28 @@ describe('parseStepSourcesValue / serializeStepSourcesValue round trip (issue #2
   it('round-trips the empty selection through serialise then parse', () => {
     expect(parseStepSourcesValue(serializeStepSourcesValue([]))).toEqual([]);
   });
+
+  // Review hardening (0.6.1). These guard the ONE outcome this feature must
+  // never produce: a filter that is non-empty but matches no records, which
+  // Health Connect answers with zero steps. An empty segment would become
+  // DataOrigin("") natively — see parseStepSourcesValue's own comment.
+  it('drops empty segments rather than yielding a filter that matches nothing', () => {
+    expect(parseStepSourcesValue(',')).toEqual([]);
+    expect(parseStepSourcesValue('com.sec.android.app.shealth,')).toEqual(['com.sec.android.app.shealth']);
+  });
+
+  it('trims surrounding whitespace from each package name', () => {
+    expect(parseStepSourcesValue(' com.sec.android.app.shealth , com.google.android.apps.fitness ')).toEqual([
+      'com.sec.android.app.shealth',
+      'com.google.android.apps.fitness',
+    ]);
+  });
+
+  it('de-duplicates repeated package names', () => {
+    expect(parseStepSourcesValue('com.sec.android.app.shealth,com.sec.android.app.shealth')).toEqual([
+      'com.sec.android.app.shealth',
+    ]);
+  });
 });
 
 describe('stepSourceLabel', () => {
