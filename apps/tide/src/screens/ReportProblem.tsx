@@ -107,10 +107,16 @@ export function ReportProblem({ fromScreen, onNavigate }: ReportProblemProps) {
   // otherwise treat picking an unchanged value as a no-op event.
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const reports = useLiveQuery(async () => {
-    const all = await db.fieldReports.orderBy('createdAt').reverse().toArray();
-    return all.slice(0, REPORT_LIST_LIMIT);
-  }, []);
+  // `.limit(...)` on the index BEFORE `.toArray()` (review fix, 0.5.1) —
+  // the ported version loaded every report row into memory then sliced, which
+  // meant pulling every unsynced row's up-to-4 MB base64 screenshot on each
+  // liveQuery fire just to show the newest ten. Impact was small in practice
+  // (reports are rare, synced rows have their bytes cleared), but reading only
+  // the ten rows the list shows is the correct shape.
+  const reports = useLiveQuery(
+    () => db.fieldReports.orderBy('createdAt').reverse().limit(REPORT_LIST_LIMIT).toArray(),
+    [],
+  );
 
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -246,11 +252,24 @@ export function ReportProblem({ fromScreen, onNavigate }: ReportProblemProps) {
           <span className="flex flex-col gap-1">
             <span className="text-slate-100">Attach recent activity log</span>
             <span className="text-sm text-slate-500">
-              The last 50 events are appended to the report. The report repo is public — check the
-              log for anything you would not post publicly.
+              The last 50 events are appended — these include your weigh-in and meal entries.
             </span>
           </span>
         </label>
+
+        {/* One screen-level publicity note (review fix, 0.5.1) rather than a
+            claim on the log checkbox alone: the description AND the screenshot
+            travel to the same repo, so warning only about the log understated
+            the reach — a screenshot of Home shows the weight trend. Phrased
+            conditionally ("if that repository is public") because it is NOT a
+            fact: the repo is configurable in Settings and a private repo is
+            offered there precisely to keep all of this between Deepak and the
+            reviewer. CLAUDE.md's exact-copy rule — the previous "the report
+            repo is public" was simply false once a private repo was set. */}
+        <p className="text-sm text-slate-500">
+          Reports file to the repository set in Settings. If that repository is public, everything
+          here — your description, any screenshot, and the attached log — is publicly visible.
+        </p>
 
         <Button onClick={() => void saveReport()} disabled={description.trim() === ''} className="w-full">
           Save report

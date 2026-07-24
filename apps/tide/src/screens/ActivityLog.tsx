@@ -1,5 +1,4 @@
 import { useLiveQuery } from 'dexie-react-hooks';
-import { format } from 'date-fns';
 import type { TideEvent } from '../db/types';
 import type { Screen } from '../App';
 import { ScreenHeader } from '../ui/ScreenHeader';
@@ -24,13 +23,36 @@ import { recentEvents } from '../lib/eventLog';
  * not scrolling the whole history. Same value as Runway's own VIEW_LIMIT. */
 const VIEW_LIMIT = 200;
 
-/** "14 Jul 2026" day-boundary headers between rows of the reverse-
- * chronological list. */
+/** Day-boundary key for grouping the reverse-chronological list, in the
+ * device's LOCAL calendar day (review fix, 0.5.1). The naive `at.slice(0,10)`
+ * this replaced took the UTC date prefix while every event's TIME is rendered
+ * local (see the row markup below) — so an event at 00:30 local in a UTC+2
+ * summer (stored `...T22:30:00Z`, UTC date one day earlier) landed under the
+ * PREVIOUS day's heading, exactly the local-midnight-to-02:00 window a "what
+ * happened last night" trace most needs to read correctly. Hand-formatted
+ * from local `Date` getters, matching eventLog.ts's formatEventLine (which is
+ * also local) so the same event never carries two different dates between
+ * this viewer and a report's attached log. */
 function dayKey(event: TideEvent): string {
-  return event.at.slice(0, 10); // ISO date prefix — cheap, exact, and this
-  // file never needs to distinguish two events that share a UTC-adjacent
-  // instant but different local calendar days, so the ISO-string prefix
-  // (not a Date-object local-calendar comparison) is precise enough here.
+  const d = new Date(event.at);
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${mo}-${day}`;
+}
+
+/** "09:41:03" — local wall-clock time for one event row. Hand-formatted from
+ * plain `Date` getters rather than date-fns, matching eventLog.ts's and
+ * healthSync.ts's own stated choice to avoid pulling date-fns in for a
+ * handful of getters (review fix, 0.5.1 — the ported version imported
+ * date-fns here, the only date-fns use in Tide's bundle, contradicting those
+ * two files' comments). */
+function formatEventTime(iso: string): string {
+  const d = new Date(iso);
+  const h = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  const s = String(d.getSeconds()).padStart(2, '0');
+  return `${h}:${mi}:${s}`;
 }
 
 /** Same inline day-heading format History.tsx/Settings.tsx already use
@@ -86,7 +108,7 @@ export function ActivityLog({ onNavigate }: ActivityLogProps) {
               {group.events.map((event) => (
                 <p key={event.id} className="font-mono text-xs text-slate-400">
                   <span className="text-slate-500">
-                    {format(new Date(event.at), 'HH:mm:ss')} [{event.category}]
+                    {formatEventTime(event.at)} [{event.category}]
                   </span>{' '}
                   {event.message}
                 </p>

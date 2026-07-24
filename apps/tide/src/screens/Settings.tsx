@@ -247,7 +247,7 @@ export function Settings({ onNavigate }: SettingsProps) {
         />
         <div className="flex gap-2">
           <Button onClick={() => void saveFeedbackToken()} className="flex-1">
-            Save
+            Save token
           </Button>
           <Button
             variant="secondary"
@@ -269,7 +269,7 @@ export function Settings({ onNavigate }: SettingsProps) {
           hint="Reports filed to a public repository are publicly visible — including screenshots. A private repository keeps them between you and the reviewer."
         />
         <Button onClick={() => void saveFeedbackRepo()} className="w-full">
-          Save
+          Save repo
         </Button>
 
         <p className="text-sm text-slate-500">
