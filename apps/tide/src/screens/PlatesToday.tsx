@@ -7,7 +7,7 @@ import { ScreenHeader } from '../ui/ScreenHeader';
 import { TextAction } from '../ui/TextAction';
 import { compositionChips, formatPlateKcal } from '../lib/plateEstimate';
 import { localDayBoundsIso } from '../lib/healthSync';
-import { DELETE_CONFIRM_WINDOW_MS, isArmStillValid } from '../lib/deleteArm';
+import { DELETE_CONFIRM_WINDOW_MS, isArmStillValid, isConfirmTooSoon } from '../lib/deleteArm';
 import { logEvent } from '../lib/eventLog';
 import { hapticImpact } from '../native/haptics';
 
@@ -96,6 +96,9 @@ export function PlatesToday({ onNavigate }: PlatesTodayProps) {
       void performDelete(id);
       return;
     }
+    // Ignored without re-arming — see History.tsx's identical handler for
+    // why re-arming on a stutter-tap would be the wrong recovery.
+    if (isConfirmTooSoon(armedAtMs, now)) return;
     setArmedAtMs(now);
     clearArmTimeout();
     armTimeoutRef.current = setTimeout(() => setArmedAtMs(null), DELETE_CONFIRM_WINDOW_MS);

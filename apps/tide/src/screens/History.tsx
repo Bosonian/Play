@@ -4,7 +4,7 @@ import { db } from '../db/db';
 import type { Screen } from '../App';
 import { ScreenHeader } from '../ui/ScreenHeader';
 import { TextAction } from '../ui/TextAction';
-import { DELETE_CONFIRM_WINDOW_MS, isArmStillValid } from '../lib/deleteArm';
+import { DELETE_CONFIRM_WINDOW_MS, isArmStillValid, isConfirmTooSoon } from '../lib/deleteArm';
 import { logEvent } from '../lib/eventLog';
 import { hapticImpact } from '../native/haptics';
 
@@ -76,6 +76,13 @@ export function History({ onNavigate }: HistoryProps) {
       void performDelete(id);
       return;
     }
+    // Too soon after arming to be a second DECISION (review fix, 0.7.1) —
+    // this is the back half of one accidental double-tap. Ignore it
+    // entirely: returning WITHOUT re-arming is the point, since re-arming
+    // would restart the clock and turn a stutter-tap into "the delete just
+    // needs one more tap" rather than "that tap didn't count". The row
+    // stays armed on its original timer, so a genuine confirm still works.
+    if (isConfirmTooSoon(armedAtMs, now)) return;
     setArmedAtMs(now);
     clearArmTimeout();
     armTimeoutRef.current = setTimeout(() => setArmedAtMs(null), DELETE_CONFIRM_WINDOW_MS);

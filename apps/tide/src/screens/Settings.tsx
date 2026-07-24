@@ -269,14 +269,16 @@ export function Settings({ onNavigate }: SettingsProps) {
     try {
       await exportBackupFile(JSON.stringify(backup, null, 2), backupFilename(now));
     } catch (err) {
-      // native/backupFile.ts's own header comment names the reason this
-      // path is UNVERIFIED on native Android — a thrown error here is the
-      // most likely visible symptom of that. Nothing distinguishes "the
-      // browser download silently failed" from "the user dismissed
-      // something" the way Runway's own cancel-message sniff does for its
-      // native share sheet (this file has no share sheet to dismiss), so
-      // every failure here is treated as a real one worth a visible line.
-      setBackupError('Could not export the backup.');
+      // Backing out of the Android share sheet REJECTS — @capacitor/share
+      // throws "Share canceled" — so without this check a deliberate
+      // decision to cancel would show a red failure line (review fix,
+      // 0.7.1: the port dropped Runway's own cancel sniff back when this
+      // export was a Blob download with no sheet to dismiss; it has one
+      // now). A cancel is not an error and gets no message — but it also
+      // must not advance `lastBackupAt` below, since no backup was saved,
+      // which the early return preserves.
+      const message = err instanceof Error ? err.message : '';
+      if (!/cancel/i.test(message)) setBackupError('Could not export the backup.');
       return;
     }
     // Written only AFTER exportBackupFile resolves — a download that never
@@ -321,13 +323,42 @@ export function Settings({ onNavigate }: SettingsProps) {
     // its identical "this cannot be undone" restore moment — a custom
     // dialog component isn't worth building for a single confirmation step
     // this rare.
-    const exportedAtLabel = formatDateTime(result.backup.exportedAt);
+    //
+    // WITH THE YEAR, and with row counts (review fix, 0.7.1). `formatDateTime`
+    // is deliberately year-less for the two "happened today or very
+    // recently" call sites above, but a backup file can be arbitrarily old —
+    // "24 Jul, 14:32" is ambiguous by a year for exactly the stale file this
+    // confirm exists to catch. The counts matter more still: they are what
+    // makes an accidental restore of a structurally-valid-but-empty file
+    // visible BEFORE it replaces everything, rather than after.
+    const exportedAt = new Date(result.backup.exportedAt);
+    const exportedAtLabel = exportedAt.toLocaleString(undefined, {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const tables = result.backup.tables;
+    const contents = `${tables.weighIns.length} weigh-ins, ${tables.meals.length} check-ins`;
     const confirmed = window.confirm(
-      `Replace everything in Tide with this backup from ${exportedAtLabel}? Current data on this phone is erased.`,
+      `Replace everything in Tide with this backup from ${exportedAtLabel}? It contains ${contents}. Current data on this phone is erased.`,
     );
     if (!confirmed) return;
 
-    await restoreBackup(result.backup);
+    // A failed restore must not be silent (review fix, 0.7.1). restoreBackup
+    // runs every clear and every write inside ONE Dexie transaction, so a
+    // rejection means the transaction aborted and nothing changed — which is
+    // precisely the reassurance to give, and precisely what an unhandled
+    // rejection failed to give at the one moment (recovering a lost phone)
+    // it matters most.
+    try {
+      await restoreBackup(result.backup);
+    } catch {
+      setBackupError('Could not restore that backup. Nothing on this phone was changed.');
+      return;
+    }
     setBackupRestored(true);
   }
 
@@ -513,7 +544,7 @@ export function Settings({ onNavigate }: SettingsProps) {
         {backupRestored && <p className="text-sm text-emerald-300">Backup restored.</p>}
 
         <p className="text-sm text-slate-500">
-          Everything Tide has recorded — weigh-ins, plates, movement, settings, and the activity log —
+          Weigh-ins, plates, movement, settings, and the activity log —
           as one file. The GitHub token above is not included; it stays on this device.
         </p>
       </section>

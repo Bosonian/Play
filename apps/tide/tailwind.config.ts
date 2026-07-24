@@ -10,7 +10,9 @@ import type { Config } from 'tailwindcss';
 // Contrast floor (increment 6 polish pass): Tailwind's default `slate-600`
 // measures ≈2.7:1 against this config's dark background — below WCAG AA's
 // 4.5:1 floor for text, and below even the 3.0:1 floor for large text.
-// `slate-500` (≈4.2:1) is the floor actually used for secondary/placeholder
+// `slate-500` (≈4.2:1 — still marginally under AA's 4.5:1 for normal text,
+// so treat it as the practical minimum for SECONDARY text, never as
+// AA-compliant) is the dimmest shade used for secondary/placeholder
 // text throughout src/ (TextField.tsx's own comment repeats this locally,
 // closer to its one call site). Do not reintroduce `text-slate-600` or
 // `placeholder:text-slate-600` for anything meant to be read — this app has
