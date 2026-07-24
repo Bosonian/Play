@@ -29,6 +29,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.view.View;
 import android.widget.RemoteViews;
+import java.time.LocalDate;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -198,8 +199,36 @@ public class TideWidgetProvider extends AppWidgetProvider {
             views.setTextColor(R.id.widget_trend_line, COLOR_TREND_LINE);
         }
 
-        applyShapeLine(views, R.id.widget_shape_line1, shapeLine1, shapeMet);
-        applyShapeLine(views, R.id.widget_shape_line2, shapeLine2, shapeMet);
+        // DAY-ROLLOVER GUARD (review fix, 0.9.1) — porting the lesson
+        // apps/runway learned in the field (PruefungWidgetProvider's own
+        // `applyHeadline` compares a snapshot day-stamp to the current local
+        // midnight for exactly this reason).
+        //
+        // The snapshot is only rebuilt while the app RUNS, but the shape
+        // lines are today-scoped facts. Without this, at 07:00 — before Tide
+        // has been opened — the widget would present yesterday's counts as
+        // today's, and if yesterday's shape was met it would present them in
+        // emerald. The 6h updatePeriodMillis makes that worse rather than
+        // better: each system-initiated onUpdate faithfully re-renders the
+        // same stale snapshot. A stale trend is merely old; a stale
+        // "3 of 3 check-ins." in emerald is a quiet lie, and TIDE_PLAN.md
+        // §2's honesty rule doesn't have an exception for the home screen.
+        //
+        // Hiding (rather than showing a "yesterday" caption) is the honest
+        // minimum: the widget genuinely does not know today's counts until
+        // the app next runs, and inventing a label for that state would be
+        // more words for no more information. Opening Tide refills it.
+        //
+        // LocalDate.now() is the device-local calendar day, matching the
+        // format and the zone healthSync.ts's `localDateKey` produces on the
+        // JS side. java.time is available unconditionally here: this app's
+        // minSdk is 26 (see android/variables.gradle), above the API 26
+        // floor java.time landed in.
+        String shapeDay = root.getString("shapeDay");
+        boolean shapeIsToday = shapeDay.equals(LocalDate.now().toString());
+
+        applyShapeLine(views, R.id.widget_shape_line1, shapeIsToday ? shapeLine1 : "", shapeMet);
+        applyShapeLine(views, R.id.widget_shape_line2, shapeIsToday ? shapeLine2 : "", shapeMet);
     }
 
     /**

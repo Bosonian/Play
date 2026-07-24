@@ -3,7 +3,11 @@
      (TideWidgetProvider.java), referenced from the <receiver> meta-data in
      AndroidManifest.xml.
 
-     minWidth/minHeight: the brief calls for "a 2x1-ish cell". The standard
+     minWidth/minHeight: 180x110dp is EXACTLY a 3x2 cell by the (70n-30)
+     formula below, not the "2x1-ish" the original brief asked for — four
+     stacked lines genuinely need two rows, so the larger footprint is
+     deliberate. Naming it plainly here (review fix, 0.9.1) rather than
+     leaving a comment that says 2x1 above a value that is 3x2. The standard
      cell-size formula ((70 × n) − 30 dp) gives 110dp × 40dp for a strict
      2×1 — but this widget can render up to four stacked lines (the bold
      trend value, the trend sentence, and up to two daily-shape lines), and

@@ -123,3 +123,30 @@ describe('buildTideWidgetSnapshot — updatedAt', () => {
     expect(snapshot.updatedAt).toBe(NOW.toISOString());
   });
 });
+
+describe('buildTideWidgetSnapshot — shapeDay', () => {
+  // The native side reads this one (unlike updatedAt) to hide the shape
+  // lines once the day has rolled over — see the field's own doc comment
+  // and TideWidgetProvider's day-rollover guard.
+  it('stamps the device-local calendar day, not the UTC date', () => {
+    // 00:30 local in a UTC+2 zone is still the PREVIOUS day in UTC — the
+    // exact drift a UTC date prefix would introduce for part of every
+    // Stuttgart evening/night.
+    const localMidnightish = new Date(2026, 6, 24, 0, 30);
+    const snapshot = buildTideWidgetSnapshot(localMidnightish, [], null, { checkIns: 0, steps: null });
+    expect(snapshot.shapeDay).toBe('2026-07-24');
+  });
+
+  it('agrees with the day the shape lines describe', () => {
+    const snapshot = buildTideWidgetSnapshot(
+      NOW,
+      [],
+      { checkIns: 3, steps: 6000 },
+      { checkIns: 3, steps: 7000 },
+    );
+    expect(snapshot.shapeMet).toBe('true');
+    expect(snapshot.shapeDay).toBe(
+      `${NOW.getFullYear()}-${String(NOW.getMonth() + 1).padStart(2, '0')}-${String(NOW.getDate()).padStart(2, '0')}`,
+    );
+  });
+});

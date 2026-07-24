@@ -51,6 +51,24 @@ export interface TideWidgetSnapshot {
    * in-play components), for the native side's emerald-vs-slate tint. Only
    * meaningful when at least one of shapeLine1/shapeLine2 is non-empty. */
   shapeMet: string;
+  /**
+   * The device-local calendar day (`YYYY-MM-DD`, `localDateKey`) the shape
+   * lines describe — READ BY THE NATIVE SIDE, unlike `updatedAt` below.
+   *
+   * Review fix (0.9.1), porting a guard Runway already needed in the field
+   * (PruefungWidgetProvider.applyHeadline): the snapshot is only rebuilt
+   * while the app runs, but the shape lines are TODAY-scoped facts. Without
+   * this, at 07:00 — before Tide has been opened — the widget would show
+   * yesterday's counts as today's, and if yesterday's shape was met, it
+   * would show them in emerald. A stale trend is merely old; a stale
+   * "3 of 3 check-ins." in emerald is a quiet lie of exactly the kind
+   * TIDE_PLAN.md §2's honesty rule forbids. The provider compares this to
+   * its own current local date and hides both shape lines when they differ.
+   *
+   * The trend fields deliberately have no such guard: a smoothed weight and
+   * its slope are timeless facts that do not become wrong at midnight.
+   */
+  shapeDay: string;
   /** ISO 8601 datetime this snapshot was built — debugging only (visible
    * via `adb shell cat` of the SharedPreferences file); no widget view
    * reads it. */
@@ -121,6 +139,12 @@ export function buildTideWidgetSnapshot(
   return {
     ...buildTrendFields(weighIns),
     ...buildShapeFields(dailyShapeTarget, dailyShapeActuals),
+    // Device-local, not `now.toISOString().slice(0, 10)` — see
+    // `shapeDay`'s own doc comment for what the native side does with it,
+    // and healthSync.ts's `localDateKey` for why a UTC date prefix would be
+    // a day off for part of every Stuttgart evening. Passing `now` through
+    // keeps this function pure and testable at a fixed instant.
+    shapeDay: localDateKey(now),
     updatedAt: now.toISOString(),
   };
 }

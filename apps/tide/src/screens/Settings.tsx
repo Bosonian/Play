@@ -471,6 +471,12 @@ export function Settings({ onNavigate }: SettingsProps) {
       setBackupError('Could not restore that backup. Nothing on this phone was changed.');
       return;
     }
+    // A restore replaces EVERY table — weigh-ins, meals, movement, and the
+    // daily-shape target — so it is the single largest change the widget can
+    // ever miss (review fix, 0.9.1; Runway has the same gap, which is why
+    // this wasn't caught by porting). Without it the widget keeps showing the
+    // pre-restore trend until the next app start.
+    void refreshWidgets();
     setBackupRestored(true);
   }
 
