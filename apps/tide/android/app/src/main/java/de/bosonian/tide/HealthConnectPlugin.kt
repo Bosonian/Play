@@ -53,6 +53,7 @@ import androidx.health.connect.client.records.ActiveCaloriesBurnedRecord
 import androidx.health.connect.client.records.BodyFatRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.WeightRecord
+import androidx.health.connect.client.request.AggregateGroupByPeriodRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import com.getcapacitor.JSArray
@@ -63,6 +64,7 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import java.time.Instant
 import java.time.LocalDateTime
+import java.time.Period
 import java.time.ZoneId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -301,33 +303,29 @@ class HealthConnectPlugin : Plugin() {
     }
 
     /**
-     * Resolves `{ days: [{date, steps}] }` — per-CALENDAR-DAY totals, not
-     * raw StepsRecord rows. Aggregation is done HERE, in this plugin, over
-     * raw per-record reads, rather than via HealthConnectClient's own
-     * `aggregateGroupByPeriod` API: the raw-read-then-bucket approach uses
-     * only the same `readRecords`/`ReadRecordsRequest` shape `readWeight`/
-     * `readBodyFat` already use above, which this increment can verify by
-     * reading against those two working examples; `aggregateGroupByPeriod`
-     * is a separate, more elaborate API surface (its own request/response
-     * classes) this code has no comparable reference point for, in an
-     * environment that can't compile either approach to find out which one
-     * is right. Trades a slightly larger data pull (every raw record, not a
-     * pre-aggregated sum) for a shape this increment is actually confident
-     * is correct — worth revisiting once real-device testing confirms the
-     * simpler approach works, if the raw-record volume ever becomes a real
-     * concern (a watch's step data is usually chunked into a manageable
-     * number of records per day, not one record per step).
+     * Resolves `{ days: [{date, steps}] }` — per-CALENDAR-DAY totals in the
+     * device's local time zone.
+     *
+     * FIELD FIX (0.5.2 — issue #18, "steps from watch are shown tripled"):
+     * this used to `readRecords` every raw StepsRecord and SUM them per day.
+     * On a real device that triple-counts. Samsung Health exposes the same
+     * steps from several data origins at once — the Galaxy Watch, the phone's
+     * own pedometer, and Samsung Health's own aggregate — and Health Connect
+     * stores each origin's records separately, so summing all of them counts
+     * every step two or three times over. This is exactly the risk the
+     * 0.3.0 version of this comment flagged ("worth revisiting once
+     * real-device testing confirms the simpler approach works"); it did not.
+     *
+     * The fix is Health Connect's aggregation API — `aggregateGroupByPeriod`
+     * with `StepsRecord.COUNT_TOTAL` — which de-duplicates overlapping
+     * records across data origins using Health Connect's own source-priority
+     * rules and returns one correct total per day. That is the exact problem
+     * this API exists to solve. As a bonus it splits a midnight-spanning
+     * record at the day boundary (the old raw approach attributed the whole
+     * record to its start day), so the per-day numbers are more correct too.
      */
     @PluginMethod
     fun readSteps(call: PluginCall) {
-        // getLong is @Nullable even WITH a default (Capacitor returns the
-        // default only when the key is absent AND the present value is a Long;
-        // a JS number that deserialized to something other than Long — or a
-        // missing key — still yields a Java null through the boxed Long return
-        // type, which Kotlin sees as Long?). Instant.ofEpochMilli wants a
-        // primitive long, so coalesce to 0L. Java never caught this (platform
-        // types); Kotlin's null-checking is exactly why it surfaced at compile
-        // time here rather than as a runtime NPE on-device.
         val sinceMs = call.getLong("sinceMs", 0L) ?: 0L
         pluginScope.launch {
             val result = JSObject()
@@ -335,28 +333,27 @@ class HealthConnectPlugin : Plugin() {
             try {
                 val client = healthConnectClientOrNull()
                 if (client != null) {
-                    val response = client.readRecords(
-                        ReadRecordsRequest(StepsRecord::class, timeRangeFilter = TimeRangeFilter.after(Instant.ofEpochMilli(sinceMs)))
-                    )
-                    val zone = ZoneId.systemDefault()
-                    val perDay = LinkedHashMap<String, Long>()
-                    for (record in response.records) {
-                        // Bucketed by the record's START time's local
-                        // calendar day. A record spanning midnight (rare —
-                        // a watch's sync interval is normally much shorter
-                        // than a day) attributes its whole count to the day
-                        // it started on rather than splitting it — an
-                        // accepted simplification for a signal this app
-                        // only ever shows as "steps today", never audits to
-                        // the exact step.
-                        val date = LocalDateTime.ofInstant(record.startTime, zone).toLocalDate().toString()
-                        perDay[date] = (perDay[date] ?: 0L) + record.count
-                    }
-                    for ((date, steps) in perDay) {
-                        val entry = JSObject()
-                        entry.put("date", date)
-                        entry.put("steps", steps)
-                        days.put(entry)
+                    val (startLocal, endLocal) = localAggregateRange(sinceMs)
+                    if (startLocal.isBefore(endLocal)) {
+                        val response = client.aggregateGroupByPeriod(
+                            AggregateGroupByPeriodRequest(
+                                metrics = setOf(StepsRecord.COUNT_TOTAL),
+                                timeRangeFilter = TimeRangeFilter.between(startLocal, endLocal),
+                                timeRangeSlicer = Period.ofDays(1),
+                            )
+                        )
+                        for (group in response) {
+                            // null when a day's slice had no steps from any
+                            // source — skipped, not written as a 0 row: a
+                            // missing day is "no reading", not "zero steps",
+                            // and healthSync.ts / formatMovementLine treat the
+                            // two differently (null reads as "not yet").
+                            val steps = group.result[StepsRecord.COUNT_TOTAL] ?: continue
+                            val entry = JSObject()
+                            entry.put("date", group.startTime.toLocalDate().toString())
+                            entry.put("steps", steps)
+                            days.put(entry)
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -367,19 +364,12 @@ class HealthConnectPlugin : Plugin() {
         }
     }
 
-    /** Same per-day-bucketing approach as readSteps above (see that
-     * method's own comment on the aggregation-shape tradeoff), for
-     * ActiveCaloriesBurnedRecord. */
+    /** Same aggregation fix and same per-day, de-duplicated-across-sources
+     * shape as readSteps above (see its doc comment and issue #18), for
+     * ActiveCaloriesBurnedRecord via `ACTIVE_CALORIES_TOTAL` — active energy
+     * was inflated the same way raw steps were, and for the same reason. */
     @PluginMethod
     fun readActiveEnergy(call: PluginCall) {
-        // getLong is @Nullable even WITH a default (Capacitor returns the
-        // default only when the key is absent AND the present value is a Long;
-        // a JS number that deserialized to something other than Long — or a
-        // missing key — still yields a Java null through the boxed Long return
-        // type, which Kotlin sees as Long?). Instant.ofEpochMilli wants a
-        // primitive long, so coalesce to 0L. Java never caught this (platform
-        // types); Kotlin's null-checking is exactly why it surfaced at compile
-        // time here rather than as a runtime NPE on-device.
         val sinceMs = call.getLong("sinceMs", 0L) ?: 0L
         pluginScope.launch {
             val result = JSObject()
@@ -387,23 +377,22 @@ class HealthConnectPlugin : Plugin() {
             try {
                 val client = healthConnectClientOrNull()
                 if (client != null) {
-                    val response = client.readRecords(
-                        ReadRecordsRequest(
-                            ActiveCaloriesBurnedRecord::class,
-                            timeRangeFilter = TimeRangeFilter.after(Instant.ofEpochMilli(sinceMs)),
+                    val (startLocal, endLocal) = localAggregateRange(sinceMs)
+                    if (startLocal.isBefore(endLocal)) {
+                        val response = client.aggregateGroupByPeriod(
+                            AggregateGroupByPeriodRequest(
+                                metrics = setOf(ActiveCaloriesBurnedRecord.ACTIVE_CALORIES_TOTAL),
+                                timeRangeFilter = TimeRangeFilter.between(startLocal, endLocal),
+                                timeRangeSlicer = Period.ofDays(1),
+                            )
                         )
-                    )
-                    val zone = ZoneId.systemDefault()
-                    val perDay = LinkedHashMap<String, Double>()
-                    for (record in response.records) {
-                        val date = LocalDateTime.ofInstant(record.startTime, zone).toLocalDate().toString()
-                        perDay[date] = (perDay[date] ?: 0.0) + record.energy.inKilocalories
-                    }
-                    for ((date, kcal) in perDay) {
-                        val entry = JSObject()
-                        entry.put("date", date)
-                        entry.put("activeKcal", kcal)
-                        days.put(entry)
+                        for (group in response) {
+                            val energy = group.result[ActiveCaloriesBurnedRecord.ACTIVE_CALORIES_TOTAL] ?: continue
+                            val entry = JSObject()
+                            entry.put("date", group.startTime.toLocalDate().toString())
+                            entry.put("activeKcal", energy.inKilocalories)
+                            days.put(entry)
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -412,6 +401,34 @@ class HealthConnectPlugin : Plugin() {
             result.put("days", days)
             call.resolve(result)
         }
+    }
+
+    /** How far back movement aggregation looks on a sync whose cursor is
+     * still at epoch — the very first sync right after connecting, when
+     * healthSync.ts passes sinceMs=0. Movement is only ever shown for recent
+     * days ("steps today"), never as deep history, so there is no reason to
+     * slice — and emit a bucket for — every day back to 1970 (a Period slicer
+     * fills the WHOLE range with buckets whether or not data exists in them).
+     * 35 days comfortably covers the 3-day re-read window plus any Samsung
+     * Health sync lag, while capping the slicer at 35 buckets. */
+    private val MOVEMENT_MAX_BACKFILL_DAYS = 35L
+
+    /** The local `[start, end)` range for aggregateGroupByPeriod: `end` is
+     * now, `start` is the caller's `sinceMs` clamped to no earlier than
+     * MOVEMENT_MAX_BACKFILL_DAYS ago (see that constant). LOCAL LocalDateTime,
+     * NOT Instant, is required here: aggregateGroupByPeriod with a `Period`
+     * slicer needs a local-time TimeRangeFilter, because a Period is a
+     * calendar unit (a "day" is a local-midnight-to-local-midnight span, not
+     * a fixed number of hours across DST), so the range it slices has to be
+     * expressed in local calendar time. Passing an Instant-based filter with
+     * a Period slicer is rejected by Health Connect at runtime. */
+    private fun localAggregateRange(sinceMs: Long): Pair<LocalDateTime, LocalDateTime> {
+        val zone = ZoneId.systemDefault()
+        val now = LocalDateTime.now(zone)
+        val floor = now.minusDays(MOVEMENT_MAX_BACKFILL_DAYS)
+        val requested = LocalDateTime.ofInstant(Instant.ofEpochMilli(sinceMs), zone)
+        val start = if (requested.isBefore(floor)) floor else requested
+        return Pair(start, now)
     }
 
     /** `null` when Health Connect's SDK isn't available on this device at
