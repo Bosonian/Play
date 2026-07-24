@@ -63,6 +63,7 @@ import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.Period
 import java.time.ZoneId
@@ -413,22 +414,37 @@ class HealthConnectPlugin : Plugin() {
      * Health sync lag, while capping the slicer at 35 buckets. */
     private val MOVEMENT_MAX_BACKFILL_DAYS = 35L
 
-    /** The local `[start, end)` range for aggregateGroupByPeriod: `end` is
-     * now, `start` is the caller's `sinceMs` clamped to no earlier than
-     * MOVEMENT_MAX_BACKFILL_DAYS ago (see that constant). LOCAL LocalDateTime,
-     * NOT Instant, is required here: aggregateGroupByPeriod with a `Period`
-     * slicer needs a local-time TimeRangeFilter, because a Period is a
-     * calendar unit (a "day" is a local-midnight-to-local-midnight span, not
-     * a fixed number of hours across DST), so the range it slices has to be
-     * expressed in local calendar time. Passing an Instant-based filter with
-     * a Period slicer is rejected by Health Connect at runtime. */
+    /**
+     * The local `[start, end)` range for aggregateGroupByPeriod, both ends
+     * snapped to LOCAL MIDNIGHT so every `Period.ofDays(1)` slice is a true
+     * calendar day.
+     *
+     * FIELD FIX (0.5.3 — issue #19, "steps now shown as zero"): 0.5.2 built
+     * this range from the raw cursor instant (`now − 3 days`, at whatever time
+     * of day the last sync ran). A Period slicer starts its first bucket at
+     * `start` and steps a calendar day at a time — so an unaligned start of,
+     * say, 20:24 made the slice LABELLED "today" (via `startTime.toLocalDate()`
+     * in readSteps) actually span 20:24 today → 20:24 tomorrow, holding only
+     * the handful of steps taken after 20:24. Today's real steps, counted from
+     * 00:00, sat in the PREVIOUS slice (labelled yesterday). Result: "steps
+     * today" read ~0. Snapping `start` to `atStartOfDay()` fixes it; `end` is
+     * the start of TOMORROW so today is always a full, correctly-labelled
+     * bucket regardless of the current time.
+     *
+     * LOCAL LocalDateTime, not Instant: aggregateGroupByPeriod with a `Period`
+     * slicer requires a local-time TimeRangeFilter — a Period is a calendar
+     * unit (a day is local-midnight-to-local-midnight, not fixed hours across
+     * DST), and `atStartOfDay()` resolves each boundary to the correct instant
+     * even on a DST-transition day. `start` is also clamped to no earlier than
+     * MOVEMENT_MAX_BACKFILL_DAYS ago (see that constant).
+     */
     private fun localAggregateRange(sinceMs: Long): Pair<LocalDateTime, LocalDateTime> {
         val zone = ZoneId.systemDefault()
-        val now = LocalDateTime.now(zone)
-        val floor = now.minusDays(MOVEMENT_MAX_BACKFILL_DAYS)
-        val requested = LocalDateTime.ofInstant(Instant.ofEpochMilli(sinceMs), zone)
-        val start = if (requested.isBefore(floor)) floor else requested
-        return Pair(start, now)
+        val today = LocalDate.now(zone)
+        val floorDate = today.minusDays(MOVEMENT_MAX_BACKFILL_DAYS)
+        val requestedDate = Instant.ofEpochMilli(sinceMs).atZone(zone).toLocalDate()
+        val startDate = if (requestedDate.isBefore(floorDate)) floorDate else requestedDate
+        return Pair(startDate.atStartOfDay(), today.plusDays(1).atStartOfDay())
     }
 
     /** `null` when Health Connect's SDK isn't available on this device at
