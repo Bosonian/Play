@@ -1,15 +1,11 @@
 // Adapted from apps/runway/src/ui/ErrorBoundary.tsx (field report #16's
 // "blank screen" lesson: an uncaught render-time throw unmounts the whole
 // React tree with no on-device trail — this boundary turns that into a
-// calm, recoverable message). One deliberate deviation from Runway's
-// version: Runway's componentDidCatch calls `logEvent(...)` into its
-// activity-log table, which doesn't exist in Tide yet (TIDE_PLAN.md's
-// increment roadmap — the event log ports over in increment 2, alongside
-// Capacitor/backup/self-update). Until then this falls back to
-// `console.warn`, so the error is at least visible in a connected devtools
-// session even though nothing is persisted on-device yet. Swap this for a
-// real `logEvent` call the moment increment 2 adds one — see this file's
-// own `onError` prop for the seam that makes that a one-line change.
+// calm, recoverable message). Increment 1 shipped this with `onError`
+// undefined, falling back to `console.warn` because the activity-log table
+// didn't exist yet. Increment 2 fulfills that: App.tsx now passes
+// `onError={(message) => void logEvent('lifecycle', message)}`, so a caught
+// screen error is a real, on-device, persisted line — see eventLog.ts.
 import { Component, type ReactNode } from 'react';
 import { Button } from './Button';
 

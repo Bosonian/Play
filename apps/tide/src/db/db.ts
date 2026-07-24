@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { Meal, Movement, Setting, WeighIn } from './types';
+import type { Meal, Movement, Setting, TideEvent, WeighIn } from './types';
 
 // Dexie's index string only lists fields actually queried by (`id`/`key`
 // are the implicit primary keys). `weighIns` is indexed on `at` because the
@@ -13,6 +13,9 @@ class TideDB extends Dexie {
   meals!: EntityTable<Meal, 'id'>;
   movement!: EntityTable<Movement, 'date'>;
   settings!: EntityTable<Setting, 'key'>;
+  // Activity log (increment 2, v2 below) — a capped, local record of what
+  // the app did, for tracing bugs after the fact. See src/lib/eventLog.ts.
+  events!: EntityTable<TideEvent, 'id'>;
 
   constructor() {
     super('tide');
@@ -35,6 +38,24 @@ class TideDB extends Dexie {
       meals: 'id, at',
       movement: 'date',
       settings: 'key',
+    });
+    // v2 (increment 2 — Capacitor/CI/activity-log/self-update): adds
+    // `events`, a genuinely new table — same "new store needs a version
+    // bump, existing stores don't" rule Runway's own db.ts documents at
+    // each of its version() calls (fieldReports' v4, tasks' v5, events' own
+    // v6 there). Purely additive: every v1 table and row is untouched by
+    // this upgrade, and increment 1 shipped before any real install existed
+    // to migrate, so there's no upgrade risk here beyond the mechanical
+    // "new empty table appears" Dexie already handles automatically.
+    // Indexed on `at` (the log is always read newest-first, capped, and
+    // pruned oldest-first — see eventLog.ts's recentEvents/pruneEventLog),
+    // same index choice as Runway's own `events: 'id, at'`.
+    this.version(2).stores({
+      weighIns: 'id, at',
+      meals: 'id, at',
+      movement: 'date',
+      settings: 'key',
+      events: 'id, at',
     });
   }
 }

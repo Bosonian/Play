@@ -1,13 +1,26 @@
+import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
 import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { TextAction } from '../ui/TextAction';
 import { currentTrend, formatTrendLine, MIN_POINTS } from '../lib/trend';
+import { APP_VERSION, APP_VERSION_CODE } from '../lib/appVersion';
+import { AVAILABLE_UPDATE_SETTING, parseAvailableUpdate } from '../lib/updateCheck';
+import { logEvent } from '../lib/eventLog';
 
 interface HomeProps {
   onNavigate: (screen: Screen) => void;
 }
+
+/** Session-only, module-level (not component state, not persisted) —
+ * mirrors Runway's own `dismissedUpdateVersions` (Home.tsx there): "Not now"
+ * should hide the card for the rest of this session without suppressing it
+ * forever, and a fresh app open is a fair moment to remind again. Keyed by
+ * versionCode (not the string) for the same reason Runway's is: a
+ * versionCode is what actually changes across releases in a way a mutable
+ * Set's membership check should key on. */
+const dismissedUpdateVersions = new Set<number>();
 
 /** The trend headline is the north star (TIDE_PLAN.md §2/§5) — Home exists
  * almost entirely to show it. Everything else on this screen (the "Add
@@ -21,6 +34,40 @@ export function Home({ onNavigate }: HomeProps) {
   // site.
   const weighIns = useLiveQuery(() => db.weighIns.orderBy('at').toArray(), []);
 
+  // Increment 2: same re-guard-at-render reasoning as Runway's own Home.tsx
+  // — checkForUpdate (main.tsx startup, 6h-throttled) is what actually
+  // writes this row; Home only ever reads it, and re-checks the versionCode
+  // HERE rather than trusting the row on its own, because a phone that just
+  // installed the exact build this row was advertising still has the OLD
+  // row sitting in Dexie until the next check overwrites or clears it.
+  const availableUpdateSetting = useLiveQuery(() => db.settings.get(AVAILABLE_UPDATE_SETTING), []);
+  const availableUpdate = parseAvailableUpdate(availableUpdateSetting?.value);
+  // Bumped to force a re-render after mutating the module-level dismissed
+  // set below — React has no way to know that Set mutated outside state
+  // changed, so this is the cheap "please re-run this component" signal.
+  // Same mechanism Runway's own Home.tsx uses for its dismissed-suggestion
+  // sets.
+  const [dismissTick, setDismissTick] = useState(0);
+  void dismissTick;
+  const showUpdateCard =
+    availableUpdate !== null &&
+    availableUpdate.versionCode > APP_VERSION_CODE &&
+    !dismissedUpdateVersions.has(availableUpdate.versionCode);
+
+  function dismissUpdateCard(versionCode: number) {
+    dismissedUpdateVersions.add(versionCode);
+    setDismissTick((tick) => tick + 1);
+  }
+
+  function downloadUpdate(version: string) {
+    // _blank, same as Runway's own downloadUpdate — v1 scope is
+    // download-via-browser only; an in-app APK download + self-install
+    // (REQUEST_INSTALL_PACKAGES) is deliberately deferred, same call Runway
+    // made (see its CHANGELOG.md).
+    window.open('https://github.com/Bosonian/Play/releases/download/tide-latest/tide-latest.apk', '_blank');
+    void logEvent('update', `Update download opened: v${version}.`);
+  }
+
   // `undefined` while useLiveQuery's first read is still pending (Dexie
   // hasn't resolved yet) — distinct from `[]`, an empty table. Rendering
   // nothing in that brief window (rather than flashing the empty state and
@@ -33,6 +80,25 @@ export function Home({ onNavigate }: HomeProps) {
 
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-8 px-4 pb-12 pt-safe-top">
+      {/* Placed FIRST — above the header and everything else — because an
+          available update is meta-app: it's about Tide itself, not about
+          anything Deepak is trying to do today. Same placement reasoning as
+          Runway's own Home.tsx update card. */}
+      {showUpdateCard && availableUpdate && (
+        <div className="flex flex-col gap-3 rounded-xl border border-sky-800/60 bg-sky-950/30 p-4">
+          <div>
+            <p className="font-medium text-slate-100">Update available: v{availableUpdate.version}.</p>
+            <p className="text-sm text-slate-400">You have v{APP_VERSION}.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button onClick={() => downloadUpdate(availableUpdate.version)} className="flex-1">
+              Download
+            </Button>
+            <TextAction onClick={() => dismissUpdateCard(availableUpdate.versionCode)}>Not now</TextAction>
+          </div>
+        </div>
+      )}
+
       <header className="pt-12 text-center">
         <p className="text-sm font-medium uppercase tracking-[0.15em] text-slate-500">Tide</p>
       </header>

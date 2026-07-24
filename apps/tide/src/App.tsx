@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Home } from './screens/Home';
 import { WeighInEntry } from './screens/WeighInEntry';
 import { History } from './screens/History';
 import { Settings } from './screens/Settings';
 import { ErrorBoundary } from './ui/ErrorBoundary';
+import { logEvent } from './lib/eventLog';
 
 // Navigation as plain React state, not a router library — same call Runway
 // made in increment 1, for the same reason: no deep-linkable URL
@@ -29,13 +30,35 @@ export default function App() {
     }
   }
 
+  // Increment 2: mirrors Runway's own App.tsx visibilitychange hook — the
+  // one central "app resumed/backgrounded" signal, as opposed to a
+  // screen-local effect, because it's about the whole app's lifecycle, not
+  // any one screen's concern. Tide has no day-gauge/widget/transit-sync
+  // equivalent to re-trigger here yet (unlike Runway's own handler, which
+  // also re-runs several native refreshes on resume) — just the log line,
+  // for now.
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        void logEvent('lifecycle', 'App resumed.');
+      } else {
+        void logEvent('lifecycle', 'App backgrounded.');
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
   // ErrorBoundary wraps every screen's render, same placement as Runway's
   // (see App.tsx's own comment there for the "blank screen" field-report
   // lesson this exists to fix) — `key={screen.name}` remounts the fade
   // wrapper (and, inside it, gets a fresh ErrorBoundary instance for free)
-  // on every navigation, same mechanism.
+  // on every navigation, same mechanism. `onError` is wired to the real
+  // activity log as of this increment (increment 1 left it as the
+  // `console.warn` fallback — see ErrorBoundary.tsx's own header comment,
+  // "fulfilled" as that comment put it).
   return (
-    <ErrorBoundary onReset={() => setScreen({ name: 'home' })}>
+    <ErrorBoundary onReset={() => setScreen({ name: 'home' })} onError={(message) => void logEvent('lifecycle', message)}>
       <div key={screen.name} className="motion-safe:animate-fade-in">
         {renderScreen()}
       </div>

@@ -1,18 +1,26 @@
-// Single source of truth for the version string shown on Settings — same
-// role as Runway's own appVersion.ts, trimmed to what increment 1 actually
-// needs (no field-report stamping yet; that machinery doesn't exist here
-// until increment 2).
+// Single source of truth for the version string shown on Settings.
 //
-// LOUD NOTE, carried over from Runway's own file: once increment 2 adds an
-// Android build (android/app/build.gradle's versionName/versionCode), this
-// constant and that file become TWO hand-maintained values that must move
-// TOGETHER on every release — see Runway's appVersion.ts for the full
-// reasoning and the "not this increment's problem to solve" call.
-export const APP_VERSION = '0.1.0';
+// LOUD NOTE, carried over from Runway's own file: this constant,
+// `APP_VERSION_CODE` below, and `versionName`/`versionCode` in
+// android/app/build.gradle are now THREE separate, hand-maintained values
+// (two here, two there, but versionName/APP_VERSION are the same string
+// counted once) that must move TOGETHER on every release. Increment 2 adds
+// the self-update checker (src/lib/updateCheck.ts): APP_VERSION_CODE is what
+// it compares a GitHub release's stamped versionCode against, so a forgotten
+// bump here doesn't just mislabel the Settings screen anymore — it means the
+// app can never notice its own next update (or, worse, advertises an
+// "update" that's actually the build already running). Nothing enforces the
+// three moving together today — a build-time injection (reading
+// build.gradle's values into this file via a Vite define, or the reverse)
+// would remove that manual-sync risk, but that's a v1.5 candidate, not this
+// increment's problem to solve (see Runway's own README.md v1.5 list for the
+// identical unsolved item).
+export const APP_VERSION = '0.2.0';
 
-/** Mirrors Runway's APP_VERSION_CODE — a plain incrementing integer,
- * independent of the human-readable string above. Not yet compared against
- * anything (no update-check machinery exists in this increment), but
- * defined now so Settings' version line has both numbers from day one,
- * matching Runway's display shape. */
-export const APP_VERSION_CODE = 1;
+/** android/app/build.gradle's `versionCode` — a plain incrementing integer
+ * Android uses to decide "is this build newer", independent of the
+ * human-readable `versionName`/`APP_VERSION` string above. This is the
+ * number src/lib/updateCheck.ts's comparisons are actually built on: two
+ * strings can't be reliably ordered ("0.10.0" vs "0.9.0" as text), but two
+ * versionCodes always can. */
+export const APP_VERSION_CODE = 2;

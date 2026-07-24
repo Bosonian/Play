@@ -4,6 +4,7 @@ import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { ScreenHeader } from '../ui/ScreenHeader';
 import { TextField } from '../ui/TextField';
+import { logEvent } from '../lib/eventLog';
 
 interface WeighInEntryProps {
   onNavigate: (screen: Screen) => void;
@@ -75,6 +76,10 @@ export function WeighInEntry({ onNavigate }: WeighInEntryProps) {
       bodyFatPct,
       source: 'manual',
     });
+    // toFixed(1), not the raw draft string — the log should read the same
+    // rounded number Home/History's own display shows, not a leftover
+    // dictation artifact from what was typed (e.g. "98.40" or "98,4").
+    void logEvent('weighin', `Weigh-in logged: ${weightKg.toFixed(1)} kg.`);
 
     onNavigate({ name: 'home' });
   }

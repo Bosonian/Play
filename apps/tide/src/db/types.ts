@@ -98,3 +98,38 @@ export interface Setting {
   key: string;
   value: string;
 }
+
+// --- Activity log (increment 2, Dexie v2) ---
+// Ported from apps/runway/src/db/types.ts's own activity-log section — same
+// rule, restated here rather than merely imported: this log answers "what
+// did the app DO", never "what did the user see" — a render, a query
+// resolving, a screen mounting are NOT events. See src/lib/eventLog.ts for
+// the writer/reader.
+
+/** One event's kind — a flat, closed string union (not a free-form string)
+ * so a typo in a call site's category fails to compile rather than silently
+ * fragmenting the log into two spellings of the same thing. Deliberately
+ * small compared to Runway's own EventCategory (ten-plus variants,
+ * accumulated over many increments): Tide has exactly three domains worth
+ * logging as of increment 2 — 'lifecycle' (app started/resumed/backgrounded,
+ * a caught screen error), 'weighin' (a weigh-in saved), and 'update' (the
+ * self-update checker, TIDE_PLAN.md increment 2). More join this union as
+ * later increments (plate check-ins, movement, Health Connect) add their own
+ * real transitions worth tracing — grow it then, not preemptively now. */
+export type EventCategory = 'lifecycle' | 'weighin' | 'update';
+
+/**
+ * One row of the activity log. Deliberately flat — `category` plus one
+ * exact sentence, no free-form data blob — same reasoning as Runway's own
+ * RunwayEvent: enough to trace a bug, and a shape that can never
+ * accidentally serialize a whole WeighIn/Meal/Movement row into a log
+ * nobody meant to keep a second copy of.
+ */
+export interface TideEvent {
+  id: string;
+  /** ISO 8601 datetime — this file's usual timestamp shape (see the header
+   * comment at the top of this file). */
+  at: string;
+  category: EventCategory;
+  message: string;
+}
