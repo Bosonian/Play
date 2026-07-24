@@ -1,5 +1,21 @@
 ext {
-    minSdkVersion = 23
+    // Health Connect bridge increment (0.3.0): bumped from 23 -> 26.
+    // androidx.health.connect:connect-client declares its OWN minSdk floor
+    // in its packaged manifest (Health Connect's general documented
+    // requirement is Android 9/API 28 for the built-in path, Android 8.0/
+    // API 26 via the standalone Health Connect app) — a manifest merge
+    // against Tide's OWN manifest fails outright if Tide's minSdk is lower
+    // than the library's. 26 is the conservative choice for that floor,
+    // matching Health Connect's oldest supported OS version; UNVERIFIED
+    // against the exact number connect-client 1.1.0's own manifest
+    // declares (this environment can't run a Gradle manifest merge to
+    // confirm it precisely — see this increment's report). Real
+    // consequence, not just a number: this drops support for Android 7.x
+    // devices below API 26. Acceptable here — Deepak's only device (a
+    // Galaxy S25 Ultra) runs a current Android version far above this
+    // floor — but a real reduction in what this app COULD run on, worth
+    // naming plainly rather than treating as a free change.
+    minSdkVersion = 26
     compileSdkVersion = 35
     targetSdkVersion = 35
     androidxActivityVersion = '1.9.2'

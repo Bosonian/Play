@@ -1,4 +1,13 @@
 apply plugin: 'com.android.application'
+// Health Connect bridge increment (0.3.0): enables compiling
+// HealthConnectPlugin.kt alongside every other (Java) source file in this
+// module — see android/build.gradle's own comment on the classpath this
+// plugin ID resolves against, and HealthConnectPlugin.kt's header comment
+// for why this app needed Kotlin at all. Mixed Java+Kotlin in one source set
+// (both under src/main/java here — no separate src/main/kotlin directory
+// was created) is standard, supported kotlin-android behaviour, not a
+// workaround.
+apply plugin: 'org.jetbrains.kotlin.android'
 
 android {
     namespace "de.bosonian.tide"
@@ -17,8 +26,8 @@ android {
         // running. A build-time injection would remove the duplication; see
         // appVersion.ts and README.md's v1.5 list (same unsolved problem Runway
         // carries too).
-        versionCode 2
-        versionName "0.2.0"
+        versionCode 3
+        versionName "0.3.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -51,6 +60,23 @@ android {
             signingConfig signingConfigs.release
         }
     }
+    // Health Connect bridge increment (0.3.0): Kotlin's own bytecode target
+    // has to match Java's (capacitor.build.gradle's generated
+    // sourceCompatibility/targetCompatibility, JavaVersion.VERSION_21 — see
+    // that file, "DO NOT EDIT", applied further down via
+    // `apply from: 'capacitor.build.gradle'`) or javac/kotlinc disagree on
+    // what bytecode version to emit and the build fails with an
+    // "Inconsistent JVM-target compatibility" error. `kotlinOptions` is the
+    // older, still-functional Kotlin Gradle DSL for this (the newer
+    // `kotlin { jvmToolchain(21) }` form is what 2.0.x's own docs lead
+    // with) — kept to this simpler form since a toolchain wasn't otherwise
+    // needed anywhere else in this build. UNVERIFIED: this file cannot be
+    // built in this environment (no JDK/Android SDK) — this is the single
+    // most likely line to need adjusting if CI's Gradle build fails on a
+    // JVM-target mismatch.
+    kotlinOptions {
+        jvmTarget = "21"
+    }
 }
 
 repositories {
@@ -69,6 +95,27 @@ dependencies {
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
+
+    // Health Connect bridge increment (0.3.0). 1.1.0: the connect-client
+    // library's first STABLE release (promoted from release-candidate in
+    // October 2025) — chosen over the newer 1.2.0-alpha line specifically
+    // because this code has no way to be built or run in this environment
+    // (see HealthConnectPlugin.kt's own header comment on that), so pinning
+    // to the stable artifact rather than an alpha is the more conservative,
+    // more honest choice when the actual API surface can't be verified by
+    // compiling against it here. Re-check against Maven Central for a newer
+    // stable release if this build is revisited long after 2026.
+    implementation "androidx.health.connect:connect-client:1.1.0"
+    // kotlinx-coroutines-core only (no -android artifact): every
+    // HealthConnectPlugin.kt coroutine runs on Dispatchers.IO, and
+    // PluginCall.resolve()/reject() are safe to call from any thread (they
+    // post to the WebView's own message queue internally — see
+    // node_modules/@capacitor/android's MessageHandler.sendResponseMessage,
+    // `webView.post(...)`) — so there is no need for Dispatchers.Main at
+    // all, and therefore no need for -android's ServiceLoader-registered
+    // Main dispatcher provider. Pulling in -android for a dispatcher this
+    // plugin never uses would be an unused dependency, not a safety margin.
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1"
 }
 
 apply from: 'capacitor.build.gradle'

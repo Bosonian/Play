@@ -52,6 +52,71 @@ a mistake — see "Signing" below), and Tide's launcher icon is still
 Capacitor's generic stock template, not yet a Tide-specific motif (see
 "Icon and splash" below).
 
+## Increment 3 scope
+
+The Health Connect bridge — the passive-measurement unlock (TIDE_PLAN.md
+§3): weight/body-fat from the Renpho scale, steps/active energy from the
+Galaxy Watch, both via Samsung Health syncing into Android Health Connect,
+read into Tide automatically once connected. **This is the highest-
+UNVERIFIED increment yet** — see CHANGELOG.md's 0.3.0 entry's opening
+paragraph and "Health Connect setup" below.
+
+- `HealthConnectPlugin.kt` (new) — this app's first custom native plugin,
+  and its first Kotlin file (Health Connect's suspend-function API made
+  Kotlin the honest choice over Java; see the file's own header comment).
+- `src/native/healthConnect.ts` / `src/lib/healthSync.ts` — the TS wrapper
+  and Dexie-touching sync orchestrator.
+- Settings' "Health Connect" section, Home's body-fat trend line and
+  "Steps today" line.
+
+See CHANGELOG.md's 0.3.0 entry for the full detail, including the exact
+Gradle/manifest changes this needed and the real, load-bearing assumption
+`healthSync.ts` makes about how Samsung Health timestamps a scale's
+weight and body-fat readings.
+
+## Health Connect setup
+
+Health Connect only ever appears if something has been connected to it. On
+the S25 Ultra, in this order:
+
+1. **Renpho scale → Samsung Health**: pair the scale to Samsung Health once
+   (Renpho's own app, or Samsung Health's device-pairing flow — whichever
+   the scale supports; not something this app controls).
+2. **Samsung Health → Health Connect**: in Samsung Health's own settings,
+   there is a "Health Connect" or "Connected services" entry — turn on
+   syncing for weight, body composition (body fat), steps, and active
+   energy. This is a Samsung Health setting, not a Tide one; Tide has no
+   way to trigger it from inside the app.
+3. **Galaxy Watch → Samsung Health**: already the default pairing path for
+   a Galaxy Watch; steps and active energy flow through the same Samsung
+   Health → Health Connect sync as the scale once step 2 is done.
+4. **Tide → Health Connect**: open Tide, Settings → "Connect health data".
+   Grants Tide read-only access to whatever Samsung Health has already
+   synced into Health Connect — nothing more.
+
+**UNVERIFIED, plainly**: steps 1–3 above are Samsung Health/Renpho's own
+UI, described from documentation and general Android Health Connect
+behaviour, not confirmed against the actual apps on Deepak's phone. Step 4
+onward (everything `HealthConnectPlugin.kt` does) has never run on a
+device in this environment at all — no JDK/Android SDK here. What needs
+real-device confirmation, roughly in the order it'll surface:
+
+- Does the Gradle build even compile (`kotlinOptions.jvmTarget`, the
+  `minSdk` bump, the connect-client dependency version — see CHANGELOG.md's
+  0.3.0 entry for the exact lines most likely to need adjusting)?
+- Does `requestHealthConnectPermissions()`'s custom `ActivityResultContract`
+  registration actually launch Health Connect's consent screen and resolve
+  correctly on return?
+- Does a body-fat record from the Renpho scale actually land within 2
+  minutes of its corresponding weight record (`healthSync.ts`'s
+  `mergeBodyFat`, `BODY_FAT_MATCH_WINDOW_MS` — widened from an exact-`atMs`
+  match during review specifically because that was too brittle; if even
+  the 2-minute window turns out too narrow, body-fat readings will
+  silently (well, logged, but invisibly to the UI) never reach the trend
+  line)?
+- Does the first sync's since-epoch backfill behave reasonably against
+  however much history Samsung Health actually has stored?
+
 ## Running it
 
 ```

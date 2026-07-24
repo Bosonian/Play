@@ -4,10 +4,11 @@ import { db } from '../db/db';
 import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { TextAction } from '../ui/TextAction';
-import { currentTrend, formatTrendLine, MIN_POINTS } from '../lib/trend';
+import { bodyFatTrend, currentTrend, formatBodyFatTrendLine, formatTrendLine, MIN_POINTS } from '../lib/trend';
 import { APP_VERSION, APP_VERSION_CODE } from '../lib/appVersion';
 import { AVAILABLE_UPDATE_SETTING, parseAvailableUpdate } from '../lib/updateCheck';
 import { logEvent } from '../lib/eventLog';
+import { formatMovementLine, localDateKey } from '../lib/healthSync';
 
 interface HomeProps {
   onNavigate: (screen: Screen) => void;
@@ -33,6 +34,15 @@ export function Home({ onNavigate }: HomeProps) {
   // pre-sorted means there's one less thing to reason about at the call
   // site.
   const weighIns = useLiveQuery(() => db.weighIns.orderBy('at').toArray(), []);
+
+  // Health Connect bridge increment (0.3.0): today's movement row, keyed by
+  // the device-local calendar day (localDateKey — see healthSync.ts's own
+  // comment on why this can't be a UTC date string). `[]` deps means this
+  // re-subscribes once per mount, not once per render — a genuine
+  // day-rollover while the app stays open in the background is an accepted,
+  // rare edge case (same "re-open picks up reality" tradeoff Runway's own
+  // day-boundary reads make), not one this screen actively watches for.
+  const todayMovement = useLiveQuery(() => db.movement.get(localDateKey()), []);
 
   // Increment 2: same re-guard-at-render reasoning as Runway's own Home.tsx
   // — checkForUpdate (main.tsx startup, 6h-throttled) is what actually
@@ -77,6 +87,16 @@ export function Home({ onNavigate }: HomeProps) {
   }
 
   const trend = currentTrend(weighIns);
+  // Secondary to the weight trend above — TIDE_PLAN.md §5.2's "same
+  // treatment, secondary" — so it renders only once it clears its OWN
+  // evidence floor (bodyFatTrend returns null under MIN_POINTS *readings*,
+  // not weigh-ins; see trend.ts's own doc comment) and never gets an empty-
+  // state placeholder of its own the way the weight trend does above: a
+  // secondary signal with nothing to show yet should just be absent, not
+  // occupy space asking for more data on a number Deepak may not even be
+  // tracking via a BIA-capable scale.
+  const bfTrend = bodyFatTrend(weighIns);
+  const movementLine = todayMovement ? formatMovementLine(todayMovement) : null;
 
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-8 px-4 pb-12 pt-safe-top">
@@ -122,6 +142,15 @@ export function Home({ onNavigate }: HomeProps) {
             {MIN_POINTS - weighIns.length} more weigh-in{MIN_POINTS - weighIns.length === 1 ? '' : 's'} to a trend.
           </p>
         )}
+        {/* Health Connect bridge increment (0.3.0): both lines below are
+            quiet, secondary, and simply absent when there's nothing to
+            show — no "N more readings" placeholder the way the weight
+            trend's own evidence-floor state gets one, since neither a
+            missing body-fat reading nor a missing watch sync is something
+            Deepak is necessarily doing anything about (unlike weigh-ins,
+            which are the one input this whole screen asks him to supply). */}
+        {bfTrend && <p className="text-sm text-slate-500">{formatBodyFatTrendLine(bfTrend)}</p>}
+        {movementLine && <p className="text-sm text-slate-500">{movementLine}</p>}
       </section>
 
       <section className="flex flex-col items-center gap-4">

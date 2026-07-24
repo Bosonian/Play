@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { currentTrend, formatTrendLine, MIN_POINTS, trendSeries, type WeighInPoint } from './trend';
+import {
+  bodyFatTrend,
+  type BodyFatPoint,
+  currentTrend,
+  formatBodyFatTrendLine,
+  formatTrendLine,
+  MIN_POINTS,
+  trendSeries,
+  type WeighInPoint,
+} from './trend';
 
 // Fixed ISO dates throughout — never Date.now() — so every test is
 // deterministic regardless of when it runs (same discipline as Runway's
@@ -258,5 +267,68 @@ describe('formatTrendLine', () => {
     // per TIDE_PLAN.md's brief — it should still read correctly if ever
     // called with a single-point trend.
     expect(formatTrendLine({ slopeKgPerWeek: 0, points: 1 })).toBe('Trend: holding steady over 1 weigh-in.');
+  });
+});
+
+// Health Connect increment (0.3.0): bodyFatTrend reuses trendSeries'
+// underlying EMA/regression machinery (see trend.ts's own header comment on
+// that section) — these tests exercise the parts that are genuinely NEW
+// (the null-filtering, the separate evidence floor, the distinct copy),
+// not the smoothing/regression math itself, which the weight-trend suite
+// above already covers exhaustively against the exact same code path.
+describe('bodyFatTrend — filters and evidence floor', () => {
+  it('returns null when no row carries a body-fat reading', () => {
+    const rows: BodyFatPoint[] = [
+      { at: '2026-01-01T00:00:00.000Z', bodyFatPct: null },
+      { at: '2026-01-08T00:00:00.000Z', bodyFatPct: null },
+      { at: '2026-01-15T00:00:00.000Z', bodyFatPct: null },
+    ];
+    expect(bodyFatTrend(rows)).toBeNull();
+  });
+
+  it('counts only rows with an actual reading toward the evidence floor, not every weigh-in', () => {
+    // 5 weigh-ins, only 2 carry a body-fat reading — below MIN_POINTS (3)
+    // once the nulls are filtered out, even though the raw row count isn't.
+    const rows: BodyFatPoint[] = [
+      { at: '2026-01-01T00:00:00.000Z', bodyFatPct: 28 },
+      { at: '2026-01-08T00:00:00.000Z', bodyFatPct: null },
+      { at: '2026-01-15T00:00:00.000Z', bodyFatPct: null },
+      { at: '2026-01-22T00:00:00.000Z', bodyFatPct: 27.5 },
+      { at: '2026-01-29T00:00:00.000Z', bodyFatPct: null },
+    ];
+    expect(bodyFatTrend(rows)).toBeNull();
+  });
+
+  it('returns a trend once at least MIN_POINTS rows carry a reading', () => {
+    const rows: BodyFatPoint[] = [
+      { at: '2026-01-01T00:00:00.000Z', bodyFatPct: 28 },
+      { at: '2026-01-08T00:00:00.000Z', bodyFatPct: null }, // weight-only row, ignored here
+      { at: '2026-01-15T00:00:00.000Z', bodyFatPct: 27.6 },
+      { at: '2026-01-22T00:00:00.000Z', bodyFatPct: 27.2 },
+    ];
+    const trend = bodyFatTrend(rows);
+    expect(trend).not.toBeNull();
+    expect(trend?.points).toBe(3); // the null row doesn't count
+    expect(trend?.slopePctPerWeek).toBeLessThan(0); // falling body fat
+  });
+});
+
+describe('formatBodyFatTrendLine', () => {
+  it('formats a downward trend with a unicode minus sign and "pts/week"', () => {
+    expect(formatBodyFatTrendLine({ slopePctPerWeek: -0.3, points: 6 })).toBe(
+      'Body fat: −0.3 pts/week over 6 readings.',
+    );
+  });
+
+  it('formats an upward trend with a leading plus sign', () => {
+    expect(formatBodyFatTrendLine({ slopePctPerWeek: 0.2, points: 4 })).toBe('Body fat: +0.2 pts/week over 4 readings.');
+  });
+
+  it('reads a slope that rounds to 0.0 as "holding steady"', () => {
+    expect(formatBodyFatTrendLine({ slopePctPerWeek: 0.02, points: 5 })).toBe('Body fat: holding steady over 5 readings.');
+  });
+
+  it('uses singular "reading" for exactly one point', () => {
+    expect(formatBodyFatTrendLine({ slopePctPerWeek: 0, points: 1 })).toBe('Body fat: holding steady over 1 reading.');
   });
 });

@@ -56,6 +56,19 @@ export interface TrendPoint {
   smoothed: number;
 }
 
+/** The minimal shape the EMA math itself needs — `{at, value}`, no domain
+ * concept (kg, %, ...) baked in. Body-fat trend (increment 3, Health Connect)
+ * reuses this exact function for `bodyFatPct` the same way `trendSeries`
+ * below uses it for `weightKg` — the smoothing algorithm doesn't care what
+ * the number MEANS, only that it's a value on a timeline. Not exported: this
+ * is an implementation seam, not a second public API surface to keep stable
+ * — `trendSeries`/`bodyFatSeries` are the typed, domain-specific entry
+ * points every caller outside this file should use instead. */
+interface GenericPoint {
+  at: string;
+  value: number;
+}
+
 /**
  * Sorts by `at` ascending and produces an EMA-smoothed series. Pure and
  * deterministic — same input always produces the same output, no
@@ -63,8 +76,8 @@ export interface TrendPoint {
  *
  * The first point seeds the series at its own raw value (nothing to smooth
  * against yet) — the alternative, seeding at 0 or at some assumed starting
- * weight, would make the very first smoothed point meaningless. Every
- * point after that blends `EMA_ALPHA` of the new raw reading into
+ * value, would make the very first smoothed point meaningless. Every point
+ * after that blends `EMA_ALPHA` of the new raw reading into
  * `(1 - EMA_ALPHA)` of the previous smoothed value.
  *
  * ISO 8601 datetime strings sort correctly with plain string comparison
@@ -72,18 +85,26 @@ export interface TrendPoint {
  * Runway's calibration.ts uses for `checkedAt` — so there's no need to
  * parse each one into a Date just to establish order.
  */
-export function trendSeries(weighIns: readonly WeighInPoint[]): TrendPoint[] {
-  const sorted = [...weighIns].sort((a, b) => a.at.localeCompare(b.at));
+function emaSeries(points: readonly GenericPoint[]): TrendPoint[] {
+  const sorted = [...points].sort((a, b) => a.at.localeCompare(b.at));
 
   const series: TrendPoint[] = [];
   let previousSmoothed: number | null = null;
   for (const entry of sorted) {
     const smoothed: number =
-      previousSmoothed === null ? entry.weightKg : EMA_ALPHA * entry.weightKg + (1 - EMA_ALPHA) * previousSmoothed;
+      previousSmoothed === null ? entry.value : EMA_ALPHA * entry.value + (1 - EMA_ALPHA) * previousSmoothed;
     series.push({ at: entry.at, smoothed });
     previousSmoothed = smoothed;
   }
   return series;
+}
+
+/** Weight's own entry point into `emaSeries` — unchanged behaviour/signature
+ * from before the body-fat generalization (increment 3): every existing
+ * caller and test keeps working exactly as it did, since this is now a
+ * one-line adapter around the same math rather than the math itself. */
+export function trendSeries(weighIns: readonly WeighInPoint[]): TrendPoint[] {
+  return emaSeries(weighIns.map((entry) => ({ at: entry.at, value: entry.weightKg })));
 }
 
 export interface CurrentTrend {
@@ -271,4 +292,90 @@ export function formatTrendLine(trend: Pick<CurrentTrend, 'slopeKgPerWeek' | 'po
 
   const sign = rounded > 0 ? '+' : '−';
   return `Trend: ${sign}${Math.abs(rounded).toFixed(1)} kg/week over ${pointsLabel}.`;
+}
+
+// --- Body-fat trend (Health Connect increment, 0.3.0) ---
+// TIDE_PLAN.md §5.2: "Body-fat trend — same treatment, secondary." Reuses
+// `emaSeries`/`selectSlopeWindow`/`fitSlopeKgPerWeek` verbatim (all three
+// were already unit-agnostic — "kg" in a couple of their names is a
+// leftover from when weight was the only caller, not an actual dependency
+// on the unit) rather than duplicating the EMA/regression math a second
+// time. Kept as separate exported types/functions from `CurrentTrend`/
+// `currentTrend` rather than a shared generic type, specifically so Home.tsx
+// never has to read a field called `smoothedKg` and remember that for THIS
+// call it actually means a percentage — the numbers are generic, the public
+// API stays honestly typed per domain.
+
+/** The minimal shape body-fat trend needs from a weigh-in row — deliberately
+ * structural (any object with these two fields matches, `WeighIn` included)
+ * same reasoning as `WeighInPoint`'s own doc comment. `bodyFatPct` is
+ * nullable because most weigh-ins in practice won't carry one (see
+ * `db/types.ts`'s own doc comment on the field) — `bodyFatSeries` below
+ * filters those out before the EMA math ever sees them, rather than treating
+ * a missing reading as a 0%. */
+export interface BodyFatPoint {
+  at: string;
+  bodyFatPct: number | null;
+}
+
+export interface BodyFatTrend {
+  /** The latest point on the smoothed body-fat line — a percentage, not kg. */
+  smoothedPct: number;
+  /** Signed slope in percentage points per week — same windowed-fit
+   * treatment as `CurrentTrend.slopeKgPerWeek` (see `selectSlopeWindow`'s
+   * doc comment; the same `TREND_WINDOW_DAYS`/`EMA_ALPHA` tuning is reused
+   * here rather than a body-fat-specific pair, since there's no research
+   * basis yet to justify a different noise/lag tradeoff for this signal —
+   * revisit if real use shows body-fat readings warrant their own dial). */
+  slopePctPerWeek: number;
+  /** How many ACTUAL body-fat readings (after filtering out weigh-ins with
+   * none) the trend is built from — not the same count as the weight
+   * trend's `points` alongside it, since not every weigh-in carries a
+   * body-fat reading. */
+  points: number;
+}
+
+/** Filters to weigh-ins that actually carry a body-fat reading, then EMA-
+ * smooths just like `trendSeries` does for weight — see that function's own
+ * doc comment for the smoothing/sort behaviour, identical here. */
+function bodyFatSeries(rows: readonly BodyFatPoint[]): TrendPoint[] {
+  const present = rows.filter((row): row is BodyFatPoint & { bodyFatPct: number } => row.bodyFatPct !== null);
+  return emaSeries(present.map((row) => ({ at: row.at, value: row.bodyFatPct })));
+}
+
+/**
+ * Body-fat's analogue of `currentTrend` — same evidence floor (`MIN_POINTS`),
+ * same "null below the floor, never a hedge-stapled trend" contract, but
+ * checked against the FILTERED count (only rows with an actual body-fat
+ * reading), not `rows.length` — a weigh-in with no body-fat reading doesn't
+ * count as evidence for this trend, only for the weight one alongside it.
+ */
+export function bodyFatTrend(rows: readonly BodyFatPoint[]): BodyFatTrend | null {
+  const series = bodyFatSeries(rows);
+  if (series.length < MIN_POINTS) return null;
+
+  const latest = series[series.length - 1];
+  return {
+    smoothedPct: latest.smoothed,
+    slopePctPerWeek: fitSlopeKgPerWeek(selectSlopeWindow(series)),
+    points: series.length,
+  };
+}
+
+/**
+ * Body-fat's analogue of `formatTrendLine` — same rounding-before-wording
+ * and unicode-minus discipline (see that function's own doc comment), "pts"
+ * rather than "kg" as the unit label, "reading"/"readings" rather than
+ * "weigh-in"/"weigh-ins" since not every weigh-in has one.
+ */
+export function formatBodyFatTrendLine(trend: Pick<BodyFatTrend, 'slopePctPerWeek' | 'points'>): string {
+  const rounded = Math.round(trend.slopePctPerWeek * 10) / 10;
+  const pointsLabel = `${trend.points} reading${trend.points === 1 ? '' : 's'}`;
+
+  if (rounded === 0) {
+    return `Body fat: holding steady over ${pointsLabel}.`;
+  }
+
+  const sign = rounded > 0 ? '+' : '−';
+  return `Body fat: ${sign}${Math.abs(rounded).toFixed(1)} pts/week over ${pointsLabel}.`;
 }

@@ -5,6 +5,7 @@ import { History } from './screens/History';
 import { Settings } from './screens/Settings';
 import { ErrorBoundary } from './ui/ErrorBoundary';
 import { logEvent } from './lib/eventLog';
+import { syncHealthData } from './lib/healthSync';
 
 // Navigation as plain React state, not a router library — same call Runway
 // made in increment 1, for the same reason: no deep-linkable URL
@@ -33,14 +34,16 @@ export default function App() {
   // Increment 2: mirrors Runway's own App.tsx visibilitychange hook — the
   // one central "app resumed/backgrounded" signal, as opposed to a
   // screen-local effect, because it's about the whole app's lifecycle, not
-  // any one screen's concern. Tide has no day-gauge/widget/transit-sync
-  // equivalent to re-trigger here yet (unlike Runway's own handler, which
-  // also re-runs several native refreshes on resume) — just the log line,
-  // for now.
+  // any one screen's concern. Increment 3 adds the first native refresh
+  // Tide re-runs on resume (`syncHealthData`) — the exact scenario
+  // TIDE_PLAN.md §3 names as the point of the whole bridge: step off the
+  // scale, Samsung Health picks it up, then open Tide and this resume tap
+  // pulls the new weight in without a manual sync tap.
   useEffect(() => {
     function handleVisibilityChange() {
       if (document.visibilityState === 'visible') {
         void logEvent('lifecycle', 'App resumed.');
+        void syncHealthData();
       } else {
         void logEvent('lifecycle', 'App backgrounded.');
       }

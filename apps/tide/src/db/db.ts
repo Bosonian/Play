@@ -57,6 +57,13 @@ class TideDB extends Dexie {
       settings: 'key',
       events: 'id, at',
     });
+    // Health Connect bridge increment (0.3.0): no version(3) bump. Every
+    // field the sync needs (`weighIns.source: 'healthconnect'`,
+    // `movement.source`/`steps`/`activeKcal`/`manualTier`) already exists in
+    // v1/v2 — this increment is the first real WRITER of `movement`, not a
+    // schema change. See db/types.ts's own header comment on when a bump is
+    // actually required (a new indexed field, never a table simply
+    // gaining its first real writer).
   }
 }
 

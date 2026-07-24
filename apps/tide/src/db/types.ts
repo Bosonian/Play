@@ -17,8 +17,8 @@
 // reasoning — that logic is identical here and isn't repeated per-field.
 
 /** A single weigh-in — the trend engine's raw input (src/lib/trend.ts).
- * `source` distinguishes a Health Connect read (increment 3, once the
- * native bridge exists) from a hand-typed entry (this increment's
+ * `source` distinguishes a Health Connect read (increment 3,
+ * src/lib/healthSync.ts) from a hand-typed entry (increment 1's
  * WeighInEntry screen) — both feed the same trend math identically; the
  * field exists for provenance/debugging, not because the two are treated
  * differently anywhere yet. */
@@ -73,11 +73,15 @@ export interface Meal {
 }
 
 /** Passive movement data for one calendar day (TIDE_PLAN.md §4/§5.4) —
- * mostly written by the Health Connect bridge (increment 3), with an
- * optional manual fallback tier for a day with no watch data.
+ * written by the Health Connect bridge (increment 3, src/lib/healthSync.ts),
+ * with an optional manual fallback tier for a day with no watch data (that
+ * manual-entry path itself is still a future increment — TIDE_PLAN.md §7's
+ * plate-check-in/daily-shape work — healthSync.ts only ever preserves an
+ * existing `manualTier` on write, it never sets one).
  * `date` is an ISO date (YYYY-MM-DD, CLAUDE.md's storage-format rule), not
  * a datetime — movement is inherently a whole-day aggregate, never a
- * point-in-time reading the way a WeighIn is. Not used by any screen yet. */
+ * point-in-time reading the way a WeighIn is. Home's quiet "Steps today"
+ * line (increment 3) is the first screen to read this table. */
 export interface Movement {
   id: string;
   date: string;
@@ -116,7 +120,15 @@ export interface Setting {
  * self-update checker, TIDE_PLAN.md increment 2). More join this union as
  * later increments (plate check-ins, movement, Health Connect) add their own
  * real transitions worth tracing — grow it then, not preemptively now. */
-export type EventCategory = 'lifecycle' | 'weighin' | 'update';
+export type EventCategory =
+  | 'lifecycle'
+  | 'weighin'
+  | 'update'
+  // Health Connect bridge increment (0.3.0): a sync merged new
+  // weight/body-fat/steps/active-energy rows, skipped a body-fat reading
+  // with no matching weight instant, or the connect/permission flow itself
+  // changed state — see src/lib/healthSync.ts.
+  | 'health';
 
 /**
  * One row of the activity log. Deliberately flat — `category` plus one

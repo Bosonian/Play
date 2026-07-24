@@ -5,6 +5,7 @@ import './db/db'; // import for side effect: opens the database before first ren
 import './index.css';
 import { logEvent, pruneEventLog } from './lib/eventLog';
 import { checkForUpdate } from './lib/updateCheck';
+import { syncHealthData } from './lib/healthSync';
 
 // Increment 2: prune-on-open, mirroring main.tsx's own comment in Runway —
 // one cheap pass here beats a count-and-maybe-delete after every single
@@ -20,6 +21,13 @@ void logEvent('lifecycle', 'App started.');
 // every single app open; see updateCheck.ts's doc comment. Never blocks the
 // first render, never throws.
 void checkForUpdate();
+
+// Health Connect bridge increment (0.3.0): same fire-and-forget, run-on-
+// every-open shape as the calls above. `syncHealthData` itself no-ops
+// immediately (before any native call) unless Settings' "Connect health
+// data" has already been used once — see that function's own doc comment —
+// so this is a cheap no-op on every open until Deepak actually connects it.
+void syncHealthData();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
