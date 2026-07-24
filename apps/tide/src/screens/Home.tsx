@@ -5,6 +5,14 @@ import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { TextAction } from '../ui/TextAction';
 import { bodyFatTrend, currentTrend, formatBodyFatTrendLine, formatTrendLine, MIN_POINTS } from '../lib/trend';
+import {
+  dailyShapeProgress,
+  formatCheckInsLine,
+  formatDailyShapeMetLine,
+  formatStepsLine,
+  parseDailyShapeTarget,
+} from '../lib/dailyShape';
+import { DAILY_SHAPE_TARGET_SETTING } from '../lib/dailyShapeSettings';
 import { APP_VERSION, APP_VERSION_CODE } from '../lib/appVersion';
 import { AVAILABLE_UPDATE_SETTING, parseAvailableUpdate } from '../lib/updateCheck';
 import { logEvent } from '../lib/eventLog';
@@ -57,6 +65,17 @@ export function Home({ onNavigate }: HomeProps) {
     const { startIso, endIso } = localDayBoundsIso();
     return db.meals.where('at').between(startIso, endIso, true, false).count();
   }, []);
+
+  // Daily shape increment (increment 7, TIDE_PLAN.md §5's signal 5): the
+  // target itself lives in one settings row (dailyShapeSettings.ts),
+  // read reactively the same way the Health Connect flags above are — a
+  // change from Settings' Save/Remove should reach Home the instant Dexie
+  // commits it, no separate "refresh" step. `parseDailyShapeTarget` (not
+  // `readDailyShapeTarget`) is used directly here because it's synchronous
+  // and this component already has the raw row from `useLiveQuery` — no
+  // reason to await a second Dexie round trip for a value already in hand.
+  const dailyShapeSetting = useLiveQuery(() => db.settings.get(DAILY_SHAPE_TARGET_SETTING), []);
+  const dailyShapeTarget = parseDailyShapeTarget(dailyShapeSetting?.value);
 
   // Increment 2: same re-guard-at-render reasoning as Runway's own Home.tsx
   // — checkForUpdate (main.tsx startup, 6h-throttled) is what actually
@@ -111,6 +130,21 @@ export function Home({ onNavigate }: HomeProps) {
   // tracking via a BIA-capable scale.
   const bfTrend = bodyFatTrend(weighIns);
   const movementLine = todayMovement ? formatMovementLine(todayMovement) : null;
+
+  // Daily shape's own progress, computed only once a target actually exists
+  // (dailyShapeProgress needs a real DailyShapeTarget, not null) — see
+  // dailyShape.ts for the actuals' own null-handling contract. `steps: null`
+  // when `todayMovement` hasn't resolved/synced yet (never a bare 0 — see
+  // formatMovementLine's identical rule just above); `checkIns` defaults to
+  // 0 while `todayMealCount`'s own query is still resolving, the same brief
+  // window `weighIns === undefined` covers for the trend above — the count
+  // corrects itself the instant that query resolves, via the same
+  // `useLiveQuery` re-render.
+  const dailyShape = dailyShapeTarget
+    ? dailyShapeProgress(dailyShapeTarget, { checkIns: todayMealCount ?? 0, steps: todayMovement?.steps ?? null })
+    : null;
+  const dailyShapeCheckInsLine = dailyShape ? formatCheckInsLine(dailyShape.checkIns) : null;
+  const dailyShapeStepsLine = dailyShape ? formatStepsLine(dailyShape.steps) : null;
 
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-8 px-4 pb-12 pt-safe-top">
@@ -182,8 +216,14 @@ export function Home({ onNavigate }: HomeProps) {
             here would tell Deepak he ate when he didn't, the exact
             skip-as-a-meal reframe TIDE_PLAN.md §2 forbids. "check-in" is
             honest for both, and is the plan's own word ("3 honest
-            check-ins"). */}
-        {todayMealCount !== undefined && todayMealCount > 0 && (
+            check-ins").
+
+            Hidden once the daily-shape block below is showing (increment
+            7): that block's own check-ins line already states this exact
+            number, and showing it twice on one screen would be noise, not
+            scaffolding — kept for a day with no target set, where it's the
+            only such line on the screen. */}
+        {!dailyShapeTarget && todayMealCount !== undefined && todayMealCount > 0 && (
           <button
             type="button"
             onClick={() => onNavigate({ name: 'platesToday' })}
@@ -201,6 +241,64 @@ export function Home({ onNavigate }: HomeProps) {
           </button>
         )}
       </section>
+
+      {/* Daily shape (increment 7, TIDE_PLAN.md §5's signal 5) — a
+          subordinate, own-card block, deliberately BELOW the trend section
+          above and ABOVE the action buttons below, never touching the
+          headline itself. CRITICAL, per this increment's own instructions:
+          unlike Runway's dailyShape.ts (todayLine), which swaps
+          ExamOverview's headline once a target is set, Tide's trend
+          headline above never changes shape because of this block — §5
+          ranks daily shape strictly below the weight/body-fat trends, and
+          letting a to-do list displace the north star would quietly violate
+          that ranking. Absent entirely with no target set (dailyShape is
+          `null` in that case) — no "set a target" nag card, matching
+          bfTrend/movementLine's own "absent when there's nothing to show"
+          idiom just above, rather than an empty-state advertisement for a
+          feature CLAUDE.md's defaults-lean-smaller rule says should stay
+          opt-in and quiet. */}
+      {dailyShape && (
+        <button
+          type="button"
+          onClick={() => onNavigate({ name: 'platesToday' })}
+          // Met: a quiet emerald accent (border + text) — same accent color
+          // Runway's own dailyShape rendering uses for its met state
+          // (ExamOverview.tsx), reused here for visual consistency across
+          // the two sibling apps' identical "day-sized target met" idea.
+          // Unmet: entirely neutral slate, matching every other quiet card
+          // on this screen — no red/amber, no progress bar, no "keep
+          // going": CLAUDE.md's no-shame rule applies exactly as much to an
+          // UNMET day as an emoji would to a met one.
+          className={`min-h-12 w-full rounded-xl border p-4 text-left transition-colors ${
+            dailyShape.met
+              ? 'border-emerald-800/60 bg-emerald-950/20 hover:bg-emerald-950/30'
+              : 'border-slate-800/60 bg-surface hover:bg-raised/70'
+          }`}
+        >
+          <p className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">
+            Today&apos;s shape
+          </p>
+          <div className="mt-1.5 flex flex-col gap-0.5">
+            {dailyShapeCheckInsLine && (
+              <p className={`text-sm ${dailyShape.met ? 'text-emerald-300' : 'text-slate-300'}`}>
+                {dailyShapeCheckInsLine}
+              </p>
+            )}
+            {dailyShapeStepsLine && (
+              <p className={`text-sm ${dailyShape.met ? 'text-emerald-300' : 'text-slate-300'}`}>
+                {dailyShapeStepsLine}
+              </p>
+            )}
+          </div>
+          {/* The overall line only on the met side — an unmet day gets no
+              equivalent "not met" sentence at all (the plain numbers above
+              already say so; a second sentence stating it again would tip
+              toward the score-keeping tone CLAUDE.md rules out). */}
+          {dailyShape.met && (
+            <p className="mt-1.5 text-sm font-medium text-emerald-300">{formatDailyShapeMetLine()}</p>
+          )}
+        </button>
+      )}
 
       <section className="flex flex-col items-center gap-4">
         <Button onClick={() => onNavigate({ name: 'weighInEntry' })} className="w-full max-w-xs">

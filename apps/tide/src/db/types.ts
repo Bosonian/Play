@@ -210,7 +210,13 @@ export type EventCategory =
   // deletion (a weigh-in or a plate removed) is logged under its own
   // existing category ('weighin'/'meal'), not this one — 'backup' is only
   // for the export/import file operation itself.
-  | 'backup';
+  | 'backup'
+  // Daily shape increment (increment 7): the day-sized target (checkIns +
+  // steps, TIDE_PLAN.md §5's signal 5) was set or cleared from Settings —
+  // see src/lib/dailyShapeSettings.ts. Not 'health', even though steps are
+  // one of the two components: this category is about the TARGET the user
+  // chose, not about a Health Connect sync event.
+  | 'dailyShape';
 
 /**
  * One row of the activity log. Deliberately flat — `category` plus one

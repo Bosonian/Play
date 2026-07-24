@@ -18,6 +18,8 @@ import {
 } from '../lib/healthSettings';
 import { isHealthConnectAvailable, readStepSources, requestHealthPermissions, type StepSourceJs } from '../native/healthConnect';
 import { syncHealthData } from '../lib/healthSync';
+import { parseDailyShapeTarget, type DailyShapeTarget } from '../lib/dailyShape';
+import { clearDailyShapeTarget, DAILY_SHAPE_TARGET_SETTING, writeDailyShapeTarget } from '../lib/dailyShapeSettings';
 import { logEvent } from '../lib/eventLog';
 import { DEFAULT_FEEDBACK_REPO, FEEDBACK_REPO_SETTING, FEEDBACK_TOKEN_SETTING } from '../lib/reportSettings';
 import { backupFilename, buildBackup, LAST_BACKUP_AT_SETTING, validateBackup } from '../lib/backup';
@@ -33,6 +35,15 @@ interface SettingsProps {
  * `HEALTH_CONNECT_ENABLED_SETTING` row itself). Mirrors the Updates
  * section's own `updateCheckOutcome` state shape below. */
 type ConnectOutcome = 'idle' | 'checking' | 'notInstalled' | 'unsupported' | 'declined' | 'connected';
+
+/** Pre-filled into the daily-shape drafts when no target is set yet —
+ * TIDE_PLAN.md §2's own example ("3 honest check-ins") is also this app's
+ * suggested starting point, and 6000 steps is a commonly-cited
+ * "not sedentary" floor, not a clinical prescription (Tide sets no medical
+ * targets — TIDE_PLAN.md §1). Module-level, not component-local, since it's
+ * a fixed constant rather than anything derived from props/state — same
+ * placement as `PLAUSIBLE_WEIGHT_KG` in WeighInEntry.tsx. */
+const SUGGESTED_DAILY_SHAPE_TARGET: DailyShapeTarget = { checkIns: 3, steps: 6000 };
 
 /**
  * Backup/restore (increment 6, ported from Runway) is real as of this
@@ -203,6 +214,84 @@ export function Settings({ onNavigate }: SettingsProps) {
   function formatDateTime(iso: string): string {
     const date = new Date(iso);
     return date.toLocaleString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+
+  // Daily shape (increment 7, TIDE_PLAN.md §5's signal 5) — a day-sized
+  // target of check-ins + steps, stored as one settings row. Read reactively
+  // (same liveQuery pattern as the Health Connect flags above) so Home's own
+  // block reflects a Save/Remove here the instant Dexie commits it.
+  const dailyShapeSetting = useLiveQuery(() => db.settings.get(DAILY_SHAPE_TARGET_SETTING), []);
+  const savedDailyShapeTarget = parseDailyShapeTarget(dailyShapeSetting?.value);
+
+  const [checkInsDraft, setCheckInsDraft] = useState('');
+  const [stepsDraft, setStepsDraft] = useState('');
+  const [dailyShapeError, setDailyShapeError] = useState<string | null>(null);
+
+  // Mirrors the feedback-token draft effect below: re-initialises the drafts
+  // whenever the underlying settings ROW changes (first load, or right after
+  // a Save/Remove elsewhere) — not on every keystroke, since `checkInsDraft`/
+  // `stepsDraft` are this effect's own outputs, not its inputs.
+  useEffect(() => {
+    if (dailyShapeSetting === undefined) return;
+    if (savedDailyShapeTarget) {
+      setCheckInsDraft(String(savedDailyShapeTarget.checkIns));
+      setStepsDraft(String(savedDailyShapeTarget.steps));
+    } else {
+      setCheckInsDraft(String(SUGGESTED_DAILY_SHAPE_TARGET.checkIns));
+      setStepsDraft(String(SUGGESTED_DAILY_SHAPE_TARGET.steps));
+    }
+    // SUGGESTED_DAILY_SHAPE_TARGET is a fixed literal (redeclared each
+    // render but always the same values), not state — deliberately excluded
+    // from these deps, same as any other render-local constant this file's
+    // other effects don't list either.
+  }, [dailyShapeSetting, savedDailyShapeTarget?.checkIns, savedDailyShapeTarget?.steps]);
+
+  /** A whole number, 0 or higher — `null` for anything else (blank,
+   * non-numeric, negative, or a decimal from a stray dictation artifact),
+   * same "defensive parse, never a NaN-bearing value" discipline as
+   * dailyShape.ts's own `parseDailyShapeTarget`. Kept local to this
+   * component rather than reused from that file: this parses free-typed
+   * DRAFT text (one field at a time, for inline validation messages), not
+   * the settings row's own serialised `"checkIns,steps"` format. */
+  function parseNonNegativeIntDraft(value: string): number | null {
+    const trimmed = value.trim();
+    if (trimmed === '') return null;
+    const n = Number(trimmed);
+    return Number.isInteger(n) && n >= 0 ? n : null;
+  }
+
+  async function handleSaveDailyShape() {
+    const checkIns = parseNonNegativeIntDraft(checkInsDraft);
+    const steps = parseNonNegativeIntDraft(stepsDraft);
+    if (checkIns === null || steps === null) {
+      setDailyShapeError('Enter a whole number, 0 or higher, for both check-ins and steps.');
+      return;
+    }
+    // Both zero isn't a small target, it's no target at all — dailyShape.ts's
+    // own `dailyShapeProgress` treats a 0 component as "not part of the
+    // shape", so a 0/0 target would render nothing on Home despite claiming
+    // to be set. Naming that here, precisely, rather than silently saving a
+    // target that would then show an empty card.
+    if (checkIns === 0 && steps === 0) {
+      setDailyShapeError('Both zero is no target — use Remove instead.');
+      return;
+    }
+    setDailyShapeError(null);
+    await writeDailyShapeTarget({ checkIns, steps });
+    void logEvent(
+      'dailyShape',
+      `Daily shape target set: ${checkIns} check-in${checkIns === 1 ? '' : 's'}, ${steps.toLocaleString('en-US')} steps.`,
+    );
+  }
+
+  /** Plain and unceremonious — no confirm dialog (CLAUDE.md's no-shame rule:
+   * a day you miss says nothing, and removing the target you set says even
+   * less; a "are you sure?" here would treat turning a to-do list off as a
+   * bigger deal than it is). */
+  async function handleRemoveDailyShape() {
+    await clearDailyShapeTarget();
+    setDailyShapeError(null);
+    void logEvent('dailyShape', 'Daily shape target removed.');
   }
 
   // Field-reports increment (increment 5, ported from Runway): the GitHub
@@ -514,6 +603,54 @@ export function Settings({ onNavigate }: SettingsProps) {
             )}
           </>
         )}
+      </section>
+
+      {/* Daily shape (increment 7) — placed here, directly after Health
+          Connect and before Backup, matching this increment's own
+          instructions: it reads Health Connect's own steps below the fold
+          of that section, so keeping the two adjacent reads naturally. */}
+      <section className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Daily shape</h2>
+        <p className="text-sm text-slate-500">
+          A day-sized target, small enough to actually do. It sits below the weight trend and never scores
+          you — a day you miss says nothing.
+        </p>
+
+        <div className="flex gap-2">
+          <TextField
+            label="Check-ins"
+            type="text"
+            inputMode="numeric"
+            value={checkInsDraft}
+            onChange={(e) => setCheckInsDraft(e.target.value)}
+            hint={`Suggested: ${SUGGESTED_DAILY_SHAPE_TARGET.checkIns}`}
+            containerClassName="flex-1"
+          />
+          <TextField
+            label="Steps"
+            type="text"
+            inputMode="numeric"
+            value={stepsDraft}
+            onChange={(e) => setStepsDraft(e.target.value)}
+            hint={`Suggested: ${SUGGESTED_DAILY_SHAPE_TARGET.steps.toLocaleString('en-US')}`}
+            containerClassName="flex-1"
+          />
+        </div>
+
+        {dailyShapeError && <p className="text-sm text-red-400">{dailyShapeError}</p>}
+
+        <div className="flex items-center gap-4">
+          <Button onClick={() => void handleSaveDailyShape()} className="flex-1">
+            Save
+          </Button>
+          {/* Only once a target actually exists — removing a target that
+              isn't set would be a no-op button with nothing to explain
+              itself. Plain TextAction, no confirm dialog (see
+              `handleRemoveDailyShape`'s own comment). */}
+          {savedDailyShapeTarget && (
+            <TextAction onClick={() => void handleRemoveDailyShape()}>Remove</TextAction>
+          )}
+        </div>
       </section>
 
       <section className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
