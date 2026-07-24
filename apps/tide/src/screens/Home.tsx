@@ -44,13 +44,15 @@ export function Home({ onNavigate }: HomeProps) {
   // day-boundary reads make), not one this screen actively watches for.
   const todayMovement = useLiveQuery(() => db.movement.get(localDateKey()), []);
 
-  // Plate check-in increment (0.4.0): today's plate count, for the quiet
+  // Plate check-in increment (0.4.0): today's check-in count, for the quiet
   // shortcut line below — a `count()` query, not a full row fetch, since
   // this screen only ever needs the number (the actual rows live on
-  // PlatesToday.tsx). Same device-local day boundary as PlatesToday.tsx's
-  // own query (localDayBoundsIso, healthSync.ts) — the two screens must
-  // agree on what "today" means or the count here could disagree with the
-  // list a tap on it navigates to.
+  // PlatesToday.tsx). Counts every check-in including skips (the line below
+  // reads "check-ins", never "plates" — see its own comment), so the number
+  // always matches the list a tap navigates to. Same device-local day
+  // boundary as PlatesToday.tsx's own query (localDayBoundsIso,
+  // healthSync.ts) — the two screens must agree on what "today" means or the
+  // count here could disagree with the list a tap on it navigates to.
   const todayMealCount = useLiveQuery(async () => {
     const { startIso, endIso } = localDayBoundsIso();
     return db.meals.where('at').between(startIso, endIso, true, false).count();
@@ -165,20 +167,29 @@ export function Home({ onNavigate }: HomeProps) {
         {movementLine && <p className="text-sm text-slate-500">{movementLine}</p>}
         {/* Plate check-in increment (0.4.0): a quiet shortcut, not a
             headline — present only once there's something to jump to
-            (>=1 plate today), same "absent when there's nothing to show"
+            (>=1 check-in today), same "absent when there's nothing to show"
             treatment as bfTrend/movementLine just above. A plain <button>
             rather than TextAction: TextAction's own slate-400 is tuned for
             footer-weight actions, one shade lighter than the slate-500 the
             other secondary lines on this screen use, and matching THOSE is
             what keeps this line reading as "one more quiet fact", not a
-            call to action competing with the trend headline above it. */}
+            call to action competing with the trend headline above it.
+
+            "check-in", NOT "plate" (review fix, 0.4.1): the count includes
+            skipped meals (PlatesToday lists them, so the count that links
+            there must match, or a tap on "2" would open a list of 3). A
+            skip is a real check-in but NOT a plate — calling it a "plate"
+            here would tell Deepak he ate when he didn't, the exact
+            skip-as-a-meal reframe TIDE_PLAN.md §2 forbids. "check-in" is
+            honest for both, and is the plan's own word ("3 honest
+            check-ins"). */}
         {todayMealCount !== undefined && todayMealCount > 0 && (
           <button
             type="button"
             onClick={() => onNavigate({ name: 'platesToday' })}
             className="text-sm text-slate-500 transition-colors hover:text-slate-300"
           >
-            {todayMealCount} plate{todayMealCount === 1 ? '' : 's'} today
+            {todayMealCount} check-in{todayMealCount === 1 ? '' : 's'} today
           </button>
         )}
       </section>

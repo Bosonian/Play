@@ -3,6 +3,7 @@ import {
   BODY_FAT_MATCH_WINDOW_MS,
   formatMovementLine,
   localDateKey,
+  localDayBoundsIso,
   mergeBodyFat,
   mergeMovementDays,
   newRecordsSinceCursor,
@@ -164,6 +165,41 @@ describe('localDateKey', () => {
 
   it('zero-pads single-digit month and day', () => {
     expect(localDateKey(new Date(2026, 0, 5))).toBe('2026-01-05');
+  });
+});
+
+describe('localDayBoundsIso', () => {
+  // TZ-robust assertions on purpose: these hold under ANY device timezone
+  // (the test runner's, whatever it is) rather than pinning one, so they
+  // stay green everywhere and still fail loudly if the bounds ever regress
+  // to UTC-date bucketing (which would drift a day off for part of every
+  // Stuttgart evening — the exact bug this half-open local-day range exists
+  // to prevent).
+  it('brackets its input instant: startIso <= input < endIso', () => {
+    const input = new Date(2026, 6, 24, 19, 30); // 24 Jul 2026 19:30 local
+    const { startIso, endIso } = localDayBoundsIso(input);
+    expect(startIso <= input.toISOString()).toBe(true);
+    expect(input.toISOString() < endIso).toBe(true);
+  });
+
+  it('is half-open — end of day N equals start of day N+1 (no gap, no overlap)', () => {
+    const dayN = localDayBoundsIso(new Date(2026, 6, 24, 8, 0));
+    const dayNplus1 = localDayBoundsIso(new Date(2026, 6, 25, 8, 0));
+    expect(dayN.endIso).toBe(dayNplus1.startIso);
+  });
+
+  it('excludes the very last instant before local midnight from the NEXT day', () => {
+    // 23:59:59.999 local belongs to its own day, never the following one.
+    const lastMoment = new Date(2026, 6, 24, 23, 59, 59, 999);
+    const { startIso, endIso } = localDayBoundsIso(lastMoment);
+    expect(startIso <= lastMoment.toISOString()).toBe(true);
+    expect(lastMoment.toISOString() < endIso).toBe(true);
+  });
+
+  it('places local midnight (00:00:00.000) at the start boundary, inclusive', () => {
+    const midnight = new Date(2026, 6, 24, 0, 0, 0, 0);
+    const { startIso } = localDayBoundsIso(midnight);
+    expect(startIso).toBe(midnight.toISOString());
   });
 });
 

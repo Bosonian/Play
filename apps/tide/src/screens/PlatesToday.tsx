@@ -39,6 +39,13 @@ export function PlatesToday({ onNavigate }: PlatesTodayProps) {
   // newest-first — same idiom History.tsx uses (see its own comment):
   // reversing an already-small in-memory array costs nothing worth
   // avoiding it for.
+  //
+  // The bounds are computed once per mount (the `[]` deps), so if the app
+  // is left open across local midnight this list keeps showing the old
+  // day until the next write or remount — the SAME accepted day-rollover
+  // tradeoff Home.tsx documents for its own movement/count reads (see its
+  // comment there). Re-opening picks up reality; a mounted screen doesn't
+  // actively watch the clock. Named here rather than left implicit.
   const meals = useLiveQuery(async () => {
     const { startIso, endIso } = localDayBoundsIso();
     const rows = await db.meals.where('at').between(startIso, endIso, true, false).toArray();
