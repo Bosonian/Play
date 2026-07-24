@@ -57,6 +57,17 @@ export interface ActiveEnergyDayJs {
   activeKcal: number;
 }
 
+/** One data origin's TODAY step total, as HealthConnectPlugin.kt's
+ * readStepSources resolves it — `packageName` is Health Connect's own
+ * origin identifier (e.g. `com.sec.android.app.shealth`), not something this
+ * app assigns; Settings.tsx maps a handful of known ones to a friendly label
+ * and falls back to the raw string for anything else (see that file's own
+ * comment on why the fallback is deliberate, not a gap to fill later). */
+export interface StepSourceJs {
+  packageName: string;
+  steps: number;
+}
+
 interface HealthConnectPlugin {
   isAvailable(): Promise<{ available: HealthConnectAvailability }>;
   // Named `requestHealthConnectPermissions`, not `requestPermissions` — a
@@ -74,8 +85,15 @@ interface HealthConnectPlugin {
   requestHealthConnectPermissions(): Promise<HealthPermissionResult>;
   readWeight(options: { sinceMs: number }): Promise<{ records: WeightRecordJs[] }>;
   readBodyFat(options: { sinceMs: number }): Promise<{ records: BodyFatRecordJs[] }>;
-  readSteps(options: { sinceMs: number }): Promise<{ days: StepsDayJs[] }>;
-  readActiveEnergy(options: { sinceMs: number }): Promise<{ days: ActiveEnergyDayJs[] }>;
+  // `packageNames` scopes the aggregate to one or more Health Connect data
+  // origins — issue #20's fix (see HealthConnectPlugin.kt's readSteps doc
+  // comment): an EMPTY array means "all origins", which is both Health
+  // Connect's own default and exactly the pre-fix behaviour, so a caller
+  // that hasn't picked a source yet (or an old JS bundle talking to a new
+  // plugin) sees no change at all.
+  readSteps(options: { sinceMs: number; packageNames: string[] }): Promise<{ days: StepsDayJs[] }>;
+  readActiveEnergy(options: { sinceMs: number; packageNames: string[] }): Promise<{ days: ActiveEnergyDayJs[] }>;
+  readStepSources(): Promise<{ sources: StepSourceJs[] }>;
 }
 
 const HealthConnect = registerPlugin<HealthConnectPlugin>('HealthConnect');
@@ -134,11 +152,14 @@ export async function readBodyFat(sinceMs: number): Promise<BodyFatRecordJs[]> {
 
 /** Per-calendar-day step totals (device-local day, see HealthConnectPlugin.kt's
  * readSteps for the exact bucketing) since `sinceMs` — empty array, never
- * throws, same contract as `readWeight`. */
-export async function readSteps(sinceMs: number): Promise<StepsDayJs[]> {
+ * throws, same contract as `readWeight`. `packageNames` is passed straight
+ * through to the native `dataOriginFilter` (issue #20's source-picker fix —
+ * see HealthConnectPlugin.kt's readSteps doc comment); an empty array counts
+ * every Health Connect data origin, same as before this option existed. */
+export async function readSteps(sinceMs: number, packageNames: string[]): Promise<StepsDayJs[]> {
   if (!Capacitor.isNativePlatform()) return [];
   try {
-    const result = await HealthConnect.readSteps({ sinceMs });
+    const result = await HealthConnect.readSteps({ sinceMs, packageNames });
     return result.days;
   } catch {
     return [];
@@ -146,12 +167,30 @@ export async function readSteps(sinceMs: number): Promise<StepsDayJs[]> {
 }
 
 /** Per-calendar-day active-energy totals (kcal) since `sinceMs` — empty
- * array, never throws, same contract as `readSteps`. */
-export async function readActiveEnergy(sinceMs: number): Promise<ActiveEnergyDayJs[]> {
+ * array, never throws, same contract as `readSteps`, including the same
+ * `packageNames` source filter. */
+export async function readActiveEnergy(sinceMs: number, packageNames: string[]): Promise<ActiveEnergyDayJs[]> {
   if (!Capacitor.isNativePlatform()) return [];
   try {
-    const result = await HealthConnect.readActiveEnergy({ sinceMs });
+    const result = await HealthConnect.readActiveEnergy({ sinceMs, packageNames });
     return result.days;
+  } catch {
+    return [];
+  }
+}
+
+/** Today's step total per Health Connect data origin — `[]` on web, missing
+ * permission, or any native error, never throws, same contract as every
+ * other read here. This is what feeds Settings' "Step source" picker (issue
+ * #20): it exists so the user can be shown REAL per-source numbers and pick
+ * among them, rather than this app guessing which origin is "the real one"
+ * (see HealthConnectPlugin.kt's readStepSources for why guessing isn't the
+ * honest option). */
+export async function readStepSources(): Promise<StepSourceJs[]> {
+  if (!Capacitor.isNativePlatform()) return [];
+  try {
+    const result = await HealthConnect.readStepSources();
+    return result.sources;
   } catch {
     return [];
   }

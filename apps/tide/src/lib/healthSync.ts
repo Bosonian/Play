@@ -7,6 +7,7 @@ import {
   HEALTH_LAST_SYNC_AT_SETTING,
   HEALTH_MOVEMENT_CURSOR_SETTING,
   HEALTH_SYNC_CURSOR_SETTING,
+  readSelectedStepSources,
 } from './healthSettings';
 
 // Health Connect bridge increment (0.3.0): the Dexie-touching orchestrator
@@ -333,10 +334,22 @@ const MOVEMENT_REREAD_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
  * reads — a device with years of Samsung Health history should not have its
  * ENTIRE past re-fetched on every single app open — not to prevent
  * duplicates the way the weigh-in cursor does.
+ *
+ * Also reads `MOVEMENT_STEP_SOURCES_SETTING` (issue #20 — see
+ * healthSettings.ts's own comment) and passes it straight through to both
+ * native reads as a `dataOriginFilter`: an empty selection (nothing chosen
+ * yet in Settings' "Step source" picker) counts every Health Connect origin,
+ * same as before this setting existed, so a not-yet-configured device isn't
+ * silently protected from the over-counting bug — see that setting's own
+ * comment on why that's the honest default rather than a gap.
  */
 async function syncMovement(): Promise<void> {
   const cursorMs = await readCursor(HEALTH_MOVEMENT_CURSOR_SETTING);
-  const [stepsDays, energyDays] = await Promise.all([readSteps(cursorMs), readActiveEnergy(cursorMs)]);
+  const selectedSources = await readSelectedStepSources();
+  const [stepsDays, energyDays] = await Promise.all([
+    readSteps(cursorMs, selectedSources),
+    readActiveEnergy(cursorMs, selectedSources),
+  ]);
   if (stepsDays.length === 0 && energyDays.length === 0) return;
 
   const merged = mergeMovementDays(stepsDays, energyDays);

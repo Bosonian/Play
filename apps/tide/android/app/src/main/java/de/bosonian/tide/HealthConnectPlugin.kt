@@ -53,7 +53,9 @@ import androidx.health.connect.client.records.ActiveCaloriesBurnedRecord
 import androidx.health.connect.client.records.BodyFatRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.WeightRecord
+import androidx.health.connect.client.records.metadata.DataOrigin
 import androidx.health.connect.client.request.AggregateGroupByPeriodRequest
+import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import com.getcapacitor.JSArray
@@ -324,10 +326,29 @@ class HealthConnectPlugin : Plugin() {
      * this API exists to solve. As a bonus it splits a midnight-spanning
      * record at the day boundary (the old raw approach attributed the whole
      * record to its start day), so the per-day numbers are more correct too.
+     *
+     * FIELD FIX (0.6.0 — issue #20, "steps shown as ~11k, Samsung Health says
+     * 6714"): 0.5.2's fix above de-duplicates records that OVERLAP within a
+     * single data origin (the watch reporting the same walk twice), but two
+     * INDEPENDENT origins — Samsung Health's own aggregate AND the phone's
+     * separate pedometer app, say — both legitimately hold non-overlapping
+     * StepsRecords for the same walk, and `aggregateGroupByPeriod` sums
+     * across origins by design, not just within one. There is no reliable
+     * way to auto-detect which origin is "the real one" (Settings.tsx's own
+     * comment on this decision explains why this plugin does not try to
+     * guess). The `dataOriginFilter` this call now accepts is the fix: an
+     * OPTIONAL `packageNames` option scopes the aggregate to exactly the
+     * origins the user picked in Settings' "Step source" picker (see
+     * `readStepSources` below, which is what powers that picker's per-source
+     * breakdown). See `dataOriginFilterFrom`'s own comment for why an absent
+     * or empty list means "no filter" — Health Connect's own default and
+     * exactly today's (over-counting) behaviour, preserved for anyone who
+     * hasn't picked a source yet.
      */
     @PluginMethod
     fun readSteps(call: PluginCall) {
         val sinceMs = call.getLong("sinceMs", 0L) ?: 0L
+        val dataOriginFilter = dataOriginFilterFrom(call)
         pluginScope.launch {
             val result = JSObject()
             val days = JSArray()
@@ -341,6 +362,7 @@ class HealthConnectPlugin : Plugin() {
                                 metrics = setOf(StepsRecord.COUNT_TOTAL),
                                 timeRangeFilter = TimeRangeFilter.between(startLocal, endLocal),
                                 timeRangeSlicer = Period.ofDays(1),
+                                dataOriginFilter = dataOriginFilter,
                             )
                         )
                         for (group in response) {
@@ -372,6 +394,7 @@ class HealthConnectPlugin : Plugin() {
     @PluginMethod
     fun readActiveEnergy(call: PluginCall) {
         val sinceMs = call.getLong("sinceMs", 0L) ?: 0L
+        val dataOriginFilter = dataOriginFilterFrom(call)
         pluginScope.launch {
             val result = JSObject()
             val days = JSArray()
@@ -385,6 +408,7 @@ class HealthConnectPlugin : Plugin() {
                                 metrics = setOf(ActiveCaloriesBurnedRecord.ACTIVE_CALORIES_TOTAL),
                                 timeRangeFilter = TimeRangeFilter.between(startLocal, endLocal),
                                 timeRangeSlicer = Period.ofDays(1),
+                                dataOriginFilter = dataOriginFilter,
                             )
                         )
                         for (group in response) {
@@ -400,6 +424,110 @@ class HealthConnectPlugin : Plugin() {
                 // see readWeight's own comment
             }
             result.put("days", days)
+            call.resolve(result)
+        }
+    }
+
+    /**
+     * Parses `readSteps`/`readActiveEnergy`'s optional `packageNames` option
+     * into the `Set<DataOrigin>` `AggregateGroupByPeriodRequest` wants.
+     *
+     * EMPTY SET MEANS "ALL ORIGINS" — this is Health Connect's own default
+     * for `dataOriginFilter` (an unfiltered aggregate), and it is exactly
+     * what `readSteps`/`readActiveEnergy` did before this option existed. So
+     * an absent `packageNames` key (old JS bundle, or a caller that never
+     * set a source preference — see healthSettings.ts's own comment on why
+     * "unset" deliberately means "don't pick a source on the user's behalf")
+     * must resolve here to `emptySet()`, not to some other "everything"
+     * sentinel — any other encoding would be a second, redundant way to say
+     * the same thing and a second place a bug could hide.
+     *
+     * `call.getArray` returning a malformed shape, or `toList()` throwing on
+     * an entry it can't coerce, is caught and also treated as "no filter" —
+     * a parse problem here must degrade to today's (over-counting, but
+     * previously-correct-by-definition) behaviour rather than crash a read
+     * that used to succeed.
+     */
+    private fun dataOriginFilterFrom(call: PluginCall): Set<DataOrigin> {
+        val raw = call.getArray("packageNames", null) ?: return emptySet()
+        return try {
+            raw.toList<Any>()
+                .filterIsInstance<String>()
+                .map { DataOrigin(it) }
+                .toSet()
+        } catch (e: Exception) {
+            emptySet()
+        }
+    }
+
+    /**
+     * Resolves `{ sources: [{packageName, steps}] }` — TODAY's
+     * de-duplicated step total PER DATA ORIGIN, so Settings' "Step source"
+     * picker can show the user real numbers (e.g. "Samsung Health — 6,714
+     * today") instead of asking them to pick a package name blind. This is
+     * the diagnostic half of the issue #20 fix (see `readSteps`'s doc
+     * comment above for the bug); `readSteps`/`readActiveEnergy`'s new
+     * `dataOriginFilter` is the enforcement half.
+     *
+     * Two-step, same local-midnight-aligned "today" as `localAggregateRange`
+     * (see that function's own doc comment — this reuses it rather than
+     * hand-rolling a second definition of "today" that could quietly drift
+     * from it):
+     *  1. `readRecords` today's raw StepsRecords just to discover which
+     *     origins wrote anything — NOT paginated. `readRecords` responses
+     *     are paginated in general (`response.pageToken`), but for
+     *     DISCOVERING which origin package names exist over a single day,
+     *     one page is enough in every realistic case; deliberately not
+     *     handling `pageToken` here rather than silently claiming this list
+     *     is exhaustive when it might not be on a day with an unusually
+     *     large record count.
+     *  2. Per discovered origin, a real `aggregate` (not a raw sum) scoped
+     *     to that one origin via `dataOriginFilter` — the same
+     *     de-duplication `readSteps` relies on, just narrowed to one source
+     *     at a time so each row is an honest, individually-correct total.
+     *
+     * Same never-throw/resolve-a-shape contract as every other read method
+     * in this file: any exception resolves `{sources: []}`.
+     */
+    @PluginMethod
+    fun readStepSources(call: PluginCall) {
+        pluginScope.launch {
+            val result = JSObject()
+            val sources = JSArray()
+            try {
+                val client = healthConnectClientOrNull()
+                if (client != null) {
+                    val (startLocal, endLocal) = localAggregateRange(Instant.now().toEpochMilli())
+                    if (startLocal.isBefore(endLocal)) {
+                        val discovery = client.readRecords(
+                            ReadRecordsRequest(StepsRecord::class, timeRangeFilter = TimeRangeFilter.between(startLocal, endLocal))
+                        )
+                        val packages = discovery.records.map { it.metadata.dataOrigin.packageName }.toSortedSet()
+                        for (packageName in packages) {
+                            val aggregate = client.aggregate(
+                                AggregateRequest(
+                                    metrics = setOf(StepsRecord.COUNT_TOTAL),
+                                    timeRangeFilter = TimeRangeFilter.between(startLocal, endLocal),
+                                    dataOriginFilter = setOf(DataOrigin(packageName)),
+                                )
+                            )
+                            // null = this origin wrote a record today that
+                            // Health Connect's own aggregation then excluded
+                            // (rare, but the aggregate and the raw discovery
+                            // read are two separate calls) — skipped rather
+                            // than shown as a misleading 0.
+                            val steps = aggregate[StepsRecord.COUNT_TOTAL] ?: continue
+                            val entry = JSObject()
+                            entry.put("packageName", packageName)
+                            entry.put("steps", steps)
+                            sources.put(entry)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // see readWeight's own comment
+            }
+            result.put("sources", sources)
             call.resolve(result)
         }
     }
@@ -449,10 +577,11 @@ class HealthConnectPlugin : Plugin() {
 
     /** `null` when Health Connect's SDK isn't available on this device at
      * all (see isAvailable's own doc comment on the three-way status) — the
-     * FOUR read methods above all treat that the same as any other read
-     * failure (a caught exception), resolving an empty shape either way.
-     * `getOrCreate` itself is a plain (non-suspend) factory call, safe from
-     * any thread. */
+     * FIVE read methods above (readWeight, readBodyFat, readSteps,
+     * readActiveEnergy, readStepSources) all treat that the same as any
+     * other read failure (a caught exception), resolving an empty shape
+     * either way. `getOrCreate` itself is a plain (non-suspend) factory
+     * call, safe from any thread. */
     private fun healthConnectClientOrNull(): HealthConnectClient? {
         if (HealthConnectClient.getSdkStatus(context) != HealthConnectClient.SDK_AVAILABLE) return null
         return HealthConnectClient.getOrCreate(context)

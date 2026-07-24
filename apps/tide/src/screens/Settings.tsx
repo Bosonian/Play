@@ -8,8 +8,15 @@ import { TextField } from '../ui/TextField';
 import { Button } from '../ui/Button';
 import { APP_VERSION, APP_VERSION_CODE } from '../lib/appVersion';
 import { AVAILABLE_UPDATE_SETTING, checkForUpdate, parseAvailableUpdate } from '../lib/updateCheck';
-import { HEALTH_CONNECT_ENABLED_SETTING, HEALTH_LAST_SYNC_AT_SETTING } from '../lib/healthSettings';
-import { isHealthConnectAvailable, requestHealthPermissions } from '../native/healthConnect';
+import {
+  HEALTH_CONNECT_ENABLED_SETTING,
+  HEALTH_LAST_SYNC_AT_SETTING,
+  MOVEMENT_STEP_SOURCES_SETTING,
+  parseStepSourcesValue,
+  stepSourceLabel,
+  writeSelectedStepSources,
+} from '../lib/healthSettings';
+import { isHealthConnectAvailable, readStepSources, requestHealthPermissions, type StepSourceJs } from '../native/healthConnect';
 import { syncHealthData } from '../lib/healthSync';
 import { logEvent } from '../lib/eventLog';
 import { DEFAULT_FEEDBACK_REPO, FEEDBACK_REPO_SETTING, FEEDBACK_TOKEN_SETTING } from '../lib/reportSettings';
@@ -70,6 +77,53 @@ export function Settings({ onNavigate }: SettingsProps) {
   const [connectOutcome, setConnectOutcome] = useState<ConnectOutcome>('idle');
   const [syncing, setSyncing] = useState(false);
   const showConnected = isConnected || connectOutcome === 'connected';
+
+  // Step source picker (issue #20 — see HealthConnectPlugin.kt's readSteps
+  // doc comment for the bug: Health Connect can hold independent step
+  // streams from more than one source, and summing them double-counts a
+  // walk). This screen deliberately does NOT try to guess which origin is
+  // "the real one" (e.g. always preferring a known Samsung Health package) —
+  // a device's actual mix of sources (watch app, phone pedometer, Health
+  // Connect's own app...) isn't something this codebase can know ahead of
+  // time, and a wrong guess would silently under- or over-count in a way
+  // that's harder to notice than today's obviously-too-high total. Showing
+  // the real, named sources with their real numbers and letting the user
+  // pick is the honest alternative. `stepSources` is `null` before the
+  // first fetch resolves (loading) vs `[]` once it has (genuinely nothing
+  // found today) — the empty-state copy below depends on telling those two
+  // states apart.
+  const stepSourcesSetting = useLiveQuery(() => db.settings.get(MOVEMENT_STEP_SOURCES_SETTING), []);
+  const selectedStepSources = parseStepSourcesValue(stepSourcesSetting?.value);
+  const [stepSources, setStepSources] = useState<StepSourceJs[] | null>(null);
+  const [stepSourcesLoading, setStepSourcesLoading] = useState(false);
+
+  async function refreshStepSources() {
+    setStepSourcesLoading(true);
+    setStepSources(await readStepSources());
+    setStepSourcesLoading(false);
+  }
+
+  // Fetch once as soon as the Health Connect section shows as connected —
+  // covers both "already connected on a fresh Settings visit" and "just
+  // connected this tap" (handleConnect's own effect only calls
+  // syncHealthData, not this). Not re-run on every render: `showConnected`
+  // only flips false->true once per screen visit under normal use.
+  useEffect(() => {
+    if (showConnected) void refreshStepSources();
+  }, [showConnected]);
+
+  /** Selecting "All sources" writes an empty selection (see
+   * MOVEMENT_STEP_SOURCES_SETTING's own doc comment on why empty means "all
+   * sources", not "nothing chosen yet"); selecting a specific row replaces
+   * the whole selection with that one package name — single-select, not
+   * additive, so the picker's own state always matches exactly what's
+   * highlighted. Either way, `syncHealthData()` re-runs immediately so
+   * Home's step count reflects the new choice without a separate "Sync now"
+   * tap. */
+  async function selectStepSource(packageName: string | null) {
+    await writeSelectedStepSources(packageName === null ? [] : [packageName]);
+    await syncHealthData();
+  }
 
   /**
    * "Connect health data" — the ONE place this app ever requests a Health
@@ -193,6 +247,71 @@ export function Settings({ onNavigate }: SettingsProps) {
                 {syncing ? 'Syncing.' : 'Sync now'}
               </TextAction>
               <TextAction onClick={() => void handleDisconnect()}>Disconnect</TextAction>
+            </div>
+
+            {/* Step source picker (issue #20) — quiet sub-block, only shown
+                once connected, since it has nothing to show before then. */}
+            <div className="flex flex-col gap-2 border-t border-slate-800/60 pt-3">
+              <div className="flex items-baseline justify-between">
+                <h3 className="text-xs font-medium uppercase tracking-[0.1em] text-slate-500">Step source</h3>
+                <TextAction
+                  onClick={() => void refreshStepSources()}
+                  disabled={stepSourcesLoading}
+                  className="min-h-0 py-0 text-xs disabled:opacity-40"
+                >
+                  {stepSourcesLoading ? 'Loading.' : 'Refresh'}
+                </TextAction>
+              </div>
+              <p className="text-sm text-slate-500">
+                Health Connect may hold steps from more than one source. Counting all of them adds the same
+                walk twice.
+              </p>
+
+              {stepSources === null && stepSourcesLoading && (
+                <p className="text-sm text-slate-500">Loading today&apos;s sources.</p>
+              )}
+
+              {stepSources !== null && stepSources.length === 0 && (
+                <p className="text-sm text-slate-500">No step sources found for today yet.</p>
+              )}
+
+              {stepSources !== null && stepSources.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  {/* "All sources" — the plain sum of every row below, and
+                      (see the note beneath) exactly what Tide counts by
+                      default (empty selection) until one row is chosen. */}
+                  <Button
+                    type="button"
+                    aria-pressed={selectedStepSources.length === 0}
+                    variant={selectedStepSources.length === 0 ? 'primary' : 'secondary'}
+                    className="flex items-center justify-between px-3 py-2 text-sm"
+                    onClick={() => void selectStepSource(null)}
+                  >
+                    <span>All sources</span>
+                    <span>{stepSources.reduce((sum, source) => sum + source.steps, 0).toLocaleString('en-US')} today</span>
+                  </Button>
+                  {stepSources.map((source) => {
+                    const pressed = selectedStepSources.length === 1 && selectedStepSources[0] === source.packageName;
+                    return (
+                      <Button
+                        key={source.packageName}
+                        type="button"
+                        aria-pressed={pressed}
+                        variant={pressed ? 'primary' : 'secondary'}
+                        className="flex items-center justify-between px-3 py-2 text-sm"
+                        onClick={() => void selectStepSource(source.packageName)}
+                      >
+                        <span>{stepSourceLabel(source.packageName)}</span>
+                        <span>{source.steps.toLocaleString('en-US')} today</span>
+                      </Button>
+                    );
+                  })}
+                  <p className="text-xs text-slate-600">
+                    &quot;All sources&quot; adds every row above together — that combined total is what Tide
+                    counts today unless one source is chosen.
+                  </p>
+                </div>
+              )}
             </div>
           </>
         ) : (
