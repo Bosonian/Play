@@ -8,6 +8,7 @@ import { TextAction } from '../ui/TextAction';
 import { estimatePlateKcal, formatPlateKcal, type PlateComposition } from '../lib/plateEstimate';
 import { logEvent } from '../lib/eventLog';
 import { hapticImpact } from '../native/haptics';
+import { refreshWidgets } from '../lib/widgets';
 
 interface PlateCheckInProps {
   onNavigate: (screen: Screen) => void;
@@ -172,6 +173,9 @@ export function PlateCheckIn({ onNavigate }: PlateCheckInProps) {
     // Haptic-on-save (increment 6 polish) — see WeighInEntry.tsx's own
     // comment on the same call for why.
     void hapticImpact('light');
+    // Widget increment (0.9.0): a logged plate can move the daily-shape
+    // check-ins line (and, in turn, shapeMet).
+    void refreshWidgets();
 
     onNavigate({ name: 'home' });
   }
@@ -210,6 +214,10 @@ export function PlateCheckIn({ onNavigate }: PlateCheckInProps) {
     // this function's own header comment: "a skip is a real check-in"), so
     // it gets the same acknowledgement tap as a real plate.
     void hapticImpact('light');
+    // Widget increment (0.9.0): a skip is still a check-in — see this
+    // function's own header comment — so it moves the same daily-shape line
+    // a real plate does.
+    void refreshWidgets();
     onNavigate({ name: 'home' });
   }
 

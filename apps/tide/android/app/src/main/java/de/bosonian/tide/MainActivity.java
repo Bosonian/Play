@@ -7,7 +7,9 @@ import com.getcapacitor.BridgeActivity;
  * Health Connect bridge increment (0.3.0) adds this app's first custom
  * (non-npm) Capacitor plugin, HealthConnectPlugin.kt — see that file's own
  * header comment for why it's Kotlin rather than Java, and for its
- * permission-contract shape.
+ * permission-contract shape. Widget increment (0.9.0) adds
+ * WidgetBridgePlugin.java the same way — plain Java, no coroutine API to
+ * justify Kotlin, matching Runway's own widget plugin.
  *
  * registerPlugin() has to run BEFORE super.onCreate(), not after —
  * BridgeActivity.onCreate() (see
@@ -26,6 +28,8 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(HealthConnectPlugin.class);
+        // Widget increment (0.9.0): WidgetBridgePlugin.java.
+        registerPlugin(WidgetBridgePlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

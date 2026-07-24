@@ -7,6 +7,7 @@ import { TextAction } from '../ui/TextAction';
 import { DELETE_CONFIRM_WINDOW_MS, isArmStillValid, isConfirmTooSoon } from '../lib/deleteArm';
 import { logEvent } from '../lib/eventLog';
 import { hapticImpact } from '../native/haptics';
+import { refreshWidgets } from '../lib/widgets';
 
 interface HistoryProps {
   onNavigate: (screen: Screen) => void;
@@ -94,6 +95,9 @@ export function History({ onNavigate }: HistoryProps) {
     setExpandedId(null);
     await db.weighIns.delete(id);
     void hapticImpact('light');
+    // Widget increment (0.9.0): a removed weigh-in can move the trend
+    // value/line just as much as a new one can.
+    void refreshWidgets();
     if (weighIn) {
       // "24 Jul" — day + short month, no year and no time: History's own
       // list already groups by nothing finer than a full date, so a log

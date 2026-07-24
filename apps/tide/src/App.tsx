@@ -11,6 +11,7 @@ import { ErrorBoundary } from './ui/ErrorBoundary';
 import { logEvent } from './lib/eventLog';
 import { syncHealthData } from './lib/healthSync';
 import { registerBackGesture } from './native/backGesture';
+import { refreshWidgets } from './lib/widgets';
 
 // Navigation as plain React state, not a router library — same call Runway
 // made in increment 1, for the same reason: no deep-linkable URL
@@ -109,7 +110,12 @@ export default function App() {
     function handleVisibilityChange() {
       if (document.visibilityState === 'visible') {
         void logEvent('lifecycle', 'App resumed.');
-        void syncHealthData();
+        // Widget increment (0.9.0): chained the same way as main.tsx's own
+        // startup call — a resume is exactly the "stepped off the scale,
+        // came back to the app" moment this bridge exists for, and the
+        // widget should catch up to whatever Health Connect just handed
+        // over, not wait for the next explicit save.
+        void syncHealthData().then(() => void refreshWidgets());
       } else {
         void logEvent('lifecycle', 'App backgrounded.');
       }

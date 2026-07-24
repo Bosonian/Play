@@ -7,6 +7,7 @@ import { logEvent, pruneEventLog } from './lib/eventLog';
 import { checkForUpdate } from './lib/updateCheck';
 import { syncHealthData } from './lib/healthSync';
 import { syncPendingReports } from './lib/reportSync';
+import { refreshWidgets } from './lib/widgets';
 
 // Increment 2: prune-on-open, mirroring main.tsx's own comment in Runway —
 // one cheap pass here beats a count-and-maybe-delete after every single
@@ -28,7 +29,21 @@ void checkForUpdate();
 // immediately (before any native call) unless Settings' "Connect health
 // data" has already been used once — see that function's own doc comment —
 // so this is a cheap no-op on every open until Deepak actually connects it.
-void syncHealthData();
+// Widget increment (0.9.0): refreshWidgets() runs again once this resolves,
+// so a sync that pulled in a new scale reading updates the widget without
+// waiting for Deepak to open the app a second time.
+void syncHealthData().then(() => void refreshWidgets());
+
+// Widget increment (0.9.0): an unconditional refresh at app start, on top
+// of the syncHealthData-chained one above — a widget left showing
+// yesterday's (or an even older) snapshot should catch up to whatever's
+// already in Dexie the moment the app opens, not wait on a Health Connect
+// sync that may no-op entirely (Health Connect not connected) or take a
+// moment to resolve. Redundant with the chained call above on a device
+// where Health Connect IS connected (both end up pushing the same
+// snapshot); redundancy here costs one extra Dexie read, not a visible
+// glitch — see widgets.ts's own refreshWidgets doc comment.
+void refreshWidgets();
 
 // Field-reports increment (increment 5, ported from Runway): retries
 // whatever's still `status: 'pending'` in the fieldReports table against

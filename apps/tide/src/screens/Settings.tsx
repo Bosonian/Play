@@ -25,6 +25,7 @@ import { DEFAULT_FEEDBACK_REPO, FEEDBACK_REPO_SETTING, FEEDBACK_TOKEN_SETTING } 
 import { backupFilename, buildBackup, LAST_BACKUP_AT_SETTING, validateBackup } from '../lib/backup';
 import { restoreBackup } from '../lib/restoreBackup';
 import { exportBackupFile } from '../native/backupFile';
+import { refreshWidgets } from '../lib/widgets';
 
 interface SettingsProps {
   onNavigate: (screen: Screen) => void;
@@ -147,6 +148,9 @@ export function Settings({ onNavigate }: SettingsProps) {
   async function selectStepSource(packageName: string | null) {
     await writeSelectedStepSources(packageName === null ? [] : [packageName]);
     await syncHealthData();
+    // Widget increment (0.9.0): a step-source change can move today's steps
+    // reading, which can move the daily-shape steps line.
+    void refreshWidgets();
   }
 
   /**
@@ -183,11 +187,16 @@ export function Settings({ onNavigate }: SettingsProps) {
     void logEvent('health', `Health Connect connected (${result.grantedScopes.length} of 4 scopes granted).`);
     setConnectOutcome('connected');
     await syncHealthData();
+    // Widget increment (0.9.0): the first sync after connecting can pull in
+    // years of scale history — the widget's trend should reflect that
+    // immediately, not wait for Deepak to reopen the app.
+    void refreshWidgets();
   }
 
   async function handleSyncNow() {
     setSyncing(true);
     await syncHealthData();
+    void refreshWidgets();
     setSyncing(false);
   }
 
@@ -291,6 +300,9 @@ export function Settings({ onNavigate }: SettingsProps) {
       'dailyShape',
       `Daily shape target set: ${checkIns} check-in${checkIns === 1 ? '' : 's'}, ${steps.toLocaleString('en-US')} steps.`,
     );
+    // Widget increment (0.9.0): a new target changes shapeLine1/shapeLine2
+    // (and shapeMet) the widget shows.
+    void refreshWidgets();
   }
 
   /** Plain and unceremonious — no confirm dialog (CLAUDE.md's no-shame rule:
@@ -301,6 +313,8 @@ export function Settings({ onNavigate }: SettingsProps) {
     await clearDailyShapeTarget();
     setDailyShapeError(null);
     void logEvent('dailyShape', 'Daily shape target removed.');
+    // Widget increment (0.9.0): clears shapeLine1/shapeLine2 on the widget.
+    void refreshWidgets();
   }
 
   // Field-reports increment (increment 5, ported from Runway): the GitHub

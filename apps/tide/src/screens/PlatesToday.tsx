@@ -10,6 +10,7 @@ import { localDayBoundsIso } from '../lib/healthSync';
 import { DELETE_CONFIRM_WINDOW_MS, isArmStillValid, isConfirmTooSoon } from '../lib/deleteArm';
 import { logEvent } from '../lib/eventLog';
 import { hapticImpact } from '../native/haptics';
+import { refreshWidgets } from '../lib/widgets';
 
 interface PlatesTodayProps {
   onNavigate: (screen: Screen) => void;
@@ -110,6 +111,9 @@ export function PlatesToday({ onNavigate }: PlatesTodayProps) {
     setExpandedId(null);
     await db.meals.delete(id);
     void hapticImpact('light');
+    // Widget increment (0.9.0): a removed check-in can move the daily-shape
+    // check-ins line just as much as logging one does.
+    void refreshWidgets();
     if (meal) {
       const at = new Date(meal.at);
       // "24 Jul, 13:42" — unlike History's weigh-in removal line, this

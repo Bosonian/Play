@@ -6,6 +6,7 @@ import { ScreenHeader } from '../ui/ScreenHeader';
 import { TextField } from '../ui/TextField';
 import { logEvent } from '../lib/eventLog';
 import { hapticImpact } from '../native/haptics';
+import { refreshWidgets } from '../lib/widgets';
 
 interface WeighInEntryProps {
   onNavigate: (screen: Screen) => void;
@@ -87,6 +88,8 @@ export function WeighInEntry({ onNavigate }: WeighInEntryProps) {
     // is the calm, non-gamified confirmation; see native/haptics.ts's own
     // comment for why this never throws.
     void hapticImpact('light');
+    // Widget increment (0.9.0): a new weigh-in can move the trend value/line.
+    void refreshWidgets();
 
     onNavigate({ name: 'home' });
   }

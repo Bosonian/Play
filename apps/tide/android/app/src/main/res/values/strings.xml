@@ -4,4 +4,18 @@
     <string name="title_activity_main">Tide</string>
     <string name="package_name">de.bosonian.tide</string>
     <string name="custom_url_scheme">de.bosonian.tide</string>
+
+    <!-- Widget increment (0.9.0). widget_tide_label: shown as this
+         receiver's tile name in the widget picker (see AndroidManifest.xml's
+         own comment on why android:label is required there — without it, a
+         <receiver> falls back to the <application>'s own label, "Tide",
+         which would sit right next to the app's own launcher icon (also
+         labelled "Tide") in the picker with nothing to tell them apart.
+         "Weight trend" names what the widget actually shows, same idiom
+         Runway's own widget labels use (feature name, not app name).
+         widget_tide_description: the one-line summary shown under that
+         label on Android 12+ (widget_tide_info.xml's own
+         android:description). -->
+    <string name="widget_tide_label">Weight trend</string>
+    <string name="widget_tide_description">Weight trend and today\'s shape.</string>
 </resources>
