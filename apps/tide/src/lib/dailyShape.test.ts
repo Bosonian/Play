@@ -20,9 +20,18 @@ describe('serializeDailyShapeTarget / parseDailyShapeTarget — round trip', () 
     expect(parseDailyShapeTarget(serializeDailyShapeTarget(target))).toEqual(target);
   });
 
-  it('round-trips both components zero', () => {
-    const target: DailyShapeTarget = { checkIns: 0, steps: 0 };
-    expect(parseDailyShapeTarget(serializeDailyShapeTarget(target))).toEqual(target);
+  // Review fix (0.8.0): 0,0 is a shape with nothing in it, not a target.
+  // Left parseable it rendered an emerald card headed "Today's shape" with
+  // no component lines and "Today's shape is met." — an empty claim of
+  // success. The parser, Settings' validation and Home now agree.
+  it('refuses both components zero — a shape with nothing in it is not a target', () => {
+    expect(parseDailyShapeTarget('0,0')).toBeNull();
+    expect(parseDailyShapeTarget(serializeDailyShapeTarget({ checkIns: 0, steps: 0 }))).toBeNull();
+  });
+
+  it('still accepts a single zero component (that is the per-component opt-out)', () => {
+    expect(parseDailyShapeTarget('0,6000')).toEqual({ checkIns: 0, steps: 6000 });
+    expect(parseDailyShapeTarget('3,0')).toEqual({ checkIns: 3, steps: 0 });
   });
 
   it('serializes as a plain comma-joined pair', () => {
@@ -188,9 +197,9 @@ describe('formatStepsLine', () => {
     expect(formatStepsLine(progress.steps)).toBe('4,120 of 6,000 steps.');
   });
 
-  it('renders "not yet" for a null steps reading, never a bare 0', () => {
+  it('names the absent reading for a null steps value, never a bare 0, with the target last', () => {
     const progress = dailyShapeProgress({ checkIns: 0, steps: 6000 }, { checkIns: 0, steps: null });
-    expect(formatStepsLine(progress.steps)).toBe('6,000 steps — no reading yet.');
+    expect(formatStepsLine(progress.steps)).toBe('No steps reading yet — target 6,000.');
   });
 
   it('returns null (not rendered) when the steps target is 0', () => {

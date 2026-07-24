@@ -269,11 +269,20 @@ export function Settings({ onNavigate }: SettingsProps) {
     }
     // Both zero isn't a small target, it's no target at all — dailyShape.ts's
     // own `dailyShapeProgress` treats a 0 component as "not part of the
-    // shape", so a 0/0 target would render nothing on Home despite claiming
-    // to be set. Naming that here, precisely, rather than silently saving a
-    // target that would then show an empty card.
+    // shape", so a 0/0 target is a shape with nothing in it. The parser
+    // refuses it too (see parseDailyShapeTarget), so all three layers agree.
+    //
+    // The message branches on whether a target is actually saved (review
+    // fix, 0.8.0): "use Remove instead" pointed at a control that only
+    // renders once a target EXISTS, so a first-time user zeroing both
+    // suggested defaults — a perfectly reasonable way to decline the
+    // feature — was told to press a button that wasn't on screen.
     if (checkIns === 0 && steps === 0) {
-      setDailyShapeError('Both zero is no target — use Remove instead.');
+      setDailyShapeError(
+        savedDailyShapeTarget
+          ? 'Both zero is no target — use Remove instead.'
+          : 'Both zero is no target — nothing to save.',
+      );
       return;
     }
     setDailyShapeError(null);
@@ -611,9 +620,23 @@ export function Settings({ onNavigate }: SettingsProps) {
           of that section, so keeping the two adjacent reads naturally. */}
       <section className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
         <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Daily shape</h2>
+        {/* Mechanics, not stance (review fix, 0.8.0). The first draft read
+            "A day-sized target, small enough to actually do... never scores
+            you — a day you miss says nothing." Three problems, all failing
+            CLAUDE.md's exactness bar: "small enough to actually do" is a
+            promise the app can't keep (he picks the number); "never scores
+            you" is the app vouching for its own virtue, which is the
+            wellness-app register the brief rules out; and "a day you miss
+            says nothing" is not literally true — an unmet day shows plain
+            numbers, which IS the design but is not nothing. Describing what
+            the feature does, and exactly what an unmet day looks like, is
+            both more honest and more reassuring than claiming virtue. The
+            0-rule is stated here too: it was previously discoverable only by
+            accident, which meant the per-component opt-out effectively
+            didn't exist. */}
         <p className="text-sm text-slate-500">
-          A day-sized target, small enough to actually do. It sits below the weight trend and never scores
-          you — a day you miss says nothing.
+          A day-sized target: check-ins and steps. It shows on Home below the weight trend. An unmet day
+          shows the plain numbers and nothing else. Set either to 0 to leave it out of the shape.
         </p>
 
         <div className="flex gap-2">
@@ -623,7 +646,7 @@ export function Settings({ onNavigate }: SettingsProps) {
             inputMode="numeric"
             value={checkInsDraft}
             onChange={(e) => setCheckInsDraft(e.target.value)}
-            hint={`Suggested: ${SUGGESTED_DAILY_SHAPE_TARGET.checkIns}`}
+            hint={`Suggested: ${SUGGESTED_DAILY_SHAPE_TARGET.checkIns} · 0 leaves it out`}
             containerClassName="flex-1"
           />
           <TextField
@@ -632,7 +655,7 @@ export function Settings({ onNavigate }: SettingsProps) {
             inputMode="numeric"
             value={stepsDraft}
             onChange={(e) => setStepsDraft(e.target.value)}
-            hint={`Suggested: ${SUGGESTED_DAILY_SHAPE_TARGET.steps.toLocaleString('en-US')}`}
+            hint={`Suggested: ${SUGGESTED_DAILY_SHAPE_TARGET.steps.toLocaleString('en-US')} · 0 leaves it out`}
             containerClassName="flex-1"
           />
         </div>

@@ -72,6 +72,16 @@ export function parseDailyShapeTarget(value: string | undefined): DailyShapeTarg
   const steps = Number(rawSteps);
   if (!Number.isInteger(checkIns) || !Number.isInteger(steps)) return null;
   if (checkIns < 0 || steps < 0) return null;
+  // 0,0 is NOT a target (review fix, 0.8.0). A 0 component means "not part
+  // of my shape", so both-zero is a shape with nothing in it — and left
+  // parseable it would render an emerald card headed "Today's shape" with no
+  // component lines under it and "Today's shape is met.", an empty claim of
+  // success. Settings already refuses to SAVE 0,0, so this only guards a
+  // hand-edited row or an edited backup file (validateBackup checks
+  // structure, not per-row semantics) — but it also makes the parser, the
+  // Settings validation and Home agree on one definition of 0,0 instead of
+  // three, which is the more important reason.
+  if (checkIns === 0 && steps === 0) return null;
 
   return { checkIns, steps };
 }
@@ -155,7 +165,7 @@ export function formatCheckInsLine(progress: DailyShapeComponentProgress): strin
 }
 
 /** "4,120 of 6,000 steps." or, with no movement row synced yet today,
- * "6,000 steps — no reading yet." — `null` when the steps target is 0
+ * "No steps reading yet — target 6,000." — `null` when the steps target is 0
  * (opted out).
  * `en-US` thousands separator, matching `formatMovementLine`'s own choice
  * (healthSync.ts: CLAUDE.md pins English UI for v1, so the ambient device
@@ -170,7 +180,13 @@ export function formatStepsLine(progress: DailyShapeComponentProgress): string |
   // app admits it doesn't know something reads as a glitch rather than as
   // the honest statement it is. A genuinely different state gets a
   // genuinely different sentence — and still never an implied zero.
-  if (progress.actual === null) return `${targetPart} steps — no reading yet.`;
+  //
+  // The TARGET comes last (review fix, 0.8.0). Leading with it — "6,000
+  // steps — no reading yet." — put the target where every sibling line puts
+  // the ACTUAL, so the eye reads "6,000 steps" as steps taken for the
+  // instant before the dash corrects it. Naming the absence first removes
+  // the misread outright.
+  if (progress.actual === null) return `No steps reading yet — target ${targetPart}.`;
   return `${progress.actual.toLocaleString('en-US')} of ${targetPart} steps.`;
 }
 

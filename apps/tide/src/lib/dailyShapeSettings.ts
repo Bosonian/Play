@@ -1,5 +1,5 @@
 import { db } from '../db/db';
-import { parseDailyShapeTarget, serializeDailyShapeTarget, type DailyShapeTarget } from './dailyShape';
+import { serializeDailyShapeTarget, type DailyShapeTarget } from './dailyShape';
 
 // Settings-table key for the daily-shape target (increment 7) — same
 // flat key-value shape and same "screens read this file's keys directly,
@@ -11,15 +11,6 @@ import { parseDailyShapeTarget, serializeDailyShapeTarget, type DailyShapeTarget
  * daily-shape block at all — matching `MOVEMENT_STEP_SOURCES_SETTING`'s own
  * "absent row is a meaningful state, not a bug" idiom (healthSettings.ts). */
 export const DAILY_SHAPE_TARGET_SETTING = 'dailyShapeTarget';
-
-/** Read-through: `null` for an absent/empty/malformed row — the parse logic
- * itself lives in dailyShape.ts (`parseDailyShapeTarget`) and is reused here
- * verbatim rather than duplicated, so there is exactly one place that
- * decides what counts as a valid target string. */
-export async function readDailyShapeTarget(): Promise<DailyShapeTarget | null> {
-  const row = await db.settings.get(DAILY_SHAPE_TARGET_SETTING);
-  return parseDailyShapeTarget(row?.value);
-}
 
 /** Writes a target, serialised via dailyShape.ts's own serialiser — the one
  * write path Settings' "Save" button calls, only once the draft values have

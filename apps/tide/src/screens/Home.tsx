@@ -223,7 +223,18 @@ export function Home({ onNavigate }: HomeProps) {
             number, and showing it twice on one screen would be noise, not
             scaffolding — kept for a day with no target set, where it's the
             only such line on the screen. */}
-        {!dailyShapeTarget && todayMealCount !== undefined && todayMealCount > 0 && (
+        {/* Hidden only when the block ACTUALLY renders a check-ins line
+            (review fix, 0.8.0). The condition was `!dailyShapeTarget`, whose
+            justification above — "that block's own check-ins line already
+            states this number" — is false for a steps-only shape
+            (checkIns: 0), where formatCheckInsLine returns null and the
+            block shows no check-in count at all. The result was that setting
+            a steps-only target silently removed the check-in count from
+            Home entirely: a line that existed before this feature, gone for
+            no reason the user could see. */}
+        {!(dailyShapeTarget && dailyShapeTarget.checkIns > 0) &&
+          todayMealCount !== undefined &&
+          todayMealCount > 0 && (
           <button
             type="button"
             onClick={() => onNavigate({ name: 'platesToday' })}
