@@ -230,7 +230,15 @@ class HealthConnectPlugin : Plugin() {
      */
     @PluginMethod
     fun readWeight(call: PluginCall) {
-        val sinceMs = call.getLong("sinceMs", 0L)
+        // getLong is @Nullable even WITH a default (Capacitor returns the
+        // default only when the key is absent AND the present value is a Long;
+        // a JS number that deserialized to something other than Long — or a
+        // missing key — still yields a Java null through the boxed Long return
+        // type, which Kotlin sees as Long?). Instant.ofEpochMilli wants a
+        // primitive long, so coalesce to 0L. Java never caught this (platform
+        // types); Kotlin's null-checking is exactly why it surfaced at compile
+        // time here rather than as a runtime NPE on-device.
+        val sinceMs = call.getLong("sinceMs", 0L) ?: 0L
         pluginScope.launch {
             val result = JSObject()
             val records = JSArray()
@@ -259,7 +267,15 @@ class HealthConnectPlugin : Plugin() {
     /** Same contract as readWeight, for BodyFatRecord. */
     @PluginMethod
     fun readBodyFat(call: PluginCall) {
-        val sinceMs = call.getLong("sinceMs", 0L)
+        // getLong is @Nullable even WITH a default (Capacitor returns the
+        // default only when the key is absent AND the present value is a Long;
+        // a JS number that deserialized to something other than Long — or a
+        // missing key — still yields a Java null through the boxed Long return
+        // type, which Kotlin sees as Long?). Instant.ofEpochMilli wants a
+        // primitive long, so coalesce to 0L. Java never caught this (platform
+        // types); Kotlin's null-checking is exactly why it surfaced at compile
+        // time here rather than as a runtime NPE on-device.
+        val sinceMs = call.getLong("sinceMs", 0L) ?: 0L
         pluginScope.launch {
             val result = JSObject()
             val records = JSArray()
@@ -304,7 +320,15 @@ class HealthConnectPlugin : Plugin() {
      */
     @PluginMethod
     fun readSteps(call: PluginCall) {
-        val sinceMs = call.getLong("sinceMs", 0L)
+        // getLong is @Nullable even WITH a default (Capacitor returns the
+        // default only when the key is absent AND the present value is a Long;
+        // a JS number that deserialized to something other than Long — or a
+        // missing key — still yields a Java null through the boxed Long return
+        // type, which Kotlin sees as Long?). Instant.ofEpochMilli wants a
+        // primitive long, so coalesce to 0L. Java never caught this (platform
+        // types); Kotlin's null-checking is exactly why it surfaced at compile
+        // time here rather than as a runtime NPE on-device.
+        val sinceMs = call.getLong("sinceMs", 0L) ?: 0L
         pluginScope.launch {
             val result = JSObject()
             val days = JSArray()
@@ -348,7 +372,15 @@ class HealthConnectPlugin : Plugin() {
      * ActiveCaloriesBurnedRecord. */
     @PluginMethod
     fun readActiveEnergy(call: PluginCall) {
-        val sinceMs = call.getLong("sinceMs", 0L)
+        // getLong is @Nullable even WITH a default (Capacitor returns the
+        // default only when the key is absent AND the present value is a Long;
+        // a JS number that deserialized to something other than Long — or a
+        // missing key — still yields a Java null through the boxed Long return
+        // type, which Kotlin sees as Long?). Instant.ofEpochMilli wants a
+        // primitive long, so coalesce to 0L. Java never caught this (platform
+        // types); Kotlin's null-checking is exactly why it surfaced at compile
+        // time here rather than as a runtime NPE on-device.
+        val sinceMs = call.getLong("sinceMs", 0L) ?: 0L
         pluginScope.launch {
             val result = JSObject()
             val days = JSArray()
