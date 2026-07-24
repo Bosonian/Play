@@ -7,7 +7,17 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.7.2'
+        // Health Connect bridge (0.3.1): connect-client:1.1.0 hard-requires
+        // AGP 8.9.1+ AND compileSdk 36 (see the v0.3.0 CI failure —
+        // checkReleaseAarMetadata rejected AGP 8.7.2 / compileSdk 35). AGP
+        // 8.9.x itself needs Gradle 8.11+ (this project's wrapper is 8.11.1)
+        // and JDK 17+ (CI runs JDK 21) — both already satisfied, so this is a
+        // clean single-notch bump, not a toolchain cascade. compileSdk moves
+        // to 36 in variables.gradle; targetSdk deliberately stays at 35 (the
+        // log confirms the two move independently — bumping targetSdk would
+        // opt into Android 16 runtime behavior changes untestable in this
+        // environment, so it's left alone).
+        classpath 'com.android.tools.build:gradle:8.9.1'
         classpath 'com.google.gms:google-services:4.4.2'
         // Health Connect bridge increment (0.3.0): the FIRST Kotlin source
         // file in this app (app/src/main/java/de/bosonian/tide/

@@ -16,7 +16,13 @@ ext {
     // floor — but a real reduction in what this app COULD run on, worth
     // naming plainly rather than treating as a free change.
     minSdkVersion = 26
-    compileSdkVersion = 35
+    // compileSdk 36 required by androidx.health.connect:connect-client:1.1.0
+    // (v0.3.0 CI's checkReleaseAarMetadata failed on compileSdk 35). This only
+    // lets the compiler SEE the Android 16 / API 36 symbols the library links
+    // against; it does NOT change runtime behavior. targetSdk stays at 35 on
+    // purpose: raising it opts the app into API-36 runtime behavior changes,
+    // which is a separate, on-device-only decision, not needed to compile.
+    compileSdkVersion = 36
     targetSdkVersion = 35
     androidxActivityVersion = '1.9.2'
     androidxAppCompatVersion = '1.7.0'

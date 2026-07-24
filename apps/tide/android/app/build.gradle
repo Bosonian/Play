@@ -26,8 +26,8 @@ android {
         // running. A build-time injection would remove the duplication; see
         // appVersion.ts and README.md's v1.5 list (same unsolved problem Runway
         // carries too).
-        versionCode 3
-        versionName "0.3.0"
+        versionCode 4
+        versionName "0.3.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
