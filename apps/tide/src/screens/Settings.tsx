@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
 import type { Screen } from '../App';
@@ -20,6 +20,9 @@ import { isHealthConnectAvailable, readStepSources, requestHealthPermissions, ty
 import { syncHealthData } from '../lib/healthSync';
 import { logEvent } from '../lib/eventLog';
 import { DEFAULT_FEEDBACK_REPO, FEEDBACK_REPO_SETTING, FEEDBACK_TOKEN_SETTING } from '../lib/reportSettings';
+import { backupFilename, buildBackup, LAST_BACKUP_AT_SETTING, validateBackup } from '../lib/backup';
+import { restoreBackup } from '../lib/restoreBackup';
+import { exportBackupFile } from '../native/backupFile';
 
 interface SettingsProps {
   onNavigate: (screen: Screen) => void;
@@ -32,9 +35,11 @@ interface SettingsProps {
 type ConnectOutcome = 'idle' | 'checking' | 'notInstalled' | 'unsupported' | 'declined' | 'connected';
 
 /**
- * Backup/restore (a later increment, ported from Runway) is still a stub —
- * TIDE_PLAN.md's roadmap puts it after this one. Health Connect is real as
- * of increment 3 (this one); Updates has been real since increment 2.
+ * Backup/restore (increment 6, ported from Runway) is real as of this
+ * increment — see this component's own Backup section below and
+ * src/lib/backup.ts/restoreBackup.ts/native/backupFile.ts for the rest of
+ * that feature. Health Connect has been real since increment 3; Updates
+ * since increment 2.
  */
 export function Settings({ onNavigate }: SettingsProps) {
   // Same read-and-derive pattern as Home.tsx's own update card — see that
@@ -190,9 +195,12 @@ export function Settings({ onNavigate }: SettingsProps) {
 
   /** "24 Jul, 14:32" — 24h time (CLAUDE.md's European-time-format rule,
    * enforced with `hour12: false` rather than trusting the ambient locale
-   * to default to it), no year (a sync happened today or very recently in
-   * every realistic case — the year would be pure clutter). */
-  function formatLastSync(iso: string): string {
+   * to default to it), no year (this always describes something that
+   * happened today or very recently — the year would be pure clutter).
+   * Shared by the Health Connect section's "Last sync" line below and the
+   * Backup section's "Last export" line (increment 6) — same shape, same
+   * function, named generically rather than after either call site. */
+  function formatDateTime(iso: string): string {
     const date = new Date(iso);
     return date.toLocaleString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
   }
@@ -231,6 +239,98 @@ export function Settings({ onNavigate }: SettingsProps) {
     await db.settings.put({ key: FEEDBACK_REPO_SETTING, value: feedbackRepoDraft.trim() });
   }
 
+  // Backup increment (6): manual export/import of the whole database as one
+  // JSON file — see src/lib/backup.ts (what a backup IS), restoreBackup.ts
+  // (the replace-everything import), and native/backupFile.ts (the
+  // file-write half, and its own header comment on why it differs from
+  // Runway's native share-sheet mechanism) for the rest of this feature.
+  const lastBackupAtSetting = useLiveQuery(() => db.settings.get(LAST_BACKUP_AT_SETTING), []);
+
+  const [backupError, setBackupError] = useState<string | null>(null);
+  const [backupRestored, setBackupRestored] = useState(false);
+  const backupFileInputRef = useRef<HTMLInputElement>(null);
+
+  async function handleExportBackup() {
+    setBackupError(null);
+    setBackupRestored(false);
+    const [weighIns, meals, movement, settings, events] = await Promise.all([
+      db.weighIns.toArray(),
+      db.meals.toArray(),
+      db.movement.toArray(),
+      db.settings.toArray(),
+      db.events.toArray(),
+    ]);
+    const now = new Date();
+    const backup = buildBackup({ weighIns, meals, movement, settings, events }, db.verno, now);
+    // Pretty-printed: this is a personal-scale backup (one phone's worth of
+    // data), not a payload where a couple of KB of whitespace matters, and a
+    // readable file is worth it the one time Deepak opens it in a text
+    // editor to sanity-check what's actually in there.
+    try {
+      await exportBackupFile(JSON.stringify(backup, null, 2), backupFilename(now));
+    } catch (err) {
+      // native/backupFile.ts's own header comment names the reason this
+      // path is UNVERIFIED on native Android — a thrown error here is the
+      // most likely visible symptom of that. Nothing distinguishes "the
+      // browser download silently failed" from "the user dismissed
+      // something" the way Runway's own cancel-message sniff does for its
+      // native share sheet (this file has no share sheet to dismiss), so
+      // every failure here is treated as a real one worth a visible line.
+      setBackupError('Could not export the backup.');
+      return;
+    }
+    // Written only AFTER exportBackupFile resolves — a download that never
+    // triggered must not claim a backup happened.
+    await db.settings.put({ key: LAST_BACKUP_AT_SETTING, value: now.toISOString() });
+    void logEvent('backup', 'Backup exported.');
+  }
+
+  function handleImportClick() {
+    setBackupError(null);
+    setBackupRestored(false);
+    backupFileInputRef.current?.click();
+  }
+
+  async function handleBackupFileSelected(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    // Clears the input's value so picking the SAME file again later (e.g.
+    // after fixing whatever made an earlier attempt fail) still fires this
+    // handler — a browser file input doesn't fire 'change' a second time for
+    // an unchanged selection otherwise.
+    event.target.value = '';
+    if (!file) return;
+
+    setBackupError(null);
+    setBackupRestored(false);
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await file.text());
+    } catch {
+      setBackupError('That file is not a Tide backup.');
+      return;
+    }
+
+    const result = validateBackup(parsed, db.verno);
+    if (!result.ok) {
+      setBackupError(result.reason);
+      return;
+    }
+
+    // Native confirm(), same shortcut Runway's own Settings.tsx uses for
+    // its identical "this cannot be undone" restore moment — a custom
+    // dialog component isn't worth building for a single confirmation step
+    // this rare.
+    const exportedAtLabel = formatDateTime(result.backup.exportedAt);
+    const confirmed = window.confirm(
+      `Replace everything in Tide with this backup from ${exportedAtLabel}? Current data on this phone is erased.`,
+    );
+    if (!confirmed) return;
+
+    await restoreBackup(result.backup);
+    setBackupRestored(true);
+  }
+
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-6 px-4 pb-12 pt-safe-top">
       <div className="pt-8">
@@ -248,7 +348,7 @@ export function Settings({ onNavigate }: SettingsProps) {
         {showConnected ? (
           <>
             <p className="text-sm text-slate-400">
-              Connected. {lastSyncSetting?.value ? `Last sync: ${formatLastSync(lastSyncSetting.value)}.` : 'No sync yet.'}
+              Connected. {lastSyncSetting?.value ? `Last sync: ${formatDateTime(lastSyncSetting.value)}.` : 'No sync yet.'}
             </p>
             <div className="flex items-center gap-4">
               <TextAction onClick={() => void handleSyncNow()} disabled={syncing} className="disabled:opacity-40">
@@ -350,7 +450,7 @@ export function Settings({ onNavigate }: SettingsProps) {
                       cross-source aggregate, which may dedup slightly below
                       that sum. Claiming they are the same figure would be a
                       small, avoidable inaccuracy. */}
-                  <p className="text-xs text-slate-600">
+                  <p className="text-xs text-slate-500">
                     With &quot;All sources&quot; chosen, Tide counts every source Health Connect holds. The
                     figure beside it adds the rows above together, which can differ slightly from the
                     combined total Health Connect reports.
@@ -387,9 +487,34 @@ export function Settings({ onNavigate }: SettingsProps) {
 
       <section className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
         <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Backup</h2>
+
         <p className="text-sm text-slate-500">
-          Coming in a later increment, ported from Runway: export and restore everything Tide has
-          recorded as one file.
+          {lastBackupAtSetting?.value ? `Last export: ${formatDateTime(lastBackupAtSetting.value)}.` : 'Never exported.'}
+        </p>
+
+        <div className="flex gap-2">
+          <Button onClick={() => void handleExportBackup()} className="flex-1">
+            Export backup
+          </Button>
+          <Button variant="secondary" onClick={handleImportClick} className="flex-1">
+            Import backup
+          </Button>
+        </div>
+
+        <input
+          ref={backupFileInputRef}
+          type="file"
+          accept="application/json"
+          className="hidden"
+          onChange={(e) => void handleBackupFileSelected(e)}
+        />
+
+        {backupError && <p className="text-sm text-red-400">{backupError}</p>}
+        {backupRestored && <p className="text-sm text-emerald-300">Backup restored.</p>}
+
+        <p className="text-sm text-slate-500">
+          Everything Tide has recorded — weigh-ins, plates, movement, settings, and the activity log —
+          as one file. The GitHub token above is not included; it stays on this device.
         </p>
       </section>
 

@@ -6,6 +6,15 @@ import type { Config } from 'tailwindcss';
 // thing in the morning or last thing at night shouldn't force a bright
 // white flash. If a light theme is ever wanted, revisit this the way
 // head-in did (see Runway's own tailwind.config.ts comment).
+//
+// Contrast floor (increment 6 polish pass): Tailwind's default `slate-600`
+// measures ≈2.7:1 against this config's dark background — below WCAG AA's
+// 4.5:1 floor for text, and below even the 3.0:1 floor for large text.
+// `slate-500` (≈4.2:1) is the floor actually used for secondary/placeholder
+// text throughout src/ (TextField.tsx's own comment repeats this locally,
+// closer to its one call site). Do not reintroduce `text-slate-600` or
+// `placeholder:text-slate-600` for anything meant to be read — this app has
+// no lint rule enforcing that, so this comment is the only guardrail.
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {

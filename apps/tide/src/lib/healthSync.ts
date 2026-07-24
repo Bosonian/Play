@@ -359,8 +359,25 @@ async function syncMovement(): Promise<void> {
       id: existing?.id ?? crypto.randomUUID(),
       date: day.date,
       source: 'healthconnect',
-      steps: day.steps,
-      activeKcal: day.activeKcal,
+      // Field fix (increment 6): `day.steps`/`day.activeKcal` come from
+      // THIS sync's own re-read window (MOVEMENT_REREAD_WINDOW_MS, 3 days)
+      // and can each independently be `null` — Health Connect's steps and
+      // active-energy are separate record types read separately
+      // (`readSteps`/`readActiveEnergy`), so a re-sync can legitimately see
+      // one metric's records but not the other's (a permission granted for
+      // steps but not active energy, or a native read that transiently
+      // returns nothing for one type). Writing `day.steps`/`day.activeKcal`
+      // directly, unconditionally, meant a day already showing a real step
+      // count could have it silently overwritten with `null` on the very
+      // next re-sync just because that pass didn't see any active-energy
+      // (or steps) records for that day. `?? existing?.<field>` preserves
+      // whatever this row already knew whenever THIS sync came back empty
+      // for that one metric — same "don't let one metric's absence erase
+      // the other's already-known value" reasoning this function already
+      // applies to `manualTier` just below, now applied symmetrically to
+      // steps and active energy too.
+      steps: day.steps ?? existing?.steps ?? null,
+      activeKcal: day.activeKcal ?? existing?.activeKcal ?? null,
       // Preserved, never set, by this sync — see db/types.ts's Movement
       // doc comment. No screen writes manualTier yet, so `existing` never
       // actually carries one today; kept correct anyway so a future manual-

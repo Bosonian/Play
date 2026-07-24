@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Home } from './screens/Home';
 import { WeighInEntry } from './screens/WeighInEntry';
 import { History } from './screens/History';
@@ -10,6 +10,7 @@ import { ActivityLog } from './screens/ActivityLog';
 import { ErrorBoundary } from './ui/ErrorBoundary';
 import { logEvent } from './lib/eventLog';
 import { syncHealthData } from './lib/healthSync';
+import { registerBackGesture } from './native/backGesture';
 
 // Navigation as plain React state, not a router library — same call Runway
 // made in increment 1, for the same reason: no deep-linkable URL
@@ -37,6 +38,43 @@ export type Screen =
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'home' });
+
+  // Android back gesture (increment 6, ported from Runway — see
+  // native/backGesture.ts's own header comment for the field bug this
+  // fixes: without it, a back swipe from any screen EXITS the app). The
+  // listener is registered ONCE ([] deps below) for the app's lifetime,
+  // outside any per-render closure — but it still needs to see whichever
+  // screen is CURRENT at the moment a back gesture actually fires, not
+  // whichever screen was active when the effect first ran. A plain closure
+  // over `screen` would go stale the instant navigation happened even once.
+  // `screenRef` is kept in sync on every render (the line just below, no
+  // dependency array of its own — a ref write is not a state update, so it
+  // doesn't cause a re-render itself) and the listener reads
+  // `screenRef.current`, never `screen` directly. Same trap/fix Runway's own
+  // App.tsx documents for the identical listener.
+  const screenRef = useRef(screen);
+  screenRef.current = screen;
+
+  useEffect(() => {
+    let cleanup: (() => void) | undefined;
+    let cancelled = false;
+    void registerBackGesture(() => screenRef.current, setScreen).then((unregister) => {
+      // StrictMode double-invoke safe: if this effect instance was already
+      // cleaned up (React unmounted it before the async `addListener` call
+      // resolved) by the time the promise settles, undo the registration
+      // immediately instead of leaking a listener this instance no longer
+      // owns.
+      if (cancelled) {
+        unregister();
+      } else {
+        cleanup = unregister;
+      }
+    });
+    return () => {
+      cancelled = true;
+      cleanup?.();
+    };
+  }, []);
 
   function renderScreen() {
     switch (screen.name) {

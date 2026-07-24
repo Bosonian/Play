@@ -5,6 +5,7 @@ import { Button } from '../ui/Button';
 import { ScreenHeader } from '../ui/ScreenHeader';
 import { TextField } from '../ui/TextField';
 import { logEvent } from '../lib/eventLog';
+import { hapticImpact } from '../native/haptics';
 
 interface WeighInEntryProps {
   onNavigate: (screen: Screen) => void;
@@ -80,6 +81,12 @@ export function WeighInEntry({ onNavigate }: WeighInEntryProps) {
     // rounded number Home/History's own display shows, not a leftover
     // dictation artifact from what was typed (e.g. "98.40" or "98,4").
     void logEvent('weighin', `Weigh-in logged: ${weightKg.toFixed(1)} kg.`);
+    // Haptic-on-save (increment 6 polish): saving previously gave no
+    // acknowledgement at all, and the trend's EMA barely moves on any one
+    // reading — so a save could feel like nothing happened. One light tap
+    // is the calm, non-gamified confirmation; see native/haptics.ts's own
+    // comment for why this never throws.
+    void hapticImpact('light');
 
     onNavigate({ name: 'home' });
   }

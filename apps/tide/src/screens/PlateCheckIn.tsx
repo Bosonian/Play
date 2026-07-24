@@ -7,6 +7,7 @@ import { ScreenHeader } from '../ui/ScreenHeader';
 import { TextAction } from '../ui/TextAction';
 import { estimatePlateKcal, formatPlateKcal, type PlateComposition } from '../lib/plateEstimate';
 import { logEvent } from '../lib/eventLog';
+import { hapticImpact } from '../native/haptics';
 
 interface PlateCheckInProps {
   onNavigate: (screen: Screen) => void;
@@ -168,6 +169,9 @@ export function PlateCheckIn({ onNavigate }: PlateCheckInProps) {
     // `CheckInMealKind`, never `'skipped'`, so `estimatedKcal` is always a
     // number, never null (see `estimatePlateKcal`'s own doc comment).
     void logEvent('meal', `Plate logged: ${draft.kind}, ${formatPlateKcal(estimatedKcal)}.`);
+    // Haptic-on-save (increment 6 polish) — see WeighInEntry.tsx's own
+    // comment on the same call for why.
+    void hapticImpact('light');
 
     onNavigate({ name: 'home' });
   }
@@ -202,6 +206,10 @@ export function PlateCheckIn({ onNavigate }: PlateCheckInProps) {
       return;
     }
     void logEvent('meal', 'Skipped meal logged.');
+    // Haptic-on-save (increment 6 polish) — a skip is still a save (see
+    // this function's own header comment: "a skip is a real check-in"), so
+    // it gets the same acknowledgement tap as a real plate.
+    void hapticImpact('light');
     onNavigate({ name: 'home' });
   }
 
@@ -319,7 +327,7 @@ function TierRow({ label, hint, value, onChange }: TierRowProps) {
     <div className="flex flex-col gap-1.5">
       <div className="flex items-baseline justify-between">
         <span className="text-sm font-medium text-slate-400">{label}</span>
-        <span className="text-xs text-slate-600">{hint}</span>
+        <span className="text-xs text-slate-500">{hint}</span>
       </div>
       <div className="flex gap-2">
         {TIER_OPTIONS.map((tier) => (

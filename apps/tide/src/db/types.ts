@@ -204,7 +204,13 @@ export type EventCategory =
   // Field-reports increment (increment 5): a report was submitted or
   // synced to GitHub Issues — see src/lib/reportSync.ts and
   // src/screens/ReportProblem.tsx.
-  | 'report';
+  | 'report'
+  // Backup increment (increment 6): a backup was exported or a restore
+  // completed — see src/lib/backup.ts and src/lib/restoreBackup.ts. A
+  // deletion (a weigh-in or a plate removed) is logged under its own
+  // existing category ('weighin'/'meal'), not this one — 'backup' is only
+  // for the export/import file operation itself.
+  | 'backup';
 
 /**
  * One row of the activity log. Deliberately flat — `category` plus one

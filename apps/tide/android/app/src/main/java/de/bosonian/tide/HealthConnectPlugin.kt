@@ -538,9 +538,20 @@ class HealthConnectPlugin : Plugin() {
      * days ("steps today"), never as deep history, so there is no reason to
      * slice — and emit a bucket for — every day back to 1970 (a Period slicer
      * fills the WHOLE range with buckets whether or not data exists in them).
-     * 35 days comfortably covers the 3-day re-read window plus any Samsung
-     * Health sync lag, while capping the slicer at 35 buckets. */
-    private val MOVEMENT_MAX_BACKFILL_DAYS = 35L
+     *
+     * 30, not 35 (increment 6 fix): Health Connect itself restricts reads to
+     * at most 30 days before the permission was first granted — a read
+     * request for anything older than that returns nothing for those days,
+     * regardless of what this app asks for. At 35, days 31-35 of a fresh
+     * connect's very first backfill sat entirely outside that window: this
+     * code requested them, Health Connect silently had nothing to give back
+     * for them, and the slicer emitted empty buckets no different from a
+     * genuine no-data day — a real gap in the read request disguised as an
+     * ordinary missing-data day. 30 keeps every day this constant ever
+     * requests inside Health Connect's own permitted window, so a bucket
+     * that comes back empty is always a real "nothing recorded", never a
+     * request Health Connect was always going to refuse. */
+    private val MOVEMENT_MAX_BACKFILL_DAYS = 30L
 
     /**
      * The local `[start, end)` range for aggregateGroupByPeriod, both ends

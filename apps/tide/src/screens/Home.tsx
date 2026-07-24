@@ -187,7 +187,15 @@ export function Home({ onNavigate }: HomeProps) {
           <button
             type="button"
             onClick={() => onNavigate({ name: 'platesToday' })}
-            className="text-sm text-slate-500 transition-colors hover:text-slate-300"
+            // min-h-12 + inline-flex/items-center (polish pass, increment
+            // 6): this was the only interactive element on the whole app
+            // below the 48px touch-target floor every other control
+            // (Button, TextAction, Card, TextField) already meets. Padding
+            // and inline-flex only, deliberately NOT a background/border —
+            // the quiet slate-500 "one more fact" look this button's own
+            // original comment describes stays exactly as quiet; only the
+            // tappable area grows.
+            className="inline-flex min-h-12 items-center px-2 text-sm text-slate-500 transition-colors hover:text-slate-300"
           >
             {todayMealCount} check-in{todayMealCount === 1 ? '' : 's'} today
           </button>

@@ -1,11 +1,15 @@
+import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
 import type { Screen } from '../App';
 import type { Meal, MealKind } from '../db/types';
 import { ScreenHeader } from '../ui/ScreenHeader';
-import { Card } from '../ui/Card';
+import { TextAction } from '../ui/TextAction';
 import { compositionChips, formatPlateKcal } from '../lib/plateEstimate';
 import { localDayBoundsIso } from '../lib/healthSync';
+import { DELETE_CONFIRM_WINDOW_MS, isArmStillValid } from '../lib/deleteArm';
+import { logEvent } from '../lib/eventLog';
+import { hapticImpact } from '../native/haptics';
 
 interface PlatesTodayProps {
   onNavigate: (screen: Screen) => void;
@@ -52,6 +56,78 @@ export function PlatesToday({ onNavigate }: PlatesTodayProps) {
     return rows.reverse();
   }, []);
 
+  // Delete-a-plate increment (6) — same arm/confirm interaction as
+  // History.tsx's weigh-in rows, same reasoning (a mis-tapped plate is
+  // permanent with no delete path); see that file's own comments for the
+  // full explanation of each piece. Lifted to THIS component (not
+  // PlateRow below) because only one row across the whole list may be
+  // expanded/armed at a time — PlateRow stays a plain presentational
+  // component driven by props, same shape it already had.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [armedAtMs, setArmedAtMs] = useState<number | null>(null);
+  const armTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (armTimeoutRef.current !== null) clearTimeout(armTimeoutRef.current);
+    };
+  }, []);
+
+  function clearArmTimeout() {
+    if (armTimeoutRef.current !== null) {
+      clearTimeout(armTimeoutRef.current);
+      armTimeoutRef.current = null;
+    }
+  }
+
+  function disarm() {
+    clearArmTimeout();
+    setArmedAtMs(null);
+  }
+
+  function handleRowTap(id: string) {
+    disarm();
+    setExpandedId((current) => (current === id ? null : id));
+  }
+
+  function handleRemoveTap(id: string) {
+    const now = Date.now();
+    if (isArmStillValid(armedAtMs, now)) {
+      void performDelete(id);
+      return;
+    }
+    setArmedAtMs(now);
+    clearArmTimeout();
+    armTimeoutRef.current = setTimeout(() => setArmedAtMs(null), DELETE_CONFIRM_WINDOW_MS);
+  }
+
+  async function performDelete(id: string) {
+    const meal = (meals ?? []).find((m) => m.id === id);
+    disarm();
+    setExpandedId(null);
+    await db.meals.delete(id);
+    void hapticImpact('light');
+    if (meal) {
+      const at = new Date(meal.at);
+      // "24 Jul, 13:42" — unlike History's weigh-in removal line, this
+      // includes the TIME, not just the date: every row in this list is
+      // already today, so the date alone would collapse every deletion on
+      // this screen to the same "removed: 24 Jul" line — the time is what
+      // actually distinguishes one deletion from the next in the log.
+      const dateTimeLabel = `${at.toLocaleDateString(undefined, { day: '2-digit', month: 'short' })}, ${at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}`;
+      // Mirrors PlateCheckIn.tsx's own "Plate logged:"/"Skipped meal
+      // logged." split (draft.kind is lowercased there; kept lowercase
+      // here too, for the same reason — these are log lines, not UI
+      // labels, and match the save-time phrasing exactly so a trace
+      // through the log reads as one consistent voice).
+      const message =
+        meal.kind === 'skipped'
+          ? `Skipped meal removed: ${dateTimeLabel}.`
+          : `Plate removed: ${meal.kind}, ${dateTimeLabel}.`;
+      void logEvent('meal', message);
+    }
+  }
+
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-6 px-4 pb-12 pt-safe-top">
       <div className="pt-8">
@@ -62,43 +138,79 @@ export function PlatesToday({ onNavigate }: PlatesTodayProps) {
 
       <div className="flex flex-col gap-2">
         {(meals ?? []).map((meal) => (
-          <PlateRow key={meal.id} meal={meal} />
+          <PlateRow
+            key={meal.id}
+            meal={meal}
+            isExpanded={expandedId === meal.id}
+            isArmed={expandedId === meal.id && armedAtMs !== null}
+            onRowTap={() => handleRowTap(meal.id)}
+            onRemoveTap={() => handleRemoveTap(meal.id)}
+            onRemoveBlur={disarm}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function PlateRow({ meal }: { meal: Meal }) {
+interface PlateRowProps {
+  meal: Meal;
+  isExpanded: boolean;
+  isArmed: boolean;
+  onRowTap: () => void;
+  onRemoveTap: () => void;
+  onRemoveBlur: () => void;
+}
+
+/** A plain bordered <div> wrapping an inner <button> (the tappable row) plus
+ * a sibling "Remove" TextAction (its own <button>) — not the <Card>
+ * primitive, which renders as a SINGLE <button> around its whole content.
+ * See History.tsx's own comment on the identical row-shape change there for
+ * why: this row needs two independent tap targets now, and nesting a
+ * <button> inside another <button> is invalid HTML. */
+function PlateRow({ meal, isExpanded, isArmed, onRowTap, onRemoveTap, onRemoveBlur }: PlateRowProps) {
   const at = new Date(meal.at);
   const time = at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
   const kcalText = formatPlateKcal(meal.estimatedKcal);
 
   return (
-    <Card className="flex flex-col gap-1">
-      <div className="flex items-center justify-between">
-        <span className="text-slate-100">{KIND_LABELS[meal.kind]}</span>
-        <span className="text-sm text-slate-500 tabular-nums">{time}</span>
-      </div>
-      {/* For a skipped meal, `compositionChips` returns exactly
-          `['Skipped meal']` — the same string the header line above
-          already shows, so this row is skipped entirely rather than
-          repeating it. Every other kind shows its chips (and, unlike a
-          skip, always has a non-empty `kcalText` — see
-          `estimatePlateKcal`'s own doc comment for why only a skip
-          produces `null`). */}
-      {meal.kind !== 'skipped' && (
-        <>
-          <div className="flex flex-wrap gap-x-3 gap-y-1">
-            {compositionChips(meal).map((chip) => (
-              <span key={chip} className="text-sm text-slate-400">
-                {chip}
-              </span>
-            ))}
-          </div>
-          {kcalText && <span className="text-sm text-slate-500">{kcalText}</span>}
-        </>
+    <div className="overflow-hidden rounded-xl border border-slate-800/60 bg-surface">
+      <button
+        type="button"
+        onClick={onRowTap}
+        className="flex min-h-12 w-full flex-col gap-1 p-4 text-left transition-colors hover:bg-raised/70 active:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+      >
+        <div className="flex items-center justify-between">
+          <span className="text-slate-100">{KIND_LABELS[meal.kind]}</span>
+          <span className="text-sm text-slate-500 tabular-nums">{time}</span>
+        </div>
+        {/* For a skipped meal, `compositionChips` returns exactly
+            `['Skipped meal']` — the same string the header line above
+            already shows, so this row is skipped entirely rather than
+            repeating it. Every other kind shows its chips (and, unlike a
+            skip, always has a non-empty `kcalText` — see
+            `estimatePlateKcal`'s own doc comment for why only a skip
+            produces `null`). */}
+        {meal.kind !== 'skipped' && (
+          <>
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {compositionChips(meal).map((chip) => (
+                <span key={chip} className="text-sm text-slate-400">
+                  {chip}
+                </span>
+              ))}
+            </div>
+            {kcalText && <span className="text-sm text-slate-500">{kcalText}</span>}
+          </>
+        )}
+      </button>
+      {isExpanded && (
+        <div className="flex justify-end border-t border-slate-800/60 px-4 py-2">
+          <TextAction onClick={onRemoveTap} onBlur={onRemoveBlur}>
+            {isArmed ? 'Tap again to remove' : 'Remove'}
+          </TextAction>
+        </div>
       )}
-    </Card>
+    </div>
   );
 }

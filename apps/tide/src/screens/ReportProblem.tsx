@@ -9,6 +9,7 @@ import { TextAction } from '../ui/TextAction';
 import { APP_VERSION } from '../lib/appVersion';
 import { syncPendingReports } from '../lib/reportSync';
 import { formatEventLine, logEvent, recentEvents } from '../lib/eventLog';
+import { backTarget as computeBackTarget } from '../lib/backTarget';
 
 // Ported from apps/runway/src/screens/ReportProblem.tsx — the "report a
 // problem" composer, ~verbatim. Copy adapted from Runway to Tide; date/time
@@ -90,7 +91,18 @@ function formatReportedAt(iso: string): string {
 }
 
 export function ReportProblem({ fromScreen, onNavigate }: ReportProblemProps) {
-  const backTarget: Screen = fromScreen === 'settings' ? { name: 'settings' } : { name: 'home' };
+  // Back-and-forward destination, computed by the SAME function
+  // src/native/backGesture.ts consults for a hardware back gesture
+  // (src/lib/backTarget.ts) rather than recomputed inline here the way
+  // Runway's own ReportProblem.tsx still does (see that file's comment) —
+  // one shared source of truth means the on-screen back chevron and a
+  // physical back gesture can never quietly disagree about where "back"
+  // means. `fromScreen` here is a plain string (this screen's own prop
+  // shape, matching db/types.ts's FieldReport.screenName), while
+  // `backTarget` expects a full `Screen` — the `{ name: 'reportProblem',
+  // fromScreen }` wrapper below reconstructs exactly the shape backTarget's
+  // `reportProblem` case switches on.
+  const backTarget: Screen = computeBackTarget({ name: 'reportProblem', fromScreen }) ?? { name: 'home' };
 
   const [description, setDescription] = useState('');
   const [screenshot, setScreenshot] = useState<ScreenshotDraft | null>(null);
@@ -216,7 +228,7 @@ export function ReportProblem({ fromScreen, onNavigate }: ReportProblemProps) {
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Describe what you saw and what you expected instead."
-            className="min-h-32 rounded-lg border border-slate-700 bg-raised px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none"
+            className="min-h-32 rounded-lg border border-slate-700 bg-raised px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:border-sky-500 focus:outline-none"
           />
         </div>
 
