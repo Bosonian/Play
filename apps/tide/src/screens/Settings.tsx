@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
 import type { Screen } from '../App';
 import { ScreenHeader } from '../ui/ScreenHeader';
 import { TextAction } from '../ui/TextAction';
+import { TextField } from '../ui/TextField';
 import { Button } from '../ui/Button';
 import { APP_VERSION, APP_VERSION_CODE } from '../lib/appVersion';
 import { AVAILABLE_UPDATE_SETTING, checkForUpdate, parseAvailableUpdate } from '../lib/updateCheck';
@@ -11,6 +12,7 @@ import { HEALTH_CONNECT_ENABLED_SETTING, HEALTH_LAST_SYNC_AT_SETTING } from '../
 import { isHealthConnectAvailable, requestHealthPermissions } from '../native/healthConnect';
 import { syncHealthData } from '../lib/healthSync';
 import { logEvent } from '../lib/eventLog';
+import { DEFAULT_FEEDBACK_REPO, FEEDBACK_REPO_SETTING, FEEDBACK_TOKEN_SETTING } from '../lib/reportSettings';
 
 interface SettingsProps {
   onNavigate: (screen: Screen) => void;
@@ -133,6 +135,40 @@ export function Settings({ onNavigate }: SettingsProps) {
     return date.toLocaleString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
   }
 
+  // Field-reports increment (increment 5, ported from Runway): the GitHub
+  // token/repo rows live in the existing key-value `settings` table (same
+  // table Health Connect's own flags above already use), and the same
+  // local-draft-until-Save pattern as everywhere else in this screen —
+  // half-typed token material shouldn't take effect character by
+  // character.
+  const feedbackTokenSetting = useLiveQuery(() => db.settings.get(FEEDBACK_TOKEN_SETTING), []);
+  const feedbackRepoSetting = useLiveQuery(() => db.settings.get(FEEDBACK_REPO_SETTING), []);
+  const savedFeedbackToken = feedbackTokenSetting?.value ?? '';
+  const hasFeedbackToken = savedFeedbackToken !== '';
+
+  const [feedbackTokenDraft, setFeedbackTokenDraft] = useState('');
+  useEffect(() => {
+    if (feedbackTokenSetting !== undefined) setFeedbackTokenDraft(savedFeedbackToken);
+  }, [feedbackTokenSetting, savedFeedbackToken]);
+
+  const [feedbackRepoDraft, setFeedbackRepoDraft] = useState('');
+  useEffect(() => {
+    if (feedbackRepoSetting !== undefined) setFeedbackRepoDraft(feedbackRepoSetting?.value ?? '');
+  }, [feedbackRepoSetting]);
+
+  async function saveFeedbackToken() {
+    await db.settings.put({ key: FEEDBACK_TOKEN_SETTING, value: feedbackTokenDraft.trim() });
+  }
+
+  async function clearFeedbackToken() {
+    await db.settings.put({ key: FEEDBACK_TOKEN_SETTING, value: '' });
+    setFeedbackTokenDraft('');
+  }
+
+  async function saveFeedbackRepo() {
+    await db.settings.put({ key: FEEDBACK_REPO_SETTING, value: feedbackRepoDraft.trim() });
+  }
+
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-6 px-4 pb-12 pt-safe-top">
       <div className="pt-8">
@@ -190,6 +226,67 @@ export function Settings({ onNavigate }: SettingsProps) {
         <p className="text-sm text-slate-500">
           Coming in a later increment, ported from Runway: export and restore everything Tide has
           recorded as one file.
+        </p>
+      </section>
+
+      {/* Field-reports increment (increment 5, ported from Runway):
+          "Diagnostics" folds together what Runway splits into two sections
+          (Feedback, Activity log) — Tide has fewer settings screens overall,
+          so one calm heading covering "trace and report a problem" reads
+          better here than two thin sections back to back. */}
+      <section className="flex flex-col gap-3 border-t border-slate-800 pt-6">
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Diagnostics</h2>
+
+        <TextField
+          label="GitHub token"
+          type="password"
+          autoComplete="off"
+          value={feedbackTokenDraft}
+          onChange={(e) => setFeedbackTokenDraft(e.target.value)}
+          hint="A fine-grained GitHub token with Issues and Contents write access to the target repo. Stored only on this device."
+        />
+        <div className="flex gap-2">
+          <Button onClick={() => void saveFeedbackToken()} className="flex-1">
+            Save
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => void clearFeedbackToken()}
+            className="flex-1"
+            disabled={!hasFeedbackToken}
+          >
+            Clear
+          </Button>
+        </div>
+
+        <TextField
+          label="Target repo"
+          type="text"
+          autoComplete="off"
+          value={feedbackRepoDraft}
+          onChange={(e) => setFeedbackRepoDraft(e.target.value)}
+          placeholder={DEFAULT_FEEDBACK_REPO}
+          hint="Reports filed to a public repository are publicly visible — including screenshots. A private repository keeps them between you and the reviewer."
+        />
+        <Button onClick={() => void saveFeedbackRepo()} className="w-full">
+          Save
+        </Button>
+
+        <p className="text-sm text-slate-500">
+          Left blank, reports file to {DEFAULT_FEEDBACK_REPO}. Reports are saved on this device the
+          moment you file them, token or no token — they sync to GitHub Issues in the background
+          whenever a token is set and the device is online.
+        </p>
+
+        <div className="flex items-center gap-4">
+          <TextAction onClick={() => onNavigate({ name: 'reportProblem', fromScreen: 'settings' })}>
+            Report a problem
+          </TextAction>
+          <TextAction onClick={() => onNavigate({ name: 'activityLog' })}>View activity log</TextAction>
+        </div>
+        <p className="text-sm text-slate-500">
+          The activity log records what the app did and when, kept on this phone. The newest 2000
+          events are retained.
         </p>
       </section>
 

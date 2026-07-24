@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { Meal, Movement, Setting, TideEvent, WeighIn } from './types';
+import type { FieldReport, Meal, Movement, Setting, TideEvent, WeighIn } from './types';
 
 // Dexie's index string only lists fields actually queried by (`id`/`key`
 // are the implicit primary keys). `weighIns` is indexed on `at` because the
@@ -16,6 +16,9 @@ class TideDB extends Dexie {
   // Activity log (increment 2, v2 below) — a capped, local record of what
   // the app did, for tracing bugs after the fact. See src/lib/eventLog.ts.
   events!: EntityTable<TideEvent, 'id'>;
+  // Field reports (increment 5, v3 below) — in-app bug/improvement reports,
+  // synced (best-effort) to GitHub Issues. See src/lib/reportSync.ts.
+  fieldReports!: EntityTable<FieldReport, 'id'>;
 
   constructor() {
     super('tide');
@@ -57,20 +60,41 @@ class TideDB extends Dexie {
       settings: 'key',
       events: 'id, at',
     });
-    // Health Connect bridge increment (0.3.0): no version(3) bump. Every
-    // field the sync needs (`weighIns.source: 'healthconnect'`,
-    // `movement.source`/`steps`/`activeKcal`/`manualTier`) already exists in
-    // v1/v2 — this increment is the first real WRITER of `movement`, not a
-    // schema change. See db/types.ts's own header comment on when a bump is
-    // actually required (a new indexed field, never a table simply
-    // gaining its first real writer).
+    // Health Connect bridge increment (0.3.0): no version(3) bump — that
+    // number is used below instead, by the field-reports increment. Every
+    // field the Health Connect sync needs (`weighIns.source:
+    // 'healthconnect'`, `movement.source`/`steps`/`activeKcal`/
+    // `manualTier`) already existed in v1/v2 — that increment was the first
+    // real WRITER of `movement`, not a schema change. See db/types.ts's own
+    // header comment on when a bump is actually required (a new indexed
+    // field, never a table simply gaining its first real writer).
     //
     // Plate check-in increment (0.4.0): no version bump either, same
     // reasoning. `meals` and its `at` index were already declared in v1
     // (above) — every field PlateCheckIn.tsx writes (`kind`, the three
     // `PortionTier` columns, `fried`/`sugary`, `photoRef`, `estimatedKcal`)
-    // was already part of the v1 `Meal` shape (db/types.ts). This
-    // increment is `meals`' first real writer, not a schema change.
+    // was already part of the v1 `Meal` shape (db/types.ts). That
+    // increment was `meals`' first real writer, not a schema change.
+    //
+    // v3 (increment 5 — field reports, ported from Runway): adds
+    // `fieldReports`, a genuinely new table — unlike the two paragraphs
+    // above (non-indexed fields / first writers on EXISTING tables, which
+    // need no bump), a new table's name has to appear in a `stores()` call
+    // for Dexie to create the underlying object store. Indexed on `status`
+    // (ReportProblem.tsx's list needs "pending or failed" rows for the
+    // retry action, and reportSync.ts's engine needs "all pending, oldest
+    // first") and `createdAt` (the list's sort order, newest first, capped
+    // to 10) — same index string Runway's own db.ts v4 uses for the
+    // identical table shape. Purely additive otherwise — every existing
+    // table and row is untouched by this upgrade.
+    this.version(3).stores({
+      weighIns: 'id, at',
+      meals: 'id, at',
+      movement: 'date',
+      settings: 'key',
+      events: 'id, at',
+      fieldReports: 'id, status, createdAt',
+    });
   }
 }
 

@@ -5,6 +5,8 @@ import { History } from './screens/History';
 import { Settings } from './screens/Settings';
 import { PlateCheckIn } from './screens/PlateCheckIn';
 import { PlatesToday } from './screens/PlatesToday';
+import { ReportProblem } from './screens/ReportProblem';
+import { ActivityLog } from './screens/ActivityLog';
 import { ErrorBoundary } from './ui/ErrorBoundary';
 import { logEvent } from './lib/eventLog';
 import { syncHealthData } from './lib/healthSync';
@@ -22,7 +24,16 @@ export type Screen =
   | { name: 'history' }
   | { name: 'settings' }
   | { name: 'plateCheckIn' }
-  | { name: 'platesToday' };
+  | { name: 'platesToday' }
+  // Field-reports increment (increment 5, ported from Runway): the in-app
+  // "Report a problem" form, reached from Settings' "Report a problem"
+  // entry. `fromScreen` carries which screen it was opened from — both the
+  // context this screen writes onto the saved FieldReport (db/types.ts's
+  // `screenName`) and where "back" (and the post-save navigate) return to.
+  | { name: 'reportProblem'; fromScreen: string }
+  // The on-device event viewer, reached from Settings' "View activity log"
+  // entry — a pure read-only view, no create/prefill props of its own.
+  | { name: 'activityLog' };
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'home' });
@@ -41,6 +52,10 @@ export default function App() {
         return <PlateCheckIn onNavigate={setScreen} />;
       case 'platesToday':
         return <PlatesToday onNavigate={setScreen} />;
+      case 'reportProblem':
+        return <ReportProblem fromScreen={screen.fromScreen} onNavigate={setScreen} />;
+      case 'activityLog':
+        return <ActivityLog onNavigate={setScreen} />;
     }
   }
 

@@ -15,7 +15,7 @@
 // would remove that manual-sync risk, but that's a v1.5 candidate, not this
 // increment's problem to solve (see Runway's own README.md v1.5 list for the
 // identical unsolved item).
-export const APP_VERSION = '0.4.1';
+export const APP_VERSION = '0.5.0';
 
 /** android/app/build.gradle's `versionCode` — a plain incrementing integer
  * Android uses to decide "is this build newer", independent of the
@@ -23,4 +23,4 @@ export const APP_VERSION = '0.4.1';
  * number src/lib/updateCheck.ts's comparisons are actually built on: two
  * strings can't be reliably ordered ("0.10.0" vs "0.9.0" as text), but two
  * versionCodes always can. */
-export const APP_VERSION_CODE = 6;
+export const APP_VERSION_CODE = 7;

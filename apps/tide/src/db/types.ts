@@ -105,6 +105,71 @@ export interface Setting {
   value: string;
 }
 
+// --- Field reports (increment 5, Dexie v3) ---
+// In-app bug/improvement reports, ported from apps/runway/src/db/types.ts's
+// own field-reports section. Unlike the `events` table above (v2), which is
+// a genuinely new store, THIS section is also a genuinely new table, so it
+// needs its own Dexie version bump — see db.ts's version(3) comment.
+
+export type FieldReportStatus = 'pending' | 'synced' | 'failed';
+
+/**
+ * A single "report a problem" submission — ReportProblem.tsx's save path,
+ * synced (best-effort) to GitHub Issues by src/lib/reportSync.ts. Written
+ * to Dexie unconditionally on submit, regardless of whether a sync token
+ * exists or the device is online — the local write IS the feature; sync is
+ * an enhancement on top of it, not a precondition for it.
+ */
+export interface FieldReport {
+  id: string;
+  createdAt: string;
+  description: string;
+  /** The Screen union's `name` that was active when the report form was
+   * opened from — 'home' or 'settings' today, but stored as a plain string
+   * rather than a narrowed union so this table never needs a schema change
+   * if a third entry point is added later. */
+  screenName: string;
+  /** APP_VERSION (src/lib/appVersion.ts) at submit time — a fixed fact
+   * about the report, not a live lookup, so an old report still shows the
+   * version it was actually filed under after the app has since updated. */
+  appVersion: string;
+  /** Base64-encoded image bytes with the `data:...;base64,` prefix already
+   * stripped (ReportProblem.tsx's FileReader path strips it before writing
+   * here) — null when no screenshot was attached. */
+  screenshotBase64: string | null;
+  screenshotMime: string | null;
+  /**
+   * 'pending': not yet synced (no token configured, offline, or a
+   * transient/network failure — see reportSync.ts's classifySyncError).
+   * Retried on every app open. 'synced': filed as a GitHub issue,
+   * `syncedIssueUrl` set, `screenshotBase64`/`screenshotMime` cleared (the
+   * bytes now live in the target repo). 'failed': permanent — a 4xx from
+   * GitHub's API (bad token, bad repo, validation error) that retrying with
+   * the same input would only repeat; `syncError` holds why. Only a manual
+   * "Retry" (ReportProblem.tsx) re-attempts a 'failed' row, and only after
+   * whatever made it fail (usually the token/repo settings) has changed.
+   */
+  status: FieldReportStatus;
+  syncedIssueUrl: string | null;
+  syncError: string | null;
+  /**
+   * The last 50 lines of the on-device event log (src/lib/eventLog.ts),
+   * snapshotted at SAVE time — `null` when the "Attach recent activity log"
+   * checkbox (ReportProblem.tsx, default OFF) was unchecked. Stored ON THE
+   * REPORT ROW, not re-read from the log at sync time, deliberately: a
+   * report can sit `pending` for a while (no token configured, or offline)
+   * and by the time `syncPendingReports` finally files it, the live log has
+   * moved on — pruned, or full of unrelated events from whatever Deepak did
+   * between filing and syncing. The log attached to a report must be the
+   * log AS IT STOOD when the bug was fresh in his mind, not whatever the
+   * log happens to say later. Undefined-as-null discipline (this file's
+   * usual rule): a report row saved before this field existed has no
+   * `activityLog` property at all, read everywhere as `activityLog ??
+   * null`.
+   */
+  activityLog: string[] | null;
+}
+
 // --- Activity log (increment 2, Dexie v2) ---
 // Ported from apps/runway/src/db/types.ts's own activity-log section — same
 // rule, restated here rather than merely imported: this log answers "what
@@ -135,7 +200,11 @@ export type EventCategory =
   // logged — see src/screens/PlateCheckIn.tsx. Named 'meal', not
   // 'plate'/'plateCheckIn', to match the `meals` table this reports on
   // (db/db.ts) rather than the screen's own name.
-  | 'meal';
+  | 'meal'
+  // Field-reports increment (increment 5): a report was submitted or
+  // synced to GitHub Issues — see src/lib/reportSync.ts and
+  // src/screens/ReportProblem.tsx.
+  | 'report';
 
 /**
  * One row of the activity log. Deliberately flat — `category` plus one

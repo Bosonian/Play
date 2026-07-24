@@ -6,6 +6,7 @@ import './index.css';
 import { logEvent, pruneEventLog } from './lib/eventLog';
 import { checkForUpdate } from './lib/updateCheck';
 import { syncHealthData } from './lib/healthSync';
+import { syncPendingReports } from './lib/reportSync';
 
 // Increment 2: prune-on-open, mirroring main.tsx's own comment in Runway —
 // one cheap pass here beats a count-and-maybe-delete after every single
@@ -28,6 +29,15 @@ void checkForUpdate();
 // data" has already been used once — see that function's own doc comment —
 // so this is a cheap no-op on every open until Deepak actually connects it.
 void syncHealthData();
+
+// Field-reports increment (increment 5, ported from Runway): retries
+// whatever's still `status: 'pending'` in the fieldReports table against
+// GitHub Issues, same fire-and-forget treatment as the calls above — never
+// blocks the first render, never throws (see reportSync.ts's own doc
+// comment), and picking up the queue on every app open is what makes
+// offline capture eventually consistent without any background sync
+// worker.
+void syncPendingReports();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
