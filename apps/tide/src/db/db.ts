@@ -4,10 +4,10 @@ import type { Meal, Movement, Setting, TideEvent, WeighIn } from './types';
 // Dexie's index string only lists fields actually queried by (`id`/`key`
 // are the implicit primary keys). `weighIns` is indexed on `at` because the
 // trend engine and History both need "all weigh-ins, in date order" —
-// everything else this increment is read as a whole table (`meals` and
-// `movement` aren't queried by any screen yet — see types.ts's header
-// comment on why they're defined now as rows-in-waiting) or by key
-// (`settings`).
+// `meals` is indexed on `at` for the identical reason, as of the plate
+// check-in increment (0.4.0, PlatesToday.tsx's today-range query). Only
+// `movement` is still read as a whole table / by key (`settings`) this
+// increment.
 class TideDB extends Dexie {
   weighIns!: EntityTable<WeighIn, 'id'>;
   meals!: EntityTable<Meal, 'id'>;
@@ -64,6 +64,13 @@ class TideDB extends Dexie {
     // schema change. See db/types.ts's own header comment on when a bump is
     // actually required (a new indexed field, never a table simply
     // gaining its first real writer).
+    //
+    // Plate check-in increment (0.4.0): no version bump either, same
+    // reasoning. `meals` and its `at` index were already declared in v1
+    // (above) — every field PlateCheckIn.tsx writes (`kind`, the three
+    // `PortionTier` columns, `fried`/`sugary`, `photoRef`, `estimatedKcal`)
+    // was already part of the v1 `Meal` shape (db/types.ts). This
+    // increment is `meals`' first real writer, not a schema change.
   }
 }
 

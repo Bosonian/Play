@@ -203,6 +203,24 @@ export function localDateKey(date: Date = new Date()): string {
   return `${y}-${m}-${d}`;
 }
 
+/** Device-local calendar-day bounds as ISO datetime strings — plate check-in
+ * increment (0.4.0): `Meal.at` (unlike `Movement.date`) is a full instant,
+ * not a day key, so PlatesToday.tsx's "today's meals" query needs a
+ * datetime RANGE rather than `localDateKey`'s single string. Same
+ * local-vs-UTC distinction as `localDateKey` above, applied to a range:
+ * constructing local midnight via the multi-argument `Date` constructor
+ * (always interpreted as LOCAL time, never UTC) rather than parsing or
+ * subtracting offsets is what keeps this from drifting a day off in either
+ * direction across a DST transition. `endIso` is the START of the NEXT
+ * local day (an exclusive upper bound), not "23:59:59" of today — a
+ * half-open range needs no fudge-factor to correctly include a meal logged
+ * in today's very last second. */
+export function localDayBoundsIso(date: Date = new Date()): { startIso: string; endIso: string } {
+  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+  const end = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1, 0, 0, 0, 0);
+  return { startIso: start.toISOString(), endIso: end.toISOString() };
+}
+
 /** "Steps today: 6,412 · active 320 kcal." — Home's quiet movement line.
  * `null` in either field (only some Health Connect scopes granted, or the
  * watch hasn't synced yet today) reads as "not yet", never a bare 0 — a

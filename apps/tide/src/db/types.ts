@@ -40,20 +40,22 @@ export interface WeighIn {
 }
 
 /** Composition tiers for a plate check-in (TIDE_PLAN.md §4, §6) — a 3-tap
- * estimate, never a gram count. Defined here as a rows-in-waiting type
- * (TIDE_PLAN.md's increment roadmap: plate check-ins are increment 4) —
- * not read or written by any screen this increment, same treatment
- * Runway's Sprint/Milestone tables got in its own increment 1. */
+ * estimate, never a gram count. Written by src/screens/PlateCheckIn.tsx and
+ * read (via src/lib/plateEstimate.ts) by that screen and by
+ * src/screens/PlatesToday.tsx, as of the plate check-in increment (0.4.0)
+ * — previously a rows-in-waiting type with no reader/writer yet, same
+ * treatment Runway's Sprint/Milestone tables got in its own increment 1. */
 export type PortionTier = 'none' | 'some' | 'lot';
 
 export type MealKind = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'skipped';
 
 /** One plate check-in — TIDE_PLAN.md §4/§5.3/§6. `estimatedKcal` is
  * deliberately secondary and derived (computed from the portion tiers
- * against the INDB/ICMR-NIN table in a future increment), never the
- * primary record — the composition tiers below ARE the record; the kcal
- * estimate is a downstream, rough, honest-about-its-roughness display
- * value layered on top. Not used by any screen yet. */
+ * against the INDB/ICMR-NIN table — src/lib/plateEstimate.ts, plate
+ * check-in increment 0.4.0), never the primary record — the composition
+ * tiers below ARE the record; the kcal estimate is a downstream, rough,
+ * honest-about-its-roughness display value layered on top. Written by
+ * src/screens/PlateCheckIn.tsx, read by src/screens/PlatesToday.tsx. */
 export interface Meal {
   id: string;
   at: string;
@@ -128,7 +130,12 @@ export type EventCategory =
   // weight/body-fat/steps/active-energy rows, skipped a body-fat reading
   // with no matching weight instant, or the connect/permission flow itself
   // changed state — see src/lib/healthSync.ts.
-  | 'health';
+  | 'health'
+  // Plate check-in increment (0.4.0): a plate (or a skipped meal) was
+  // logged — see src/screens/PlateCheckIn.tsx. Named 'meal', not
+  // 'plate'/'plateCheckIn', to match the `meals` table this reports on
+  // (db/db.ts) rather than the screen's own name.
+  | 'meal';
 
 /**
  * One row of the activity log. Deliberately flat — `category` plus one

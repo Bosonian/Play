@@ -8,7 +8,7 @@ import { bodyFatTrend, currentTrend, formatBodyFatTrendLine, formatTrendLine, MI
 import { APP_VERSION, APP_VERSION_CODE } from '../lib/appVersion';
 import { AVAILABLE_UPDATE_SETTING, parseAvailableUpdate } from '../lib/updateCheck';
 import { logEvent } from '../lib/eventLog';
-import { formatMovementLine, localDateKey } from '../lib/healthSync';
+import { formatMovementLine, localDateKey, localDayBoundsIso } from '../lib/healthSync';
 
 interface HomeProps {
   onNavigate: (screen: Screen) => void;
@@ -43,6 +43,18 @@ export function Home({ onNavigate }: HomeProps) {
   // rare edge case (same "re-open picks up reality" tradeoff Runway's own
   // day-boundary reads make), not one this screen actively watches for.
   const todayMovement = useLiveQuery(() => db.movement.get(localDateKey()), []);
+
+  // Plate check-in increment (0.4.0): today's plate count, for the quiet
+  // shortcut line below — a `count()` query, not a full row fetch, since
+  // this screen only ever needs the number (the actual rows live on
+  // PlatesToday.tsx). Same device-local day boundary as PlatesToday.tsx's
+  // own query (localDayBoundsIso, healthSync.ts) — the two screens must
+  // agree on what "today" means or the count here could disagree with the
+  // list a tap on it navigates to.
+  const todayMealCount = useLiveQuery(async () => {
+    const { startIso, endIso } = localDayBoundsIso();
+    return db.meals.where('at').between(startIso, endIso, true, false).count();
+  }, []);
 
   // Increment 2: same re-guard-at-render reasoning as Runway's own Home.tsx
   // — checkForUpdate (main.tsx startup, 6h-throttled) is what actually
@@ -151,14 +163,49 @@ export function Home({ onNavigate }: HomeProps) {
             which are the one input this whole screen asks him to supply). */}
         {bfTrend && <p className="text-sm text-slate-500">{formatBodyFatTrendLine(bfTrend)}</p>}
         {movementLine && <p className="text-sm text-slate-500">{movementLine}</p>}
+        {/* Plate check-in increment (0.4.0): a quiet shortcut, not a
+            headline — present only once there's something to jump to
+            (>=1 plate today), same "absent when there's nothing to show"
+            treatment as bfTrend/movementLine just above. A plain <button>
+            rather than TextAction: TextAction's own slate-400 is tuned for
+            footer-weight actions, one shade lighter than the slate-500 the
+            other secondary lines on this screen use, and matching THOSE is
+            what keeps this line reading as "one more quiet fact", not a
+            call to action competing with the trend headline above it. */}
+        {todayMealCount !== undefined && todayMealCount > 0 && (
+          <button
+            type="button"
+            onClick={() => onNavigate({ name: 'platesToday' })}
+            className="text-sm text-slate-500 transition-colors hover:text-slate-300"
+          >
+            {todayMealCount} plate{todayMealCount === 1 ? '' : 's'} today
+          </button>
+        )}
       </section>
 
       <section className="flex flex-col items-center gap-4">
         <Button onClick={() => onNavigate({ name: 'weighInEntry' })} className="w-full max-w-xs">
           Add weigh-in
         </Button>
+        {/* Secondary, directly beneath the primary action — deliberately
+            NOT another primary Button: TIDE_PLAN.md §2's north star is the
+            weight trend, and "Add weigh-in" is the one action this screen
+            should read as urging. "Add plate" needs to be reachable in one
+            tap, not equally emphasised. */}
+        <Button
+          variant="secondary"
+          onClick={() => onNavigate({ name: 'plateCheckIn' })}
+          className="w-full max-w-xs"
+        >
+          Add plate
+        </Button>
         <div className="flex gap-6">
           <TextAction onClick={() => onNavigate({ name: 'history' })}>History</TextAction>
+          {/* Always present, regardless of todayMealCount — the count-line
+              shortcut above only exists once there's a plate to show, so
+              this is the one guaranteed path to PlatesToday on a day with
+              nothing logged yet. */}
+          <TextAction onClick={() => onNavigate({ name: 'platesToday' })}>Plates</TextAction>
           <TextAction onClick={() => onNavigate({ name: 'settings' })}>Settings</TextAction>
         </div>
       </section>

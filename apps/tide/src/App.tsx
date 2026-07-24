@@ -3,6 +3,8 @@ import { Home } from './screens/Home';
 import { WeighInEntry } from './screens/WeighInEntry';
 import { History } from './screens/History';
 import { Settings } from './screens/Settings';
+import { PlateCheckIn } from './screens/PlateCheckIn';
+import { PlatesToday } from './screens/PlatesToday';
 import { ErrorBoundary } from './ui/ErrorBoundary';
 import { logEvent } from './lib/eventLog';
 import { syncHealthData } from './lib/healthSync';
@@ -10,10 +12,17 @@ import { syncHealthData } from './lib/healthSync';
 // Navigation as plain React state, not a router library — same call Runway
 // made in increment 1, for the same reason: no deep-linkable URL
 // requirement yet (no shareable weigh-in links, no browser back/forward
-// across screens) and only four screens. A router would be ceremony
-// without payoff here; revisit if that changes (e.g. a future notification
-// tap that should open straight to WeighInEntry).
-export type Screen = { name: 'home' } | { name: 'weighInEntry' } | { name: 'history' } | { name: 'settings' };
+// across screens) and now six screens (plate check-in increment 0.4.0 adds
+// two more) — still few enough that a router would be ceremony without
+// payoff. Revisit if that changes (e.g. a future notification tap that
+// should open straight to WeighInEntry or PlateCheckIn).
+export type Screen =
+  | { name: 'home' }
+  | { name: 'weighInEntry' }
+  | { name: 'history' }
+  | { name: 'settings' }
+  | { name: 'plateCheckIn' }
+  | { name: 'platesToday' };
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'home' });
@@ -28,6 +37,10 @@ export default function App() {
         return <History onNavigate={setScreen} />;
       case 'settings':
         return <Settings onNavigate={setScreen} />;
+      case 'plateCheckIn':
+        return <PlateCheckIn onNavigate={setScreen} />;
+      case 'platesToday':
+        return <PlatesToday onNavigate={setScreen} />;
     }
   }
 
