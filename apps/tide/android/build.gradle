@@ -1,0 +1,55 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+
+buildscript {
+
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        // Health Connect bridge (0.3.1): connect-client:1.1.0 hard-requires
+        // AGP 8.9.1+ AND compileSdk 36 (see the v0.3.0 CI failure —
+        // checkReleaseAarMetadata rejected AGP 8.7.2 / compileSdk 35). AGP
+        // 8.9.x itself needs Gradle 8.11+ (this project's wrapper is 8.11.1)
+        // and JDK 17+ (CI runs JDK 21) — both already satisfied, so this is a
+        // clean single-notch bump, not a toolchain cascade. compileSdk moves
+        // to 36 in variables.gradle; targetSdk deliberately stays at 35 (the
+        // log confirms the two move independently — bumping targetSdk would
+        // opt into Android 16 runtime behavior changes untestable in this
+        // environment, so it's left alone).
+        classpath 'com.android.tools.build:gradle:8.9.1'
+        classpath 'com.google.gms:google-services:4.4.2'
+        // Health Connect bridge increment (0.3.0): the FIRST Kotlin source
+        // file in this app (app/src/main/java/de/bosonian/tide/
+        // HealthConnectPlugin.kt) — see that file's own header comment for
+        // why Kotlin, not Java, was the honest choice for a coroutine
+        // (suspend-function) API like Health Connect's. Hardcoded here
+        // rather than sourced from variables.gradle's `ext {}` block
+        // (unlike most other version numbers in this project) because
+        // `buildscript {}` is evaluated BEFORE `apply from: "variables.gradle"`
+        // runs below — variables.gradle's values genuinely aren't visible
+        // yet at this point in the script, same reason the AGP classpath
+        // line just above is itself hardcoded rather than sourced from
+        // there. 2.0.21: current at the time this was chosen, compatible
+        // with AGP 8.7.2 and this project's Gradle 8.11.1 wrapper — verify
+        // against a newer stable if this build is picked up again long
+        // after 2026.
+        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.21'
+
+        // NOTE: Do not place your application dependencies here; they belong
+        // in the individual module build.gradle files
+    }
+}
+
+apply from: "variables.gradle"
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+task clean(type: Delete) {
+    delete rootProject.buildDir
+}

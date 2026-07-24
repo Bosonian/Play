@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Progress bar polish (0.40.0): the "below target" fill for the Prüfung
+     widget's weekly progress bar, referenced as the android:progressDrawable
+     of one of the two ProgressBar views in widget_pruefung.xml (see that
+     file's own comment on why there are two views, not one retinted one).
+
+     Colours matched against the app's own live weekly bar
+     (src/screens/ExamOverview.tsx: `thisWeekHours >= requiredPace ?
+     'bg-emerald-300' : 'bg-sky-500'`) rather than guessed — verified via
+     `require('tailwindcss/colors')` against this app's own
+     tailwind.config.ts (which extends the default palette with `surface`/
+     `raised` only; sky/emerald/slate are untouched Tailwind defaults, so
+     the default hex values genuinely are the ones Tailwind compiles into
+     the live screen's CSS):
+       track   #1E293B = slate-800  (bg-slate-800, the live bar's track)
+       fill    #0EA5E9 = sky-500    (bg-sky-500, the live bar's "below
+                                      target" fill)
+     NOTE ON THE INCREMENT BRIEF: the brief that requested this file named
+     "#38BDF8 (sky-500)" — that hex is actually Tailwind's sky-400, not
+     sky-500 (sky-500 is #0EA5E9). This file uses the real sky-500 hex to
+     stay faithful to the live bar's actual rendered colour, which is the
+     whole point of "mirroring the one sanctioned bar" — see the CHANGELOG
+     entry for this increment for the same note. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@android:id/background">
+        <shape android:shape="rectangle">
+            <corners android:radius="3dp" />
+            <solid android:color="#1E293B" />
+        </shape>
+    </item>
+    <item android:id="@android:id/progress">
+        <clip>
+            <shape android:shape="rectangle">
+                <corners android:radius="3dp" />
+                <solid android:color="#0EA5E9" />
+            </shape>
+        </clip>
+    </item>
+</layer-list>

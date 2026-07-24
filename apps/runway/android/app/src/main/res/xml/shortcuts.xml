@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widgets increment: static app shortcuts (long-press the app icon),
+     referenced from the <meta-data android:name="android.app.shortcuts">
+     on MainActivity in AndroidManifest.xml. Icons reference the existing
+     launcher mipmap (acceptable for v1, per the increment brief — no
+     dedicated per-shortcut icon was cut for this) rather than a new asset. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <shortcut
+        android:shortcutId="new_departure"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_new_departure_short"
+        android:shortcutLongLabel="@string/shortcut_new_departure_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="de.bosonian.runway"
+            android:targetClass="de.bosonian.runway.MainActivity"
+            android:data="runway://new-departure" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="pruefung"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_pruefung_short"
+        android:shortcutLongLabel="@string/shortcut_pruefung_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="de.bosonian.runway"
+            android:targetClass="de.bosonian.runway.MainActivity"
+            android:data="runway://exam" />
+    </shortcut>
+
+    <!-- Arrival-detection follow-up (field observation): Samsung Modes &
+         Routines surfaces an app's STATIC SHORTCUTS as selectable routine
+         actions — it offers no free-form open-URL action per app. Declaring
+         the arrived deep link as a shortcut makes it appear in that picker,
+         which is how the user's existing hospital-arrival routine triggers
+         it. Doubles as a manual quick action (long-press the icon on the
+         way into the building). -->
+    <shortcut
+        android:shortcutId="arrived"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_arrived_short"
+        android:shortcutLongLabel="@string/shortcut_arrived_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="de.bosonian.runway"
+            android:targetClass="de.bosonian.runway.MainActivity"
+            android:data="runway://arrived" />
+    </shortcut>
+
+</shortcuts>

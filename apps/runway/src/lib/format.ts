@@ -1,0 +1,243 @@
+import { format } from 'date-fns';
+import type { Exam } from '../db/types';
+
+// Single choke point for time/date display so "24-hour, ISO-for-storage"
+// (CLAUDE.md's European-default rule) can't quietly drift into en-US
+// formatting somewhere else in the app.
+
+/** "14:32" — 24-hour, always. Never locale-dependent (no AM/PM anywhere). */
+export function formatTime(date: Date): string {
+  return format(date, 'HH:mm');
+}
+
+/** "Wed 9 Jul" — for display only. Storage always uses ISO 8601 strings. */
+export function formatDateDisplay(date: Date): string {
+  return format(date, 'EEE d MMM');
+}
+
+/** "2026-07-09" — for <input type="date"> value binding and ISO storage. */
+export function formatDateInput(date: Date): string {
+  return format(date, 'yyyy-MM-dd');
+}
+
+/** "14:32" — for <input type="time"> value binding (same shape as formatTime,
+ * kept as a separate export so the two call sites — display vs. form input
+ * — can diverge later without one silently affecting the other). */
+export function formatTimeInput(date: Date): string {
+  return format(date, 'HH:mm');
+}
+
+/** "23 min of slack" / "2h 5m of slack" / "2h 5m past your appointment" —
+ * the Runway screen's slack/overdue line. Switches from plain minutes to an
+ * hours+minutes form once the magnitude reaches two hours: "134 min of
+ * slack" doesn't read at a glance the way a clock duration does, and this
+ * app's whole premise is numbers that are legible at a glance.
+ *
+ * `lateSuffix` (tasks increment): the late-branch wording is the one part
+ * of this line that's specific to what's being measured against — "past
+ * your appointment" is exactly right for a departure, but wrong (there is
+ * no appointment) for a task deadline. Defaulted to the original departure
+ * copy so every existing call site is unaffected; TaskRun.tsx passes "past
+ * the deadline" instead of duplicating this whole function for one string.
+ * The "of slack" branch needs no equivalent parameter — "slack" reads true
+ * regardless of what the deadline belongs to. */
+export function formatSlackLine(slackMinutes: number, lateSuffix: string = 'past your appointment'): string {
+  const magnitude = Math.abs(slackMinutes);
+  const suffix = slackMinutes >= 0 ? 'of slack' : lateSuffix;
+  if (magnitude >= 120) {
+    const hours = Math.floor(magnitude / 60);
+    const minutes = magnitude % 60;
+    return `${hours}h ${minutes}m ${suffix}`;
+  }
+  return `${magnitude} min ${suffix}`;
+}
+
+/** "14:30" when `dateTime` falls on the same calendar day as `now`; "Thu 10
+ * Jul 14:30" otherwise — the date-anchored form only earns its keep once
+ * "today" stops being obvious from context. Extracted from
+ * formatAppointmentLine (which just adds its own "Appointment " prefix on
+ * top) so the departure widget's appointmentLine (src/lib/widgetSnapshot.ts)
+ * can reuse the exact same same-day judgment without a second, possibly
+ * drifting copy of the day-comparison logic. `now` is an explicit argument
+ * (not read internally) for the same reason projection.ts takes one:
+ * testable without mocking the system clock, and a caller that already has
+ * a `now` from useNow() can pass it straight through instead of this
+ * reaching for a second, possibly-different clock read. */
+export function formatDateTimeShort(dateTime: Date, now: Date): string {
+  const sameDay =
+    dateTime.getFullYear() === now.getFullYear() &&
+    dateTime.getMonth() === now.getMonth() &&
+    dateTime.getDate() === now.getDate();
+  return sameDay ? formatTime(dateTime) : `${formatDateDisplay(dateTime)} ${formatTime(dateTime)}`;
+}
+
+/** "Appointment 14:30" / "Appointment Thu 10 Jul 14:30" — see
+ * formatDateTimeShort above for the same-day judgment this just prefixes. */
+export function formatAppointmentLine(appointmentAt: Date, now: Date): string {
+  return `Appointment ${formatDateTimeShort(appointmentAt, now)}`;
+}
+
+/** "1 Nov 2026" — long-form date display for anchors that sit months away
+ * (an exam window, an exact exam date once known), where the year is part
+ * of being exact rather than decoration. Distinct from formatDateDisplay's
+ * near-term "Wed 9 Jul", which drops both the weekday's relevance and the
+ * year because at departure-mode's day-or-two range they're always obvious
+ * from context — an exam anchor has no such context to lean on. */
+export function formatDateLong(date: Date): string {
+  return format(date, 'd MMM yyyy');
+}
+
+/** "14 Dec" (same year as `now`) or "8 Jun 2028" (a different year) — day +
+ * short month, no weekday, with the year appended only when it isn't
+ * obvious from context. Used for the exam overview's "Ready by"
+ * centerpiece and milestone rows. Distinct from formatDateDisplay's "Wed 9
+ * Jul": no weekday, because "Ready by" isn't read as "which day of the
+ * week do I have to act by" the way an appointment is.
+ *
+ * `now` is a required, explicit second argument (F4) — a readyDate is NOT
+ * always within a few months of `now` the way an earlier version of this
+ * comment assumed: a slow-enough measured pace projects a readyDate years
+ * out ("Ready by 8 Jun" with no year, read on a July day, silently means
+ * 2028 with nothing on screen to say so). Comparing against `now` rather
+ * than a fixed "always/never show the year" rule keeps this correct
+ * however far out the projection lands, and keeps the function pure and
+ * testable without reading the system clock internally — same reasoning
+ * projection.ts/examProjection.ts take `now` as an argument everywhere
+ * else in this app. */
+export function formatDateMedium(date: Date, now: Date): string {
+  const pattern = date.getFullYear() === now.getFullYear() ? 'd MMM' : 'd MMM yyyy';
+  return format(date, pattern);
+}
+
+/** "Exam window opens 1 Nov 2026" before the exact date is known; "Exam 1
+ * Nov 2026" once it is — RUNWAY_PRUFUNG_PLAN.md §3: `examDate` "overrides
+ * windowStart as the anchor" the moment it's set, and that's exactly the
+ * swap this line makes. `windowStart`/`examDate` are ISO date-only strings
+ * (YYYY-MM-DD); they're parsed with an explicit local midnight
+ * (`${date}T00:00:00`, no `Z`) rather than handed straight to `new Date()`
+ * — same reasoning as DepartureSetup's date+time construction: a bare
+ * `new Date('2026-11-01')` parses as UTC midnight, which lands on the
+ * previous calendar day once JS shifts it to a timezone behind UTC. */
+export function formatExamAnchorLine(exam: Pick<Exam, 'windowStart' | 'examDate'>): string {
+  const anchor = exam.examDate ?? exam.windowStart;
+  const label = formatDateLong(new Date(`${anchor}T00:00:00`));
+  return exam.examDate ? `Exam ${label}` : `Exam window opens ${label}`;
+}
+
+/** "{n} days of margin" / "{n} days past the exam" — the exam overview's
+ * slack line for every state except 'done' (which has its own fixed
+ * sentence, handled by the caller rather than here, since it doesn't
+ * depend on slackDays at all). Only ever called with a non-null
+ * slackDays — the 'late'-via-zero-pace ("Never") state has no margin
+ * figure to report and the screen omits this line entirely in that case. */
+export function formatExamMarginLine(slackDays: number): string {
+  return slackDays >= 0 ? `${slackDays} days of margin` : `${Math.abs(slackDays)} days past the exam`;
+}
+
+/** A week has exactly this many hours — the ceiling past which "N h/week
+ * required" stops being a real, achievable rate (F12) and starts being a
+ * symptom of an anchor that's essentially already unreachable (e.g. 40h
+ * remaining with 2 days left before the anchor: 140 h/week). */
+const HOURS_PER_WEEK = 24 * 7;
+
+/** "Ready by 1 Nov needs 6.5 h/week. This week: 2.0 of 6.5." — the exam
+ * overview's actionable line (RUNWAY_PRUFUNG_PLAN.md §2). `anchor` here is
+ * the exam's own anchor date (window start or exact date), not the
+ * projected readyDate — the sentence reads as "here's the rate that gets
+ * you ready in time for the exam", not a restatement of the centerpiece.
+ * `requiredPaceHoursPerWeek` of `null` means the anchor is today or
+ * already past, at which point "hours/week needed" isn't a meaningful
+ * number — the line says so instead of dividing by zero.
+ *
+ * A required pace above HOURS_PER_WEEK (F12) is a related but distinct
+ * case: dividing still produces a finite number, but "184 h/week" isn't a
+ * rate anyone can actually work — there aren't that many hours in a week
+ * to log. Rather than print an absurd number, the line says plainly that
+ * there isn't enough time left, same spirit as the null-anchor branch
+ * above. `now` (F4) is threaded through to formatDateMedium so the anchor
+ * date shows its year whenever it differs from the current one. */
+export function formatRequiredPaceLine(
+  anchor: Date,
+  requiredPaceHoursPerWeek: number | null,
+  hoursThisWeek: number,
+  now: Date,
+): string {
+  if (requiredPaceHoursPerWeek === null) return 'The exam window is open.';
+  if (requiredPaceHoursPerWeek > HOURS_PER_WEEK) {
+    return `Ready by ${formatDateMedium(anchor, now)} needs more hours than remain before it.`;
+  }
+  const required = requiredPaceHoursPerWeek.toFixed(1);
+  return `Ready by ${formatDateMedium(anchor, now)} needs ${required} h/week. This week: ${hoursThisWeek.toFixed(1)} of ${required}.`;
+}
+
+/** Three-letter day names, indexed by ISO weekday (1 Monday .. 7 Sunday —
+ * same numbering as `TemplateSchedule.days`, see db/types.ts). Index 0 is
+ * unused padding so `DAY_NAMES[isoWeekday]` reads directly without an
+ * off-by-one subtraction at every call site. */
+const DAY_NAMES = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/** "Mon–Fri" / "Sat–Sun" / "Mon, Wed, Fri" / "Daily" — collapses a
+ * template's recurring `days` (recurring-departures increment) into one
+ * short summary for Home's collapsed-occurrence card. Always reads
+ * Monday-first regardless of the order `days` arrives in, matching
+ * CLAUDE.md's Monday-first week convention.
+ *
+ * Contiguous runs (Mon,Tue,Wed -> "Mon–Wed") collapse to a range; isolated
+ * days stay comma-separated; all seven days collapse to the single word
+ * "Daily" rather than "Mon–Sun", which would read as a bounded week rather
+ * than "every day, no exceptions".
+ *
+ * Deliberately NOT circular: [6, 7, 1] (Sat, Sun, Mon) renders as
+ * "Mon, Sat–Sun", not a wrapped "Sat–Mon" range. A wrap-around range would
+ * be a clever reading of the data (the week does form a cycle) but not a
+ * clear one — the day the range starts on stops being obvious at a glance,
+ * which is the opposite of what a summary line is for. The week has a
+ * Monday start here, full stop.
+ *
+ * Assumes `days` is non-empty, matching `TemplateSchedule.days`'s own
+ * invariant (db/types.ts: "non-empty whenever a schedule exists" —
+ * TemplateEdit's validation never lets an empty-days schedule save) — an
+ * empty array would leave `runStart`/`runEnd` undefined below.
+ */
+export function formatScheduleDays(days: number[]): string {
+  const sorted = Array.from(new Set(days)).sort((a, b) => a - b);
+  if (sorted.length === 7) return 'Daily';
+
+  const parts: string[] = [];
+  let runStart = sorted[0];
+  let runEnd = sorted[0];
+
+  function flushRun() {
+    parts.push(runStart === runEnd ? DAY_NAMES[runStart] : `${DAY_NAMES[runStart]}–${DAY_NAMES[runEnd]}`);
+  }
+
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i] === runEnd + 1) {
+      runEnd = sorted[i];
+      continue;
+    }
+    flushRun();
+    runStart = sorted[i];
+    runEnd = sorted[i];
+  }
+  flushRun();
+
+  return parts.join(', ');
+}
+
+/** "24:59" while a sprint still has time left in its planned box; "+3:12"
+ * once it's run past that (a negative `remainingSeconds` — the Sprint
+ * screen deliberately does not clamp the countdown at 0:00, because
+ * stopping the clock there would falsify the log: the sprint isn't over
+ * until the user ends it, so time keeps counting, just upward and in the
+ * overrun tone). mm:ss always, no hours component the way formatSlackLine
+ * gains one past two hours — a sprint's plannedMinutes tops out at 90, so
+ * that branch would never actually fire here. */
+export function formatCountdown(remainingSeconds: number): string {
+  const overrun = remainingSeconds < 0;
+  const magnitude = Math.abs(remainingSeconds);
+  const minutes = Math.floor(magnitude / 60);
+  const seconds = magnitude % 60;
+  const clock = `${minutes}:${String(seconds).padStart(2, '0')}`;
+  return overrun ? `+${clock}` : clock;
+}

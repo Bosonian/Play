@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Progress bar polish (0.40.0): the "at/past target" fill for the
+     Prüfung widget's weekly progress bar — see progress_sky.xml's own
+     comment for why there are two drawables (one per ProgressBar view,
+     visibility-toggled in PruefungWidgetProvider.java) rather than one
+     retinted at runtime, and for how these hex values were verified
+     against the app's own tailwind.config.ts / live ExamOverview.tsx bar
+     rather than assumed.
+
+     Colours:
+       track   #1E293B = slate-800   (bg-slate-800, same track as
+                                       progress_sky.xml — one track colour,
+                                       shared)
+       fill    #6EE7B7 = emerald-300 (bg-emerald-300, the live bar's
+                                       "at/past target" fill)
+     NOTE ON THE INCREMENT BRIEF: the brief that requested this file named
+     "#34D399 (emerald-400)" — that hex is Tailwind's emerald-400, but the
+     live bar actually uses emerald-300 (`bg-emerald-300`, hex #6EE7B7).
+     This file matches the live bar's real class, not the brief's literal
+     (mismatched) hex — see progress_sky.xml's own note and the CHANGELOG
+     entry for this increment. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@android:id/background">
+        <shape android:shape="rectangle">
+            <corners android:radius="3dp" />
+            <solid android:color="#1E293B" />
+        </shape>
+    </item>
+    <item android:id="@android:id/progress">
+        <clip>
+            <shape android:shape="rectangle">
+                <corners android:radius="3dp" />
+                <solid android:color="#6EE7B7" />
+            </shape>
+        </clip>
+    </item>
+</layer-list>

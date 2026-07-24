@@ -1,0 +1,777 @@
+import { useEffect, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db } from '../db/db';
+import type { TaskUnit } from '../db/types';
+import type { Screen } from '../App';
+import { ScreenHeader } from '../ui/ScreenHeader';
+import { Button } from '../ui/Button';
+import { TextAction } from '../ui/TextAction';
+import { BackdateDialog } from '../ui/BackdateDialog';
+import { taskProjection, deriveTaskUnitActuals, taskDeadlineResult, lastCheckedUnitId } from '../lib/taskProjection';
+import type { TaskProjection } from '../lib/taskProjection';
+import { currentStepAnchor, currentStepElapsed } from '../lib/currentStepElapsed';
+import { useNow } from '../hooks/useNow';
+import { StepFocus } from './StepFocus';
+import { formatSlackLine, formatTime } from '../lib/format';
+import { allowSleep, keepAwake } from '../native/keepAwake';
+import { hapticImpact } from '../native/haptics';
+import { pushBackOverride } from '../lib/backOverride';
+import { FOCUS_SOUND_ON_SETTING, readFocusSoundConfig } from '../lib/focusSoundSettings';
+import { startFocusSound, stopFocusSound } from '../audio/focusSound';
+import { taskDoneMessage, taskStartMessage } from '../lib/witness';
+import { shareWitnessText } from '../native/shareText';
+import { refreshWidgets } from '../native/widgets';
+import { refreshDayGauge } from '../lib/dayGaugeRefresh';
+import { cancelTaskAlarm } from '../native/notifications';
+import { logEvent } from '../lib/eventLog';
+
+/** Distinct from Runway's departure-abandon copy — a task carries at most
+ * ONE alarm (the anti-rot increment's start-by alarm, 0.37.0), not a
+ * four-slot ladder, so the honest consequence to state here stays simpler
+ * even though "no alarms to cancel" (this comment's pre-0.37.0 wording) is
+ * no longer true — handleAbandon below does call cancelTaskAlarm now. */
+const ABANDON_CONFIRM = 'Abandon this task? It moves off Home; its progress stays on record.';
+
+interface TaskRunProps {
+  taskId: string;
+  onNavigate: (screen: Screen) => void;
+}
+
+// Same state -> accent-class shape as Runway.tsx's own STATE_TEXT/
+// STATE_BORDER, extended with a `null` entry for a deadline-less task —
+// taskProjection.state is null exactly when there's nothing to be
+// calm/tight/late ABOUT, which reads as the same plain slate the 'calm'
+// case already uses, not a fourth visual state.
+const STATE_TEXT: Record<Exclude<TaskProjection['state'], null> | 'none', string> = {
+  calm: 'text-slate-100',
+  tight: 'text-amber-400',
+  late: 'text-red-400',
+  none: 'text-slate-100',
+};
+
+const STATE_BORDER: Record<Exclude<TaskProjection['state'], null> | 'none', string> = {
+  calm: 'border-slate-800',
+  tight: 'border-amber-700/60',
+  late: 'border-red-700/60',
+  none: 'border-slate-800',
+};
+
+/**
+ * Task mode's live screen — the instrument a task is deliberately started
+ * FROM (see README's "Tasks" section: a task begins at a desk with this
+ * screen already open, unlike a departure's "wake me up to start getting
+ * ready" moment — the live screen is the entire instrument here, not a
+ * fallback for when an alarm doesn't fire). It still carries one alarm,
+ * as of the anti-rot increment (0.37.0): a deadline-bearing planned task
+ * gets a single start-by alarm, cancelled the moment this screen actually
+ * starts it — see the cancelTaskAlarm calls in handleStart/toggleUnit/
+ * handleUnitBackdateConfirm/handleAbandon below. Mirrors Runway.tsx's live
+ * structure closely — same useNow/keep-awake/transactional-modify/
+ * step-focus patterns — with travel, buffer, arrival phase and plan
+ * compression all absent, because a task has none of those (db/types.ts's
+ * header comment on the Tasks section explains why compression specifically
+ * is a considered cut, not a missing feature).
+ */
+export function TaskRun({ taskId, onNavigate }: TaskRunProps) {
+  const task = useLiveQuery(() => db.tasks.get(taskId), [taskId]);
+  const now = useNow(1000);
+
+  const [focusUnitId, setFocusUnitId] = useState<string | null>(null);
+
+  // Backdating increment: same "quiet correction dialog" flag as Runway.tsx's
+  // stepBackdateOpen — see that state's own comment for why this is plain,
+  // unpersisted component state.
+  const [unitBackdateOpen, setUnitBackdateOpen] = useState(false);
+
+  // Witness increment (0.34.0): whether the last share tap had nowhere to
+  // go (no share sheet, no clipboard — shareWitnessText's own doc comment
+  // covers how rare that actually is). Two separate flags, one per site
+  // (the running view's "Tell someone", the done summary's "Tell them") —
+  // cleared on every new attempt at that site, never persisted: recording
+  // "did he tell someone" would build exactly the surveillance ledger this
+  // feature must not be.
+  const [witnessStartUnavailable, setWitnessStartUnavailable] = useState(false);
+  const [witnessDoneUnavailable, setWitnessDoneUnavailable] = useState(false);
+
+  // Defensive clear — same reasoning as Runway.tsx's own focusStepId effect:
+  // if the task stops being 'running' (finishes, is abandoned) while this
+  // screen happens to already be open, or the focused unit disappears from
+  // under it, the overlay has nothing honest left to show.
+  useEffect(() => {
+    if (focusUnitId === null) return;
+    if (!task) return;
+    if (task.status !== 'running' && task.status !== 'planned') {
+      setFocusUnitId(null);
+      return;
+    }
+    if (!task.units.some((u) => u.id === focusUnitId)) setFocusUnitId(null);
+  }, [task, focusUnitId]);
+
+  // Back-gesture support: same reasoning as Runway.tsx's own equivalent
+  // effect on `focusStepId` — while StepFocus is open, a back gesture
+  // closes the overlay instead of navigating the screen underneath it.
+  useEffect(() => {
+    if (focusUnitId === null) return;
+    return pushBackOverride(() => setFocusUnitId(null));
+  }, [focusUnitId]);
+
+  // Keep the screen on for exactly as long as work is live — 'running'
+  // only, same as Runway.tsx's own keep-awake effect scoped to its
+  // equivalent status.
+  useEffect(() => {
+    if (task?.status !== 'running') return;
+    void keepAwake();
+    return () => {
+      void allowSleep();
+    };
+  }, [task?.status]);
+
+  // Focus sound (0.33.0): reads the remembered 'focusSoundOn' preference
+  // fresh here, same reasoning as Sprint.tsx's own equivalent read -
+  // Settings.tsx writes the same row, and this needs the current value
+  // each time this screen mounts, not just at first paint.
+  const focusSoundConfig = useLiveQuery(() => readFocusSoundConfig(), []);
+
+  // Same live window as keep-awake above ('running' only, never 'planned' -
+  // a task Deepak hasn't pressed Start on yet has nothing to hold
+  // attention on background noise FOR). "Remembered, not reset" is the
+  // point of reading `focusSoundConfig.on` fresh here: turn it on once and
+  // every SUBSEQUENT task run starts with the sound already going, nothing
+  // to re-arm. The cleanup below is the single reliable net UNDER every
+  // other stop path (toggleUnit's and handleUnitBackdateConfirm's own
+  // explicit calls when a task finishes, handleAbandon's own explicit
+  // call, the toggle row's own explicit call) - whatever else changed or
+  // however this screen stopped being mounted in the running state, this
+  // always runs and always stops the sound. stopFocusSound is idempotent,
+  // so calling it here on top of an explicit call elsewhere costs nothing.
+  useEffect(() => {
+    if (task?.status !== 'running') return;
+    if (!focusSoundConfig) return; // still loading the settings rows
+    if (focusSoundConfig.on) startFocusSound(focusSoundConfig.kind, focusSoundConfig.volume0to1);
+    return () => {
+      stopFocusSound();
+    };
+  }, [task?.status, focusSoundConfig]);
+
+  const toggleFocusSound = async () => {
+    void hapticImpact('light');
+    const next = !(focusSoundConfig?.on ?? false);
+    await db.settings.put({ key: FOCUS_SOUND_ON_SETTING, value: next ? 'true' : 'false' });
+    // Immediate, on top of the effect above (which will also notice the
+    // settings row changed once Dexie's live query re-emits) - a tap on
+    // this row should be heard right away, not after a query round-trip.
+    if (next) {
+      startFocusSound(focusSoundConfig?.kind ?? 'brown', focusSoundConfig?.volume0to1 ?? 0.4);
+    } else {
+      stopFocusSound();
+    }
+  };
+
+  if (!task) {
+    return (
+      <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-6 px-4 pb-12 pt-safe-top">
+        <div className="pt-8">
+          <ScreenHeader title="Task" onBack={() => onNavigate({ name: 'home' })} />
+        </div>
+      </div>
+    );
+  }
+
+  // Checking a unit also starts the task if it's still 'planned' — same
+  // forgivable-shortcut reasoning as Runway.tsx's toggleStep: diving
+  // straight into the checklist without pressing "Start" first shouldn't be
+  // an error state. Checking the LAST unit resolves the task automatically
+  // to 'done' — unlike a departure, a task has no separate "I'm out the
+  // door" confirmation step; once every unit is checked, the work is
+  // simply finished.
+  //
+  // Already two-way (field bug fix, 0.34.1 — verified while adding Reopen
+  // below, not new code here): `u.checkedAt = checking ? nowIso : null`
+  // clears it right back to null when the SAME unit is tapped again while
+  // checked, which is exactly what the checked-units list's row further
+  // down already wires its checkbox `onChange` to. `checking` is false on
+  // that second tap, so the last-unit auto-resolve above never fires from
+  // an uncheck — only from checking the final remaining unit.
+  const toggleUnit = async (unit: TaskUnit) => {
+    void hapticImpact('light');
+    const nowIso = new Date().toISOString();
+    // Read before the write below — same "closure state, not a value read
+    // back after the transactional modify" shape as Runway.tsx's own
+    // toggleStep/toggleArrivalStep logging.
+    const wasPlanned = task.status === 'planned';
+    const checking = unit.checkedAt === null;
+    // Focus sound (0.33.0): captured from inside the modify() callback
+    // below, since that's the only place that knows whether THIS check-off
+    // is the one that resolves the task to 'done'.
+    let becameDone = false;
+    await db.tasks.where('id').equals(task.id).modify((t) => {
+      if (t.status === 'planned') {
+        t.status = 'running';
+        t.startedAt = t.startedAt ?? nowIso;
+      }
+      const u = t.units.find((x) => x.id === unit.id);
+      if (!u) return;
+      const checking = u.checkedAt === null;
+      u.checkedAt = checking ? nowIso : null;
+      if (checking && t.units.every((x) => x.checkedAt !== null)) {
+        t.status = 'done';
+        becameDone = true;
+      }
+    });
+    // Anti-rot increment (0.37.0): a planned task's alarm targets the
+    // never-started case, so the moment `wasPlanned` flips (checking a unit
+    // starts the task, same shortcut the comment above this function
+    // describes) is exactly the moment that alarm's job is done — it fires
+    // here even when the SAME check-off also resolves the task straight to
+    // 'done' (a single-unit task), which is why the `becameDone` branch
+    // below calls cancelTaskAlarm too: cancel() is safe to call twice
+    // (its own doc comment), and a task that skips 'running' entirely still
+    // needs its alarm cancelled exactly once, from whichever branch notices.
+    if (wasPlanned) {
+      void logEvent('task', `Task started: ${task.name}.`);
+      void cancelTaskAlarm(task.id, task.name);
+    }
+    void logEvent('task', `Task unit ${checking ? 'checked' : 'unchecked'}: ${task.name}.`);
+    if (becameDone) {
+      void logEvent('task', `Task done: ${task.name}.`);
+      void cancelTaskAlarm(task.id, task.name);
+    }
+    // Anti-rot increment 3 (0.39.0) widget audit: only a real STATUS
+    // transition (planned -> running, or -> done) can change what the tasks
+    // widget shows (its headline pick and armed/to-arm counts are keyed off
+    // status, not per-unit check-off) — an ordinary mid-task check/uncheck
+    // that leaves status alone has nothing for either refresh to pick up,
+    // so this is gated the same way the cancelTaskAlarm/logEvent calls
+    // above already are, rather than firing unconditionally on every tap.
+    if (wasPlanned || becameDone) {
+      void refreshWidgets();
+      void refreshDayGauge();
+    }
+    // Explicit and immediate, on top of the mount-effect's own cleanup
+    // (which will also notice `task.status` changed once the live query
+    // re-emits) - see that effect's own comment for why both exist.
+    if (becameDone) stopFocusSound();
+  };
+
+  const handleStart = async () => {
+    void hapticImpact('light');
+    const wasPlanned = task.status === 'planned';
+    await db.tasks.where('id').equals(task.id).modify((t) => {
+      if (t.status === 'planned') {
+        t.status = 'running';
+        t.startedAt = t.startedAt ?? new Date().toISOString();
+      }
+    });
+    // Anti-rot increment (0.37.0): same "the alarm's job is done — he
+    // started" reasoning as toggleUnit's own cancelTaskAlarm call above.
+    if (wasPlanned) {
+      void logEvent('task', `Task started: ${task.name}.`);
+      void cancelTaskAlarm(task.id, task.name);
+      // Anti-rot increment 3 (0.39.0) widget audit — same "status
+      // transition" gate as toggleUnit's own refreshWidgets/refreshDayGauge
+      // call, added here for the same reason: this handler had neither
+      // before.
+      void refreshWidgets();
+      void refreshDayGauge();
+    }
+  };
+
+  // Witness increment (0.34.0): composes the start-of-task message and
+  // hands it to the OS share sheet — one tap, nothing sent automatically.
+  // Only rendered for 'running' (see the TextAction below), so `task.units`
+  // reflects the plan Deepak is actually about to work, not a still-being-
+  // edited draft.
+  const handleTellSomeone = async () => {
+    setWitnessStartUnavailable(false);
+    void hapticImpact('light');
+    const plannedTotalMinutes = task.units.reduce((sum, unit) => sum + unit.plannedMinutes, 0);
+    const deadline = task.deadlineAt !== null ? new Date(task.deadlineAt) : null;
+    const message = taskStartMessage(task.name, task.units.length, deadline, plannedTotalMinutes);
+    const result = await shareWitnessText(message);
+    // 'shared' and 'dismissed' both leave the UI untouched — the share
+    // sheet itself is the feedback for 'shared', and a dismissal is
+    // Deepak's own call not to send it. Only 'unavailable' earns a line.
+    if (result === 'unavailable') setWitnessStartUnavailable(true);
+  };
+
+  // Backdating increment ("Done earlier"): the task twin of Runway.tsx's
+  // handleStepBackdateConfirm — same write toggleUnit does when checking
+  // the current unit (including the last-unit auto-resolve to 'done'), but
+  // stamping the chosen PAST instant instead of `new Date()`. Same "no
+  // planned -> running transition to replicate" reasoning: the "Done
+  // earlier" TextAction below only renders once `task.startedAt` already
+  // exists, so a task reaching this handler is already 'running'.
+  // deriveTaskUnitActuals (taskProjection.ts) reads `checkedAt` straight
+  // off the unit, so a backdated last unit's corrected time is exactly
+  // what the 'done' summary's total-minutes figure ends up built from —
+  // nothing extra to wire for that.
+  const handleUnitBackdateConfirm = async (at: Date) => {
+    void hapticImpact('light');
+    const atIso = at.toISOString();
+    // Focus sound (0.33.0): same capture-inside-modify() shape as
+    // toggleUnit's own becameDone flag, and the same reasoning.
+    let becameDone = false;
+    await db.tasks.where('id').equals(task.id).modify((t) => {
+      const u = t.units.find((x) => x.checkedAt === null);
+      if (!u) return;
+      u.checkedAt = atIso;
+      if (t.units.every((x) => x.checkedAt !== null)) {
+        t.status = 'done';
+        becameDone = true;
+      }
+    });
+    void logEvent('task', `Task unit backdated: ${task.name}.`);
+    // Anti-rot increment (0.37.0): no start-cancel needed here (this
+    // handler only ever runs on an already-'running' task — see this
+    // function's own doc comment above — whose alarm was already cancelled
+    // when it started), but a done-cancel is still needed: cancelTaskAlarm
+    // is safe to call even when nothing is pending (its own doc comment),
+    // so this costs nothing and closes the same belt-and-suspenders gap
+    // toggleUnit's becameDone branch closes.
+    if (becameDone) {
+      void logEvent('task', `Task done: ${task.name}.`);
+      void cancelTaskAlarm(task.id, task.name);
+      // Anti-rot increment 3 (0.39.0) widget audit — same "status
+      // transition" gate as toggleUnit's own call, added here for the same
+      // reason: this handler had neither before.
+      void refreshWidgets();
+      void refreshDayGauge();
+    }
+    if (becameDone) stopFocusSound();
+    setUnitBackdateOpen(false);
+  };
+
+  const handleAbandon = async () => {
+    if (!window.confirm(ABANDON_CONFIRM)) return;
+    // Focus sound (0.33.0): explicit and immediate, same reasoning as the
+    // finish paths above - don't wait on the mount-effect's cleanup.
+    stopFocusSound();
+    await db.tasks.update(task.id, { status: 'abandoned' });
+    void logEvent('task', `Task abandoned: ${task.name}.`);
+    // Anti-rot increment (0.37.0): unconditional, unlike the start/done
+    // cancels above — Abandon is reachable straight from 'planned' (this
+    // screen's TextAction row renders it for both 'planned' and 'running',
+    // see the return below), so a task abandoned before it was ever started
+    // may still have its start-by alarm pending. cancelTaskAlarm is safe to
+    // call regardless (its own doc comment).
+    void cancelTaskAlarm(task.id, task.name);
+    // Anti-rot increment 3 (0.39.0) widget audit — unconditional, same
+    // reasoning as the unconditional cancelTaskAlarm call just above:
+    // Abandon always moves the task out of 'planned'/'running', so it
+    // always changes what the tasks widget could show.
+    void refreshWidgets();
+    void refreshDayGauge();
+    onNavigate({ name: 'home' });
+  };
+
+  if (task.status === 'done') {
+    // Recomputed every time this is opened, not a one-shot "just now"
+    // flourish (unlike Runway.tsx's justLeft) — a task's finished summary
+    // is a fixed fact reconstructable from its own checkedAt timestamps at
+    // any time, so there's no reason to special-case "the instant it
+    // happened" the way a departure's out-the-door slip does.
+    const actualTotalMinutes = deriveTaskUnitActuals(task).reduce((sum, a) => sum + a.actualMinutes, 0);
+    // Field bug fix: the deadline verdict used to exist nowhere — this is
+    // the plain-stated truth CLAUDE.md asks for over a reassuring "nice
+    // work" the app can't actually back up. `null` (no deadline was ever
+    // set) renders no line at all, same "nothing to be honest ABOUT here"
+    // reasoning taskDeadlineResult's own doc comment gives.
+    const deadlineResult = taskDeadlineResult(task);
+    // Estimation-bias increment (0.30.0): the "see" half of "guess-then-see"
+    // — shown only when EVERY unit was Deepak's own felt guess
+    // (estimateSource === 'manual'), never for a learned or unknown-
+    // provenance unit, because feedback on a number he didn't choose
+    // himself trains nothing (estimateBias.ts's own header comment makes
+    // the same exclusion for the same reason). Summed per-unit rather than
+    // `units.length * minutesPerUnit` — units are field-for-field
+    // independent rows (db/types.ts's TaskUnit comment), and nothing
+    // guarantees they still share one value by the time this renders.
+    // text-slate-400/tabular-nums/no color coding, deliberately — this is a
+    // measurement Runway is handing back, not a verdict on how the guess
+    // went; CLAUDE.md's no-shame rule is binding here.
+    const allUnitsManual = task.units.length > 0 && task.units.every((unit) => unit.estimateSource === 'manual');
+    const guessedTotalMinutes = task.units.reduce((sum, unit) => sum + unit.plannedMinutes, 0);
+
+    // Witness increment (0.34.0): the done half of the ritual. `taskName`/
+    // `unitCount` are captured as plain locals (not read off `task` inside
+    // the closure below) because TS can't carry the `if (!task) return`
+    // narrowing above into a nested function declaration — `task`'s
+    // declared type there is still `WorkTask | undefined`. Also closes over
+    // `actualTotalMinutes` above, the exact figure already shown on screen,
+    // reused rather than re-derived a second way.
+    const taskName = task.name;
+    const taskId = task.id;
+    const unitCount = task.units.length;
+    async function handleTellThem() {
+      setWitnessDoneUnavailable(false);
+      void hapticImpact('light');
+      const message = taskDoneMessage(taskName, unitCount, actualTotalMinutes);
+      const result = await shareWitnessText(message);
+      if (result === 'unavailable') setWitnessDoneUnavailable(true);
+    }
+
+    // Field bug fix (0.34.1), real user report verbatim: "accidental touch
+    // caused a task ... to be taken as completed ... i cant go into history
+    // and continue that task." Checking a task's final unit auto-resolves
+    // it to 'done' with no confirmation (toggleUnit above) — a stray tap
+    // does it just as easily as a deliberate one, and until now there was
+    // no way back from here at all.
+    //
+    // Semantics: Reopen undoes exactly ONE check-off — the last one,
+    // found via `lastCheckedUnitId` (taskProjection.ts), which mirrors
+    // `taskFinishedAt`'s own max-checkedAt logic to answer "which unit"
+    // instead of "when" — because that's the specific misfire this exists
+    // to correct (the final, accidental tap), not an open-ended "undo
+    // history" tool. A task that was wrongly finished several units back
+    // isn't left stuck, though: once this puts the task back to 'running',
+    // the checked-units list below already lets a checked unit be tapped
+    // to uncheck it directly (toggleUnit is already two-way — see its own
+    // comment above), so Reopen can effectively be invoked again from
+    // there, one unit at a time.
+    //
+    // Deliberately NOT offered from the abandoned state below — abandoning
+    // is an explicit chosen action ("Abandon this task", with its own
+    // confirm dialog), not an accidental tap, so it isn't the misfire this
+    // fix addresses. A possible extension if a real need shows up later.
+    async function handleReopen() {
+      void hapticImpact('light');
+      await db.tasks.where('id').equals(taskId).modify((t) => {
+        const unitId = lastCheckedUnitId(t);
+        if (unitId === null) return; // nothing checked — shouldn't happen for a 'done' task, guarded anyway
+        const u = t.units.find((x) => x.id === unitId);
+        if (!u) return;
+        u.checkedAt = null;
+        // Lands on 'running', deliberately NOT 'planned' — and therefore
+        // deliberately does NOT re-arm a start-by alarm (anti-rot
+        // increment, 0.37.0). scheduleTaskAlarm only ever arms for a
+        // 'planned' task (its own no-op guard) because the alarm's whole
+        // purpose is catching the never-started case; a reopened task is
+        // already being worked (that's the entire point of Reopen — undo
+        // one accidental check-off, not restart the task), so there is no
+        // "forgot to start" gap left for an alarm to guard against.
+        t.status = 'running';
+      });
+      void logEvent('task', `Task reopened: ${taskName}.`);
+      // Learning integrity: clearing the accidental checkedAt also removes
+      // the poisoned actual from the learning pools — deriveTaskUnitActuals
+      // only pairs CHECKED units (this file's own import, above), so
+      // nothing else needs cleaning up.
+      //
+      // Pairing rule (dayGaugeRefresh.ts's own header comment): "anything
+      // that moves the widgets moves the gauge" — a reopened task's
+      // deadline re-enters both the widget snapshot's and the day gauge's
+      // candidate pools, the same way any other planned/running task's
+      // deadline already does.
+      void refreshWidgets();
+      void refreshDayGauge();
+    }
+
+    return (
+      <div className="mx-auto flex min-h-screen max-w-lg flex-col items-center justify-center gap-2 px-4 pb-12 pt-safe-top text-center">
+        <p className="text-lg text-slate-100">{task.name}</p>
+        <p className="mt-2 tabular-nums text-emerald-300">
+          {task.units.length} unit{task.units.length === 1 ? '' : 's'} · {actualTotalMinutes} min.
+        </p>
+        {allUnitsManual && (
+          <p className="tabular-nums text-slate-400">
+            Guessed {guessedTotalMinutes} min. Took {actualTotalMinutes} min.
+          </p>
+        )}
+        {deadlineResult !== null && (
+          <p className={`tabular-nums ${deadlineResult.kind === 'overshot' ? 'text-red-400' : 'text-slate-400'}`}>
+            {deadlineResult.kind === 'overshot'
+              ? `Finished ${deadlineResult.minutes} min past the deadline.`
+              : deadlineResult.minutes === 0
+                ? 'Finished on the deadline.'
+                : `Finished ${deadlineResult.minutes} min before the deadline.`}
+          </p>
+        )}
+        {/* Quiet on purpose (TextAction, never Button) — stays smaller than
+            "Back to home" below. */}
+        <TextAction className="mt-4" onClick={() => void handleTellThem()}>
+          Tell them
+        </TextAction>
+        {witnessDoneUnavailable && <p className="text-sm text-slate-500">Sharing is not available here.</p>}
+        {/* Quiet on purpose (TextAction, never Button) — same weight as
+            "Tell them" above, deliberately smaller than "Back to home"
+            below. See handleReopen's own comment for the semantics. */}
+        <TextAction onClick={() => void handleReopen()}>Reopen — undo the last check-off.</TextAction>
+        <Button onClick={() => onNavigate({ name: 'home' })} className="mt-8 w-full">
+          Back to home
+        </Button>
+      </div>
+    );
+  }
+
+  if (task.status === 'abandoned') {
+    // Witness increment (0.34.0): deliberately no "Tell them" here, and
+    // none anywhere else on an abandon path (see handleAbandon above and
+    // the equivalent comment on Sprint.tsx, which has no abandon state at
+    // all to carry one). A witness ritual is start and finish, never
+    // confession — CLAUDE.md's anti-shame rule — so abandoning offers no
+    // share, full stop.
+    //
+    // Field bug fix (0.34.1): deliberately no Reopen here either, unlike
+    // the 'done' state above. Abandoning is an explicit chosen action
+    // (handleAbandon's own confirm dialog), not an accidental tap — it
+    // isn't the misfire Reopen exists to correct. Worth revisiting as a
+    // possible extension (CHANGELOG 0.34.1) if a real need for it shows up
+    // during use.
+    return (
+      <div className="mx-auto flex min-h-screen max-w-lg flex-col items-center justify-center gap-2 px-4 pb-12 pt-safe-top text-center">
+        <p className="text-lg text-slate-100">{task.name}</p>
+        <p className="text-slate-400">This task is finished.</p>
+        <Button onClick={() => onNavigate({ name: 'home' })} className="mt-8 w-full">
+          Back to home
+        </Button>
+      </div>
+    );
+  }
+
+  // Live view — 'planned' (Start not yet pressed, same live projection and
+  // unit list already visible, matching Runway's own "planned already
+  // shows the plan" pattern) or 'running'.
+  const projection = taskProjection(now, task);
+  const elapsed = currentStepElapsed(now, { steps: task.units, startedAt: task.startedAt });
+  const stateKey = projection.state ?? 'none';
+  const textAccent = STATE_TEXT[stateKey];
+  const border = STATE_BORDER[stateKey];
+
+  // Ordinal built from list position, not stored — see db/types.ts's
+  // TaskUnit doc comment for why the stored name is always the task's own
+  // name, and this concatenation happens only at render time.
+  const ordinalUnits = task.units.map((unit, index) => ({ unit, ordinal: index + 1 }));
+  const uncheckedUnits = ordinalUnits.filter((u) => u.unit.checkedAt === null);
+  const checkedUnits = ordinalUnits.filter((u) => u.unit.checkedAt !== null);
+  const currentUnit = uncheckedUnits[0] ?? null;
+  const laterUnits = uncheckedUnits.slice(1);
+
+  // Computed unconditionally (not just while focus is open) — backdating
+  // increment: the current-unit card's own "Done earlier" dialog (below)
+  // needs this exact anchor as its lower bound too, same reuse Runway.tsx's
+  // stepAnchorIso relies on for the equivalent departure-step card.
+  const unitAnchorIso = currentStepAnchor({ steps: task.units, startedAt: task.startedAt });
+
+  const focusedUnit = focusUnitId ? (ordinalUnits.find((u) => u.unit.id === focusUnitId) ?? null) : null;
+  const focusedUnitIsCurrent = !!focusedUnit && !!currentUnit && focusedUnit.unit.id === currentUnit.unit.id;
+  const focusAnchorIso = focusedUnitIsCurrent ? unitAnchorIso : null;
+
+  // Tap-anywhere-to-advance — same shape as Runway.tsx's advanceFocusAfterCheck.
+  const advanceFocusAfterCheck = async () => {
+    if (!currentUnit) return;
+    const nextUnitId = laterUnits[0]?.unit.id ?? null;
+    await toggleUnit(currentUnit.unit);
+    setFocusUnitId(nextUnitId);
+  };
+
+  const overrunTone = projection.state === 'late' ? 'text-red-400' : 'text-amber-400';
+
+  // The honest doesn't-fit line (binding design decision: no compression
+  // for tasks — see db/types.ts's header comment). Only worth saying once
+  // there's a deadline AND it's genuinely short of covering every remaining
+  // unit; a task with no deadline, or one whose remaining units all fit,
+  // has nothing to be honest ABOUT here.
+  const doesntFit =
+    task.deadlineAt !== null && projection.unitsThatFit !== null && projection.unitsThatFit < projection.remainingUnits;
+
+  return (
+    <>
+      <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-8 px-4 pb-12 pt-safe-top">
+        <div className="pt-8">
+          <ScreenHeader title={task.name} onBack={() => onNavigate({ name: 'home' })} />
+        </div>
+
+        <div className="flex flex-col items-center gap-1 text-center">
+          <p
+            className={`text-huge font-bold tracking-tight tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${textAccent}`}
+          >
+            {formatTime(projection.projectedFinish)}
+          </p>
+          {task.deadlineAt !== null && (
+            <>
+              <p className="text-lg tabular-nums text-slate-500">Deadline {formatTime(new Date(task.deadlineAt))}</p>
+              <p
+                className={`text-base font-medium tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${textAccent}`}
+              >
+                {formatSlackLine(projection.slackMinutes ?? 0, 'past the deadline')}
+              </p>
+            </>
+          )}
+        </div>
+
+        {doesntFit && (
+          <p className="text-sm text-amber-400">
+            {projection.unitsThatFit} of {projection.remainingUnits} remaining units fit before{' '}
+            {formatTime(new Date(task.deadlineAt!))}.
+          </p>
+        )}
+
+        {task.status === 'planned' && (
+          <Button onClick={() => void handleStart()} className="w-full">
+            Start
+          </Button>
+        )}
+
+        <div className="flex flex-col gap-6">
+          {currentUnit && (
+            <div className={`rounded-xl border ${border} bg-surface p-4 motion-safe:transition-colors motion-safe:duration-300`}>
+              <div className="flex items-start gap-3">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center">
+                  <input
+                    type="checkbox"
+                    checked={false}
+                    onChange={() => toggleUnit(currentUnit.unit)}
+                    aria-label={`Check off ${task.name} ${currentUnit.ordinal}`}
+                    className="size-6 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                  />
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setFocusUnitId(currentUnit.unit.id)}
+                  className="flex min-h-11 flex-1 flex-col gap-1 rounded-lg py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                >
+                  <span className="text-xl font-medium text-slate-100">
+                    {task.name} {currentUnit.ordinal}
+                  </span>
+                  {elapsed ? (
+                    <span
+                      className={`text-sm tabular-nums motion-safe:transition-colors motion-safe:duration-300 ${
+                        elapsed.elapsedMinutes > currentUnit.unit.plannedMinutes ? overrunTone : 'text-slate-500'
+                      }`}
+                    >
+                      {elapsed.elapsedMinutes} min on this unit · planned {currentUnit.unit.plannedMinutes} min
+                    </span>
+                  ) : (
+                    <span className="text-sm tabular-nums text-slate-500">
+                      planned {currentUnit.unit.plannedMinutes} min
+                    </span>
+                  )}
+                </button>
+              </div>
+              {/* Backdating increment: "Done earlier" — current unit only,
+                  same "a later unit hasn't started, so it can't have
+                  finished earlier" reasoning as Runway.tsx's equivalent
+                  step card. Gated on `task.startedAt`: this card also
+                  renders before Start is pressed (still 'planned'), and an
+                  unstarted task has no lower bound to correct against. */}
+              {task.startedAt != null && unitAnchorIso && (
+                unitBackdateOpen ? (
+                  <div className="mt-3">
+                    <BackdateDialog
+                      caption="When did this actually finish?"
+                      lowerBound={new Date(unitAnchorIso)}
+                      now={now}
+                      onConfirm={(at) => void handleUnitBackdateConfirm(at)}
+                      onCancel={() => setUnitBackdateOpen(false)}
+                    />
+                  </div>
+                ) : (
+                  <TextAction className="mt-2" onClick={() => setUnitBackdateOpen(true)}>
+                    Done earlier
+                  </TextAction>
+                )
+              )}
+            </div>
+          )}
+
+          {laterUnits.length > 0 && (
+            <div className="flex flex-col gap-2">
+              {laterUnits.map(({ unit, ordinal }) => (
+                <div
+                  key={unit.id}
+                  className="flex min-h-12 items-center gap-3 rounded-lg border border-slate-800/60 bg-surface px-4 py-2"
+                >
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center">
+                    <input
+                      type="checkbox"
+                      checked={false}
+                      onChange={() => toggleUnit(unit)}
+                      aria-label={`Check off ${task.name} ${ordinal}`}
+                      className="size-6 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                    />
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setFocusUnitId(unit.id)}
+                    className="flex min-h-11 flex-1 items-center justify-between gap-3 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                  >
+                    <span className="flex-1 text-slate-300">
+                      {task.name} {ordinal}
+                    </span>
+                    <span className="text-sm tabular-nums text-slate-500">{unit.plannedMinutes} min</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {checkedUnits.length > 0 && (
+            <div className="flex flex-col gap-1">
+              {checkedUnits.map(({ unit, ordinal }) => (
+                <label
+                  key={unit.id}
+                  className="flex min-h-12 items-center gap-3 rounded-lg px-4 py-1 opacity-50 motion-safe:transition-opacity motion-safe:duration-200"
+                >
+                  <input
+                    type="checkbox"
+                    checked={true}
+                    onChange={() => toggleUnit(unit)}
+                    className="size-6 shrink-0 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                  />
+                  <span className="flex-1 text-slate-500 line-through">
+                    {task.name} {ordinal}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {Capacitor.isNativePlatform() && (
+          <p className="text-center text-sm text-slate-600">Screen stays on while this is open.</p>
+        )}
+
+        <div className="flex items-center justify-center gap-6">
+          {/* Focus sound (0.33.0), 'running' only - same scoping as the
+              keep-awake effect above, and the same "no enable toggle on
+              Settings" reasoning as Sprint.tsx's own row: this is the one
+              place the on/off decision actually gets made. */}
+          {task.status === 'running' && (
+            <TextAction onClick={() => void toggleFocusSound()}>
+              Focus sound: {focusSoundConfig?.on ? 'on' : 'off'}
+            </TextAction>
+          )}
+          {/* Witness increment (0.34.0), 'running' only — same scoping as
+              Focus sound above: a task not yet started has nothing to
+              report the start OF yet. */}
+          {task.status === 'running' && (
+            <TextAction onClick={() => void handleTellSomeone()}>Tell someone</TextAction>
+          )}
+          <TextAction onClick={() => void handleAbandon()}>Abandon this task</TextAction>
+        </div>
+        {witnessStartUnavailable && (
+          <p className="text-center text-sm text-slate-500">Sharing is not available here.</p>
+        )}
+      </div>
+      {focusedUnit && (
+        <StepFocus
+          step={focusedUnit.unit}
+          isCurrentStep={focusedUnitIsCurrent}
+          anchorIso={focusAnchorIso}
+          now={now}
+          bottomLine={task.deadlineAt !== null ? { label: 'Deadline', time: new Date(task.deadlineAt) } : undefined}
+          onBack={() => setFocusUnitId(null)}
+          onTap={focusedUnitIsCurrent ? () => void advanceFocusAfterCheck() : undefined}
+          onBackdate={() => {
+            // Backdating increment: same handoff as Runway.tsx's StepFocus
+            // usages — close the overlay, open the dialog on the card
+            // underneath it.
+            setFocusUnitId(null);
+            setUnitBackdateOpen(true);
+          }}
+        />
+      )}
+    </>
+  );
+}

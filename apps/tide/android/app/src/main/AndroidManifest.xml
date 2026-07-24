@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation"
+            android:name=".MainActivity"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:launchMode="singleTask"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Health Connect bridge increment (0.3.0): Health Connect's own
+                 permission-request screen offers a "See how your data is
+                 used" / privacy-rationale link, and requires SOME activity
+                 in this app to answer this exact intent action for that
+                 link to work — this is Health Connect's own documented
+                 contract (androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE),
+                 not optional boilerplate. Routed at MainActivity itself
+                 rather than a dedicated privacy-policy screen: Tide is a
+                 sideloaded, single-user personal app with no Play Store
+                 listing (see README.md's Signing section) and no privacy-
+                 policy page of its own to link to — this satisfies Health
+                 Connect's contract (an activity exists to receive the
+                 intent) without fabricating a policy page that would say
+                 nothing beyond what CLAUDE.md's "local-first, no accounts"
+                 framing already states. Landing on the normal app (Home)
+                 when tapped is an accepted, honest simplification, not a
+                 broken link. UNVERIFIED: whether Health Connect's real
+                 permission screen actually surfaces/requires this link for
+                 an app of Tide's shape — flagged for real-device testing
+                 alongside the rest of this increment's native surface. -->
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
+
+        </activity>
+
+        <!-- Field fix (0.4.0): the Android-13 rationale filter above is NOT
+             enough on Android 14+ (API 34+). Deepak's S25 Ultra runs Android
+             15 (API 35), where Health Connect is a platform component that
+             REFUSES to surface an app's permissions for granting unless the
+             app also answers the VIEW_PERMISSION_USAGE intent under the
+             HEALTH_PERMISSIONS category. Without this alias, tapping "Connect
+             health data" made Health Connect return an empty grant with NO
+             consent screen shown at all (observed on-device: the request
+             resolved to zero granted scopes and Settings showed "No
+             permissions were granted") — the exact real-device failure the
+             increment-3 report flagged as UNVERIFIED. This is the documented
+             Android-14+ requirement (developer.android.com Health Connect
+             "Get started"), the platform-era counterpart to the
+             ACTION_SHOW_PERMISSIONS_RATIONALE filter above.
+
+             android:permission="android.permission.START_VIEW_PERMISSION_USAGE"
+             is mandatory and load-bearing: it is a system-signature
+             permission, so ONLY the OS can launch this alias — that
+             restriction is precisely what makes Android trust the alias as a
+             legitimate health-permissions handler. Omitting it would leave
+             the alias present but unrecognised.
+
+             targetActivity=".MainActivity", not a dedicated privacy-policy
+             screen — the same honest simplification the rationale filter
+             above already documents: Tide is a sideloaded, single-user app
+             with no Play Store listing and no privacy page to link to.
+             Landing on Home if the OS ever follows this link is accepted, not
+             a broken link. UNVERIFIED beyond this reasoning: Health Connect
+             on Samsung's One UI can be finicky, so whether this ALONE makes
+             the consent screen appear is confirmed only by Deepak re-testing
+             on the S25 — flagged, not assumed. -->
+        <activity-alias
+            android:name="ViewPermissionUsageActivity"
+            android:exported="true"
+            android:targetActivity=".MainActivity"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+        </activity-alias>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"></meta-data>
+        </provider>
+    </application>
+
+    <!-- Permissions -->
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Health Connect bridge increment (0.3.0) — read-only, TIDE_PLAN.md §3.
+         No WRITE_* permission anywhere in this list: Tide only ever reads
+         from Health Connect, it never writes a record back into it. -->
+    <uses-permission android:name="android.permission.health.READ_WEIGHT" />
+    <uses-permission android:name="android.permission.health.READ_BODY_FAT" />
+    <uses-permission android:name="android.permission.health.READ_STEPS" />
+    <uses-permission android:name="android.permission.health.READ_ACTIVE_CALORIES_BURNED" />
+
+    <!-- Android 11+ (API 30+) hides package visibility by default —
+         `isAvailable()`/HealthConnectPlugin.kt's SDK-status check and the
+         permission-request flow both need to see whether the Health Connect
+         app is actually installed, which requires declaring it here even
+         though Tide never launches it by package name directly (the
+         connect-client library does that internally). -->
+    <queries>
+        <package android:name="com.google.android.apps.healthdata" />
+    </queries>
+</manifest>

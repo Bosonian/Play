@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation"
+            android:name=".MainActivity"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:launchMode="singleTask"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Widgets increment (src/native/deepLinks.ts): runway://exam
+                 and runway://new-departure (W1, tapped from the Prüfung
+                 widget and the static app shortcuts below), plus
+                 runway://departure/{id} and runway://home (W2, tapped from
+                 the departure widget's real-departure and fallback tap
+                 targets respectively). W3 (0.39.0) adds no new route — the
+                 tasks widget's tap target is always runway://home too (see
+                 TaskWidgetProvider's own header comment for why it never
+                 deep-links to a specific task). launchMode stays singleTask
+                 (unchanged, verified above) — a deep link while the app is
+                 already running is delivered to the existing Activity via
+                 onNewIntent rather than spawning a second instance, which is
+                 exactly what @capacitor/app's handleOnNewIntent (see
+                 node_modules/@capacitor/app/android/.../AppPlugin.java)
+                 expects to receive appUrlOpen events from. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="runway" />
+            </intent-filter>
+
+            <!-- Widgets increment: static app shortcuts, shown on a
+                 long-press of the launcher icon. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+
+            <!-- Calendar/share-target increment (0.17.0): registers Runway
+                 as a share target for plain-text shares — the entry point
+                 for "share a place from Google Maps into Runway". category
+                 DEFAULT is required for an implicit ACTION_SEND to resolve
+                 here at all (without it, this filter is invisible to the
+                 share sheet); it's the same category the runway:// VIEW
+                 filter above already carries for the same reason. No
+                 BROWSABLE category here — that's specifically for web-link
+                 handling (a browser deciding whether to hand a URL to an
+                 app), which doesn't apply to a share-sheet target. The
+                 actual rewrite from this raw ACTION_SEND into a
+                 runway://share-target deep link happens in
+                 MainActivity.rewriteShareTargetIntent — see its own doc
+                 comment for why that trick means no new bridge code is
+                 needed here beyond this filter. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+
+        </activity>
+
+        <!-- Widgets increment: the Prüfung home-screen widget provider.
+             exported="true" is required here — AppWidgetManager delivers
+             ACTION_APPWIDGET_UPDATE as a system broadcast, which an
+             unexported receiver could not receive; this is the standard,
+             documented shape for every AppWidgetProvider, not a relaxation
+             specific to this app. android:label (m1): without it, a
+             <receiver> falls back to the <application>'s own label
+             ("Runway"), which is exactly why the widget picker used to show
+             two identically-named blank tiles with no way to tell them
+             apart before placing one. -->
+        <receiver
+            android:name=".PruefungWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_pruefung_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_pruefung_info" />
+        </receiver>
+
+        <!-- Widgets increment W2: the departure home-screen widget
+             provider. Same exported="true" reasoning as PruefungWidgetProvider
+             above — this is the standard shape every AppWidgetProvider
+             needs, not something specific to this widget. Same m1
+             android:label reasoning too. -->
+        <receiver
+            android:name=".DepartureWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_departure_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_departure_info" />
+        </receiver>
+
+        <!-- Anti-rot increment 3 (Runway 0.39.0): the "Runway Tasks"
+             home-screen widget provider. Same exported="true" reasoning as
+             PruefungWidgetProvider/DepartureWidgetProvider above — this is
+             the standard shape every AppWidgetProvider needs, not something
+             specific to this widget. Same m1 android:label reasoning too. -->
+        <receiver
+            android:name=".TaskWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_task_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_task_info" />
+        </receiver>
+
+        <!-- Car Bluetooth transit increment (0.36.0): fires on
+             ACL_CONNECTED/ACL_DISCONNECTED for a paired Bluetooth device —
+             see BluetoothTransitReceiver.java's own class doc comment for
+             why this pair is exempt from Android 8+'s general clampdown on
+             implicit broadcasts reaching a killed app's manifest receiver.
+             exported="true": ACL_CONNECTED/ACL_DISCONNECTED are NOT on
+             Android's <protected-broadcast> list (unlike, say,
+             BOOT_COMPLETED), so in principle another app could construct and
+             send this receiver a spoofed Intent carrying an arbitrary
+             EXTRA_DEVICE. The impact of accepting one is bounded to
+             "record a fake connect/disconnect timestamp pair for whatever
+             device address the sender chose" — the receiver never grants
+             access to anything, reads no sensitive OS state as a result of
+             a spoofed intent, and the watched-address check means a spoof
+             only ever affects THIS app's own drive-time history, never
+             exposes it. exported="true" is also the only way this receiver
+             can actually receive a REAL system-sent ACL broadcast at all —
+             an unexported receiver cannot receive broadcasts sent by
+             another UID (here, the system_server process), same reasoning
+             PruefungWidgetProvider/DepartureWidgetProvider's own
+             exported="true" already documents for AppWidgetManager's
+             broadcasts below. Chosen deliberately, not defaulted to. -->
+        <receiver
+            android:name=".BluetoothTransitReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.bluetooth.device.action.ACL_CONNECTED" />
+                <action android:name="android.bluetooth.device.action.ACL_DISCONNECTED" />
+            </intent-filter>
+        </receiver>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"></meta-data>
+        </provider>
+    </application>
+
+    <!-- Permissions -->
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Exact, Doze-proof scheduled alarms (RUNWAY_PLAN.md §5.5). Runway's
+         core function IS alarms, which is exactly what USE_EXACT_ALARM is
+         for: unlike SCHEDULE_EXACT_ALARM it's auto-granted at install with
+         no runtime permission dialog. It only takes effect at
+         targetSdkVersion 33+ (this app targets 35, see
+         android/variables.gradle) and is subject to Google Play policy
+         review for apps that misuse it — irrelevant here since this APK is
+         sideloaded, never published. POST_NOTIFICATIONS,
+         RECEIVE_BOOT_COMPLETED and WAKE_LOCK are already declared by
+         @capacitor/local-notifications' own manifest (see
+         node_modules/@capacitor/local-notifications/android/.../AndroidManifest.xml)
+         and merged in automatically by Gradle's manifest merger; they don't
+         need to be repeated here. -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+    <!-- Live-travel increment (RUNWAY_PLAN.md §5.1+§5.6): @capacitor/
+         geolocation, unlike @capacitor/local-notifications above, ships an
+         EMPTY plugin AndroidManifest.xml (see
+         node_modules/@capacitor/geolocation/android/.../AndroidManifest.xml) —
+         it declares no permissions of its own for Gradle's manifest merger
+         to pick up, so both permissions its README calls for have to be
+         added here by hand. ACCESS_COARSE_LOCATION alone would satisfy the
+         plugin, but the Routes API's live drive-time estimate is more
+         accurate with a precise fix, so both are requested; Android 12+
+         still lets the user grant only the coarse one at the runtime
+         prompt, which the app treats as a successful (if less precise)
+         position rather than a failure. No <uses-feature android:name=
+         "android.hardware.location.gps" /> — that line only matters for
+         apps that *require* GPS to function at all, and this app already
+         falls back to the manual travel-minutes estimate when location is
+         unavailable, so declaring it would just narrow which devices could
+         install the app for no benefit. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <!-- Calendar increment (E1): read-only. Runway never writes to the
+         device calendar — no WRITE_CALENDAR here, ever — CalendarBridgePlugin
+         (android/app/src/main/java/de/bosonian/runway/CalendarBridgePlugin.java)
+         only queries CalendarContract.Instances. Requested lazily, the first
+         time Home's "Show calendar appointments here." is tapped — never at
+         app open — same no-permission-ambush rule the geolocation/exact-alarm
+         permissions above already follow. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+
+    <!-- Arrival-detection increment (0.23.0): WifiBridgePlugin reads the
+         currently-connected SSID via WifiManager#getConnectionInfo(), which
+         needs ACCESS_WIFI_STATE to call at all — a normal permission,
+         auto-granted at install, no runtime dialog. Resolving the SSID to
+         its real value (rather than the redacted `<unknown ssid>`
+         placeholder) additionally needs ACCESS_FINE_LOCATION, already
+         declared above for the live-travel increment; WifiBridgePlugin
+         checks that permission for itself at call time (see its own class
+         doc comment for why "location" is the alias it requests, not a new
+         "wifi" one) rather than assuming this manifest entry implies it's
+         been granted. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!-- Car Bluetooth transit increment (0.36.0): BluetoothBridgePlugin
+         reads bonded devices and BluetoothTransitReceiver listens for
+         ACL connect/disconnect. BLUETOOTH_CONNECT is the modern (API 31+)
+         runtime permission for both; the legacy BLUETOOTH permission covers
+         the same access on API 30 and below, where it's a NORMAL,
+         install-time permission with no runtime dialog.
+         maxSdkVersion="30" on the legacy one keeps it from shadowing the
+         runtime permission on newer OSes — standard practice for a
+         permission split across an SDK boundary like this, same shape
+         Android's own migration guidance for Bluetooth permissions
+         describes. Neither line needs BLUETOOTH_SCAN: this feature never
+         scans for new devices, only watches ACL events for a device
+         already paired through Android's own Bluetooth settings, and reads
+         the existing bonded-device list — see the CHANGELOG for why "no
+         background scanning" is worth stating explicitly. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+</manifest>
