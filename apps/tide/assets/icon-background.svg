@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Tide adaptive-icon background layer. Solid #020617 — the exact same hex
+  Runway's own icon-background.svg uses (apps/runway/assets/icon-background.svg)
+  and the same value Tide's own `bg-slate-950` page background resolves to
+  (src/index.css). Matching Runway's background color deliberately, not just
+  matching Tide's own app: TIDE_PLAN.md/CLAUDE.md's brief for this increment
+  asks that Tide's icon "sit calmly beside Runway's icon on the same home
+  screen" — an identical background tile is what makes two otherwise
+  different motifs read as siblings rather than two unrelated apps that
+  happen to both be dark.
+
+  Android composites this behind icon-foreground.svg for the adaptive icon,
+  and it's also the flat backdrop for the splash screens — one color,
+  defined once, referenced by scripts/generate-icons.mjs (kept in sync
+  manually: if you change this file, update BG_COLOR in that script to
+  match, and values/ic_launcher_background.xml for the legacy launcher).
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <rect width="108" height="108" fill="#020617" />
+</svg>

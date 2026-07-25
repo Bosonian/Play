@@ -496,7 +496,7 @@ export function Settings({ onNavigate }: SettingsProps) {
 
         {showConnected ? (
           <>
-            <p className="text-sm text-slate-400">
+            <p className="text-sm tabular-nums text-slate-400">
               Connected. {lastSyncSetting?.value ? `Last sync: ${formatDateTime(lastSyncSetting.value)}.` : 'No sync yet.'}
             </p>
             <div className="flex items-center gap-4">
@@ -510,7 +510,13 @@ export function Settings({ onNavigate }: SettingsProps) {
                 once connected, since it has nothing to show before then. */}
             <div className="flex flex-col gap-2 border-t border-slate-800/60 pt-3">
               <div className="flex items-baseline justify-between">
-                <h3 className="text-xs font-medium uppercase tracking-[0.1em] text-slate-500">Step source</h3>
+                {/* Same micro-label treatment as every other uppercase heading
+                    on this screen (text-[11px]/tracking-[0.15em]) — this was
+                    the one place using its own slightly different size/
+                    tracking (text-xs/tracking-[0.1em]), an ad hoc variant
+                    increment 9's typography pass settles on one identical
+                    treatment for every such label. */}
+                <h3 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Step source</h3>
                 <TextAction
                   onClick={() => void refreshStepSources()}
                   disabled={stepSourcesLoading}
@@ -554,7 +560,9 @@ export function Settings({ onNavigate }: SettingsProps) {
                     onClick={() => void selectStepSource(null)}
                   >
                     <span>All sources</span>
-                    <span>{stepSources.reduce((sum, source) => sum + source.steps, 0).toLocaleString('en-US')} today</span>
+                    <span className="tabular-nums">
+                      {stepSources.reduce((sum, source) => sum + source.steps, 0).toLocaleString('en-US')} today
+                    </span>
                   </Button>
                   {stepSources.map((source) => {
                     const pressed = selectedStepSources.length === 1 && selectedStepSources[0] === source.packageName;
@@ -568,7 +576,7 @@ export function Settings({ onNavigate }: SettingsProps) {
                         onClick={() => void selectStepSource(source.packageName)}
                       >
                         <span>{stepSourceLabel(source.packageName)}</span>
-                        <span>{source.steps.toLocaleString('en-US')} today</span>
+                        <span className="tabular-nums">{source.steps.toLocaleString('en-US')} today</span>
                       </Button>
                     );
                   })}
@@ -699,7 +707,7 @@ export function Settings({ onNavigate }: SettingsProps) {
       <section className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
         <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Backup</h2>
 
-        <p className="text-sm text-slate-500">
+        <p className="text-sm tabular-nums text-slate-500">
           {lastBackupAtSetting?.value ? `Last export: ${formatDateTime(lastBackupAtSetting.value)}.` : 'Never exported.'}
         </p>
 

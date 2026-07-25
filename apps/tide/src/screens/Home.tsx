@@ -4,6 +4,7 @@ import { db } from '../db/db';
 import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { TextAction } from '../ui/TextAction';
+import { TrendChart } from '../ui/TrendChart';
 import { bodyFatTrend, currentTrend, formatBodyFatTrendLine, formatTrendLine, MIN_POINTS } from '../lib/trend';
 import {
   dailyShapeProgress,
@@ -147,7 +148,10 @@ export function Home({ onNavigate }: HomeProps) {
   const dailyShapeStepsLine = dailyShape ? formatStepsLine(dailyShape.steps) : null;
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-8 px-4 pb-12 pt-safe-top">
+    // gap-6 — increment 9's page-rhythm scale (see the other screens'
+    // identical outer container): this was gap-8 previously, the one page
+    // whose top-level rhythm didn't match every other screen's.
+    <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-6 px-4 pb-12 pt-safe-top">
       {/* Placed FIRST — above the header and everything else — because an
           available update is meta-app: it's about Tide itself, not about
           anything Deepak is trying to do today. Same placement reasoning as
@@ -176,9 +180,22 @@ export function Home({ onNavigate }: HomeProps) {
           <>
             <p className="text-huge font-semibold tracking-tight tabular-nums text-slate-100">
               {trend.smoothedKg.toFixed(1)}
-              <span className="text-2xl font-medium text-slate-500"> kg</span>
+              {/* kg unit: smaller, lighter weight, one shade dimmer than
+                  the number it qualifies — reads as a unit label riding
+                  alongside the number, not as a second number of equal
+                  weight competing with it (increment 9 typography pass). */}
+              <span className="ml-1 align-baseline text-2xl font-medium text-slate-500">kg</span>
             </p>
             <p className="text-slate-400">{formatTrendLine(trend)}</p>
+            {/* The trend chart — TIDE_PLAN.md §5.1's "smoothed line," drawn
+                (increment 9). Belongs to the headline above it, not a
+                separate block: no card, no border, same max-w-xs column as
+                the empty-state sentences this section already centres, so
+                it reads as part of the north star's own vertical rhythm
+                rather than a second thing competing for attention. */}
+            <div className="mt-1 w-full max-w-xs">
+              <TrendChart weighIns={weighIns} />
+            </div>
           </>
         ) : weighIns.length === 0 ? (
           <p className="max-w-xs text-slate-400">Add your first weigh-in to start the trend.</p>
@@ -197,8 +214,8 @@ export function Home({ onNavigate }: HomeProps) {
             missing body-fat reading nor a missing watch sync is something
             Deepak is necessarily doing anything about (unlike weigh-ins,
             which are the one input this whole screen asks him to supply). */}
-        {bfTrend && <p className="text-sm text-slate-500">{formatBodyFatTrendLine(bfTrend)}</p>}
-        {movementLine && <p className="text-sm text-slate-500">{movementLine}</p>}
+        {bfTrend && <p className="text-sm tabular-nums text-slate-500">{formatBodyFatTrendLine(bfTrend)}</p>}
+        {movementLine && <p className="text-sm tabular-nums text-slate-500">{movementLine}</p>}
         {/* Plate check-in increment (0.4.0): a quiet shortcut, not a
             headline — present only once there's something to jump to
             (>=1 check-in today), same "absent when there's nothing to show"
@@ -246,7 +263,7 @@ export function Home({ onNavigate }: HomeProps) {
             // the quiet slate-500 "one more fact" look this button's own
             // original comment describes stays exactly as quiet; only the
             // tappable area grows.
-            className="inline-flex min-h-12 items-center px-2 text-sm text-slate-500 transition-colors hover:text-slate-300"
+            className="inline-flex min-h-12 items-center px-2 text-sm tabular-nums text-slate-500 transition-colors hover:text-slate-300"
           >
             {todayMealCount} check-in{todayMealCount === 1 ? '' : 's'} today
           </button>
@@ -291,12 +308,12 @@ export function Home({ onNavigate }: HomeProps) {
           </p>
           <div className="mt-1.5 flex flex-col gap-0.5">
             {dailyShapeCheckInsLine && (
-              <p className={`text-sm ${dailyShape.met ? 'text-emerald-300' : 'text-slate-300'}`}>
+              <p className={`text-sm tabular-nums ${dailyShape.met ? 'text-emerald-300' : 'text-slate-300'}`}>
                 {dailyShapeCheckInsLine}
               </p>
             )}
             {dailyShapeStepsLine && (
-              <p className={`text-sm ${dailyShape.met ? 'text-emerald-300' : 'text-slate-300'}`}>
+              <p className={`text-sm tabular-nums ${dailyShape.met ? 'text-emerald-300' : 'text-slate-300'}`}>
                 {dailyShapeStepsLine}
               </p>
             )}

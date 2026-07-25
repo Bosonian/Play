@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "sync": "npm run build && cap sync android"
+    "sync": "npm run build && cap sync android",
+    "icons": "node scripts/generate-icons.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^7.6.7",

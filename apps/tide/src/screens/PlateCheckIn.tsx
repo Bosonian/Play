@@ -300,7 +300,7 @@ export function PlateCheckIn({ onNavigate }: PlateCheckInProps) {
             give a rough sense of scale while composing the plate, not to
             compete with the weight trend for attention anywhere in this
             app, including here on its own entry screen. */}
-        <p className="text-sm text-slate-500">
+        <p className="text-sm tabular-nums text-slate-500">
           {formatPlateKcal(liveEstimateKcal)} — a rough guess. The weight trend is the real measure.
         </p>
 
