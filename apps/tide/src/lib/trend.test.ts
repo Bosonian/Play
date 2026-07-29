@@ -4,6 +4,7 @@ import {
   type BodyFatPoint,
   currentTrend,
   formatBodyFatTrendLine,
+  formatLastReadingLine,
   formatTrendLine,
   MIN_POINTS,
   trendSeries,
@@ -330,5 +331,36 @@ describe('formatBodyFatTrendLine', () => {
 
   it('uses singular "reading" for exactly one point', () => {
     expect(formatBodyFatTrendLine({ slopePctPerWeek: 0, points: 1 })).toBe('Body fat: holding steady over 1 reading.');
+  });
+});
+
+// Increment 11: the reconciliation line for Home's hero number — see
+// trend.ts's own header comment on why this exists (the smoothed headline
+// vs. the raw scale reading). Locale-dependent parts (`toLocaleDateString`/
+// `toLocaleTimeString`) are computed the SAME way in the test as in the
+// function under test, rather than hard-coded — this app's other
+// human-facing date/time formatting (History.tsx, PlatesToday.tsx,
+// Settings.tsx's `formatDateTime`) is left untested for exactly this
+// reason: the exact rendered string depends on the runtime's default
+// locale, which this test suite has no business pinning down. What IS
+// pinned down and asserted directly: the label text, the weight rounded to
+// one decimal, and the exact assembly/ordering of the three parts.
+describe('formatLastReadingLine', () => {
+  it('assembles the label, one-decimal weight, and date/time in order', () => {
+    const point: WeighInPoint = { at: '2026-07-25T09:14:00.000Z', weightKg: 100.23 };
+    const date = new Date(point.at);
+    const expectedDatePart = date.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+    const expectedTimePart = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+    expect(formatLastReadingLine(point)).toBe(`Last reading: 100.2 kg, ${expectedDatePart}, ${expectedTimePart}`);
+  });
+
+  it('rounds a whole-number weight to one decimal place, not a bare integer', () => {
+    const point: WeighInPoint = { at: '2026-07-25T09:14:00.000Z', weightKg: 100 };
+    expect(formatLastReadingLine(point)).toContain('100.0 kg');
+  });
+
+  it('always renders 24-hour time (no am/pm), regardless of the reading hour', () => {
+    const evening: WeighInPoint = { at: '2026-07-25T21:05:00.000Z', weightKg: 99 };
+    expect(formatLastReadingLine(evening)).not.toMatch(/am|pm/i);
   });
 });

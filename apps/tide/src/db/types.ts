@@ -216,7 +216,13 @@ export type EventCategory =
   // see src/lib/dailyShapeSettings.ts. Not 'health', even though steps are
   // one of the two components: this category is about the TARGET the user
   // chose, not about a Health Connect sync event.
-  | 'dailyShape';
+  | 'dailyShape'
+  // Setup-prompt increment (increment 11): Home's first-run nudge card
+  // (src/lib/setupPrompt.ts) was dismissed — the one state transition that
+  // card produces. Not 'lifecycle': that category is about the app's own
+  // process (started/resumed/backgrounded, a caught error), not a choice
+  // Deepak made about a feature.
+  | 'setup';
 
 /**
  * One row of the activity log. Deliberately flat — `category` plus one

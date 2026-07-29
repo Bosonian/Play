@@ -24,7 +24,14 @@ export type Screen =
   | { name: 'home' }
   | { name: 'weighInEntry' }
   | { name: 'history' }
-  | { name: 'settings' }
+  // `scrollTo` (increment 11): the setup card on Home links straight into
+  // one of Settings' own sections, not just the screen in general — a tap
+  // on "Connect health data" landing at the TOP of Settings (past a whole
+  // section Deepak didn't ask for) would be a worse experience than the
+  // card not linking anywhere specific at all. Optional, defaulting to no
+  // scroll, so every existing `onNavigate({ name: 'settings' })` call site
+  // keeps compiling and behaving exactly as before.
+  | { name: 'settings'; scrollTo?: 'healthConnect' | 'dailyShape' }
   | { name: 'plateCheckIn' }
   | { name: 'platesToday' }
   // Field-reports increment (increment 5, ported from Runway): the in-app
@@ -86,7 +93,7 @@ export default function App() {
       case 'history':
         return <History onNavigate={setScreen} />;
       case 'settings':
-        return <Settings onNavigate={setScreen} />;
+        return <Settings scrollTo={screen.scrollTo} onNavigate={setScreen} />;
       case 'plateCheckIn':
         return <PlateCheckIn onNavigate={setScreen} />;
       case 'platesToday':

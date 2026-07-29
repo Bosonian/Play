@@ -29,6 +29,11 @@ import { refreshWidgets } from '../lib/widgets';
 
 interface SettingsProps {
   onNavigate: (screen: Screen) => void;
+  /** Set when Home's setup card (increment 11) linked here for a specific
+   * step — scrolls that section into view once, on mount. `undefined` for
+   * every other way of reaching Settings (the footer "Settings" link,
+   * back-navigation, ...), which lands at the top exactly as before. */
+  scrollTo?: 'healthConnect' | 'dailyShape';
 }
 
 /** What the "Connect health data" tap has produced so far, purely for THIS
@@ -53,7 +58,20 @@ const SUGGESTED_DAILY_SHAPE_TARGET: DailyShapeTarget = { checkIns: 3, steps: 600
  * that feature. Health Connect has been real since increment 3; Updates
  * since increment 2.
  */
-export function Settings({ onNavigate }: SettingsProps) {
+export function Settings({ onNavigate, scrollTo }: SettingsProps) {
+  // Setup-card deep link (increment 11) — one ref per section it can point
+  // at. Scrolling happens ONCE, on mount ([] deps): this is a nav-time jump
+  // ("land where the tap meant to go"), not a live-following scroll that
+  // would fight the user's own scrolling on a screen visit that started
+  // with a `scrollTo`.
+  const healthConnectSectionRef = useRef<HTMLElement>(null);
+  const dailyShapeSectionRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (scrollTo === 'healthConnect') healthConnectSectionRef.current?.scrollIntoView({ block: 'start' });
+    else if (scrollTo === 'dailyShape') dailyShapeSectionRef.current?.scrollIntoView({ block: 'start' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Same read-and-derive pattern as Home.tsx's own update card — see that
   // file's comment for why the versionCode is re-checked at render rather
   // than trusting the settings row alone.
@@ -486,7 +504,7 @@ export function Settings({ onNavigate }: SettingsProps) {
         <ScreenHeader title="Settings" onBack={() => onNavigate({ name: 'home' })} />
       </div>
 
-      <section className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
+      <section ref={healthConnectSectionRef} className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
         <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Health Connect</h2>
         <p className="text-sm text-slate-500">
           Weight and body-fat from your scale, steps and active energy from your watch — read from Health
@@ -646,7 +664,7 @@ export function Settings({ onNavigate }: SettingsProps) {
           Connect and before Backup, matching this increment's own
           instructions: it reads Health Connect's own steps below the fold
           of that section, so keeping the two adjacent reads naturally. */}
-      <section className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
+      <section ref={dailyShapeSectionRef} className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
         <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Daily shape</h2>
         {/* Mechanics, not stance (review fix, 0.8.0). The first draft read
             "A day-sized target, small enough to actually do... never scores

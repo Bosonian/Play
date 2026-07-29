@@ -5,7 +5,14 @@ import type { Screen } from '../App';
 import { Button } from '../ui/Button';
 import { TextAction } from '../ui/TextAction';
 import { TrendChart } from '../ui/TrendChart';
-import { bodyFatTrend, currentTrend, formatBodyFatTrendLine, formatTrendLine, MIN_POINTS } from '../lib/trend';
+import {
+  bodyFatTrend,
+  currentTrend,
+  formatBodyFatTrendLine,
+  formatLastReadingLine,
+  formatTrendLine,
+  MIN_POINTS,
+} from '../lib/trend';
 import {
   dailyShapeProgress,
   formatCheckInsLine,
@@ -14,6 +21,8 @@ import {
   parseDailyShapeTarget,
 } from '../lib/dailyShape';
 import { DAILY_SHAPE_TARGET_SETTING } from '../lib/dailyShapeSettings';
+import { HEALTH_CONNECT_ENABLED_SETTING } from '../lib/healthSettings';
+import { dismissSetupPrompt, SETUP_PROMPT_DISMISSED_SETTING, shouldShowSetupPrompt } from '../lib/setupPrompt';
 import { APP_VERSION, APP_VERSION_CODE } from '../lib/appVersion';
 import { AVAILABLE_UPDATE_SETTING, parseAvailableUpdate } from '../lib/updateCheck';
 import { logEvent } from '../lib/eventLog';
@@ -77,6 +86,30 @@ export function Home({ onNavigate }: HomeProps) {
   // reason to await a second Dexie round trip for a value already in hand.
   const dailyShapeSetting = useLiveQuery(() => db.settings.get(DAILY_SHAPE_TARGET_SETTING), []);
   const dailyShapeTarget = parseDailyShapeTarget(dailyShapeSetting?.value);
+
+  // Setup prompt increment (increment 11, TIDE_PLAN.md's "ask before adding
+  // features" boundary respected — this is the smallest honest nudge, not
+  // an onboarding flow): reads the same two settings rows Settings.tsx
+  // itself reads (HEALTH_CONNECT_ENABLED_SETTING directly here;
+  // dailyShapeTarget is already computed above for the block further down)
+  // plus its own durable dismissal flag. `healthConnectSetting?.value !==
+  // 'true'` mirrors Settings.tsx's own `isConnected` check exactly, just
+  // inverted — see that file's comment for why `undefined` (not yet
+  // connected, or the row hasn't loaded yet) correctly falls on the
+  // "missing" side of that check.
+  const healthConnectSetting = useLiveQuery(() => db.settings.get(HEALTH_CONNECT_ENABLED_SETTING), []);
+  const healthConnectMissing = healthConnectSetting?.value !== 'true';
+  const dailyShapeMissing = dailyShapeTarget === null;
+  const setupPromptDismissedSetting = useLiveQuery(() => db.settings.get(SETUP_PROMPT_DISMISSED_SETTING), []);
+  const showSetupPrompt = shouldShowSetupPrompt(
+    { healthConnectMissing, dailyShapeMissing },
+    setupPromptDismissedSetting?.value === 'true',
+  );
+
+  async function handleDismissSetupPrompt() {
+    await dismissSetupPrompt();
+    void logEvent('setup', 'Setup prompt dismissed.');
+  }
 
   // Increment 2: same re-guard-at-render reasoning as Runway's own Home.tsx
   // — checkForUpdate (main.tsx startup, 6h-throttled) is what actually
@@ -147,6 +180,16 @@ export function Home({ onNavigate }: HomeProps) {
   const dailyShapeCheckInsLine = dailyShape ? formatCheckInsLine(dailyShape.checkIns) : null;
   const dailyShapeStepsLine = dailyShape ? formatStepsLine(dailyShape.steps) : null;
 
+  // The latest ACTUAL weigh-in (increment 11) — `weighIns` arrives sorted
+  // ascending by `at` (see the `useLiveQuery` call above), so the last
+  // element is the most recent one, evidence-floor or not. `null` only for
+  // a genuinely empty table — this line is deliberately independent of
+  // `trend`'s own MIN_POINTS floor (unlike the hero number, a single real
+  // reading is exactly as reconcilable as twenty), and it needs to keep
+  // showing in the "N more weigh-ins to a trend" state below the floor,
+  // where it's most useful (see this increment's own brief).
+  const latestWeighIn = weighIns.length > 0 ? weighIns[weighIns.length - 1] : null;
+
   return (
     // gap-6 — increment 9's page-rhythm scale (see the other screens'
     // identical outer container): this was gap-8 previously, the one page
@@ -178,6 +221,15 @@ export function Home({ onNavigate }: HomeProps) {
       <section className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
         {trend ? (
           <>
+            {/* Label (increment 11): the hero number is the EMA-smoothed
+                trend, not today's scale reading — see trend.ts's EMA_ALPHA
+                comment for why those two can differ by close to a kilo.
+                Unlabelled, that gap reads as a bug to a reader this exact;
+                this micro-label is the smallest fix that doesn't restructure
+                the headline itself. Same micro-label treatment as every
+                other uppercase heading in this app
+                (text-[11px]/tracking-[0.15em]/text-slate-500). */}
+            <p className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Smoothed trend</p>
             <p className="text-huge font-semibold tracking-tight tabular-nums text-slate-100">
               {trend.smoothedKg.toFixed(1)}
               {/* kg unit: smaller, lighter weight, one shade dimmer than
@@ -207,6 +259,17 @@ export function Home({ onNavigate }: HomeProps) {
             {MIN_POINTS - weighIns.length} more weigh-in{MIN_POINTS - weighIns.length === 1 ? '' : 's'} to a trend.
           </p>
         )}
+        {/* Last-actual-reading reconciliation line (increment 11) — see
+            trend.ts's own header comment on `formatLastReadingLine`. Placed
+            directly below the trend/no-trend block above and above the
+            bfTrend/movementLine lines: it's the one line that explains BOTH
+            of the states above it (why the hero number doesn't match the
+            scale; and, below the evidence floor, what the scale actually
+            said while there's no trend yet to show at all) — the brief's
+            own instruction that it "should still appear" in that second
+            case is exactly why this isn't nested inside the `trend &&`
+            branch above. */}
+        {latestWeighIn && <p className="text-sm tabular-nums text-slate-500">{formatLastReadingLine(latestWeighIn)}</p>}
         {/* Health Connect bridge increment (0.3.0): both lines below are
             quiet, secondary, and simply absent when there's nothing to
             show — no "N more readings" placeholder the way the weight
@@ -269,6 +332,51 @@ export function Home({ onNavigate }: HomeProps) {
           </button>
         )}
       </section>
+
+      {/* Setup prompt (increment 11) — placed BELOW the trend section, not
+          above it: the north star still leads on a fresh install exactly as
+          it does on every other one, and a nudge about incomplete setup is
+          meta-app in the same way the update card is, just lower-urgency
+          (nothing is broken; two optional features are simply unconnected)
+          — ABOVE the update card's placement, not below the Add-weigh-in
+          action, so it's still seen before the primary action rather than
+          competing with it or trailing after it where it would read as an
+          afterthought. Placed above the daily-shape block, not below: if
+          the daily-shape target IS the missing step, this card and that
+          block would otherwise sit in the same visual slot with nothing
+          between them to show they're related. Renders nothing at all once
+          both steps are done or the card has been dismissed
+          (shouldShowSetupPrompt, setupPrompt.ts) — no permanent settings
+          shortcut left behind here; Settings itself remains the durable
+          path to both features, same "absent when there's nothing to show"
+          idiom as bfTrend/movementLine above. */}
+      {showSetupPrompt && (
+        <div className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
+          <div className="flex flex-col">
+            {healthConnectMissing && (
+              <button
+                type="button"
+                onClick={() => onNavigate({ name: 'settings', scrollTo: 'healthConnect' })}
+                className="flex min-h-12 items-center text-left text-sm text-slate-300 transition-colors hover:text-slate-100"
+              >
+                Connect health data — weigh-ins and steps arrive on their own.
+              </button>
+            )}
+            {dailyShapeMissing && (
+              <button
+                type="button"
+                onClick={() => onNavigate({ name: 'settings', scrollTo: 'dailyShape' })}
+                className="flex min-h-12 items-center text-left text-sm text-slate-300 transition-colors hover:text-slate-100"
+              >
+                Set a daily shape — a day-sized target on this screen.
+              </button>
+            )}
+          </div>
+          <TextAction onClick={() => void handleDismissSetupPrompt()} className="self-start">
+            Dismiss
+          </TextAction>
+        </div>
+      )}
 
       {/* Daily shape (increment 7, TIDE_PLAN.md §5's signal 5) — a
           subordinate, own-card block, deliberately BELOW the trend section

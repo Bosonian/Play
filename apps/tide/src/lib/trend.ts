@@ -379,3 +379,41 @@ export function formatBodyFatTrendLine(trend: Pick<BodyFatTrend, 'slopePctPerWee
   const sign = rounded > 0 ? '+' : '−';
   return `Body fat: ${sign}${Math.abs(rounded).toFixed(1)} pts/week over ${pointsLabel}.`;
 }
+
+// --- Last-reading reconciliation line (increment 11) ---
+// TIDE_PLAN.md's north star is the SMOOTHED trend, deliberately not "today's
+// weight" — but that means Home's hero number (`trend.smoothedKg`) can sit
+// a full kilo or more away from the number Deepak actually just read off
+// the scale, especially early on (EMA_ALPHA's own doc comment: ~10
+// readings before the lag mostly closes). Unlabelled, that gap reads as a
+// bug, not a design choice, to someone who reads numbers as carefully as
+// Deepak does. `formatLastReadingLine` is the quiet, honest line that makes
+// the two numbers reconcilable at a glance: "here is what the scale said,
+// and when" placed right alongside the smoothed headline it doesn't match.
+
+/**
+ * The latest ACTUAL weigh-in, quietly. Pure formatting only — the caller
+ * (Home.tsx) is responsible for picking which `WeighInPoint` is "latest"
+ * (the last entry of a chronologically-sorted array; see that screen's own
+ * comment on why `weighIns` already arrives pre-sorted from `db.weighIns.
+ * orderBy('at')`), same "pure function does the formatting, the component
+ * does the Dexie-shaped bookkeeping" split every other formatter in this
+ * file follows.
+ *
+ * Date/time formatting mirrors the existing convention this app already
+ * uses in every other place a weigh-in timestamp is shown to a human
+ * (History.tsx, PlatesToday.tsx, Settings.tsx's `formatDateTime`): a
+ * locale-appropriate day/month via `toLocaleDateString`, and a strictly
+ * 24-hour `HH:MM` via `toLocaleTimeString`'s `hour12: false` (CLAUDE.md's
+ * European-time-format rule, not left to the ambient locale to decide) —
+ * deliberately NOT reinventing a fourth date-formatting idiom for this one
+ * line. `weightKg` is rounded to one decimal, matching the hero number
+ * immediately above this line so the two are visually comparable digit for
+ * digit.
+ */
+export function formatLastReadingLine(point: WeighInPoint): string {
+  const date = new Date(point.at);
+  const datePart = date.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+  const timePart = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+  return `Last reading: ${point.weightKg.toFixed(1)} kg, ${datePart}, ${timePart}`;
+}
