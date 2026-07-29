@@ -241,3 +241,19 @@ export function formatCountdown(remainingSeconds: number): string {
   const clock = `${minutes}:${String(seconds).padStart(2, '0')}`;
   return overrun ? `+${clock}` : clock;
 }
+
+/** "Arrive 08:42" — the step-focus screen's live ETA line (step-focus-eta
+ * increment): while the countdown is the hero, it says nothing about what
+ * an overrun actually costs, so this reads the same live `projectedArrival`
+ * the rest of the app already computes (computeProjection) and states it
+ * plainly. Just `formatTime` with a fixed prefix — deliberately NOT a new
+ * time-formatting choke point (formatTime already is one); this exists so
+ * StepFocus never inlines its own "Arrive " + string concatenation. Unlike
+ * `formatCountdown`'s worst-case "+88:88", this string's length never
+ * varies (24h HH:mm is always two digits either side of the colon), so
+ * there is no analogous "reserve for the longest case" concern at the
+ * string level — see StepFocus's own comment on why a *height* reservation
+ * is still needed for this line even though its length is fixed. */
+export function formatFocusEta(date: Date): string {
+  return `Arrive ${formatTime(date)}`;
+}

@@ -937,6 +937,13 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
           isCurrentStep={focusedArrivalIsCurrent}
           anchorIso={focusArrivalAnchorIso}
           now={now}
+          // Step-focus-eta increment: the SAME `projection` this branch
+          // already computes every tick for its own centerpiece figure
+          // (see this branch's own comment on why arrival-phase reuses
+          // computeProjection unchanged) — handed straight through rather
+          // than recomputed, same "one call, one value threaded down"
+          // shape as `anchorIso` above.
+          projectedArrival={projection.projectedArrival}
           bottomLine={{ label: 'Appointment', time: new Date(departure.appointmentAt) }}
           onBack={() => setFocusStepId(null)}
           onTap={focusedArrivalIsCurrent ? () => void advanceArrivalFocusAfterCheck() : undefined}
@@ -1609,6 +1616,13 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
         isCurrentStep={focusedStepIsCurrent}
         anchorIso={focusAnchorIso}
         now={now}
+        // Step-focus-eta increment: same `projection` this screen already
+        // recomputes every tick (`const projection = computeProjection(now,
+        // departure)` above) for its own centerpiece figure — see
+        // StepFocus's own doc comment on `projectedArrival` for why this is
+        // threaded through as the already-computed value rather than
+        // handing the whole `departure` down for StepFocus to recompute.
+        projectedArrival={projection.projectedArrival}
         bottomLine={{ label: 'Leave by', time: projection.leaveBy }}
         onBack={() => setFocusStepId(null)}
         onTap={focusedStepIsCurrent ? () => void advanceFocusAfterCheck() : undefined}

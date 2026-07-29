@@ -4,7 +4,7 @@ import { elapsedSecondsSince } from '../lib/currentStepElapsed';
 import { isSecondTap } from '../lib/doubleTap';
 import { focusTone } from '../lib/focusTone';
 import type { FocusTone } from '../lib/focusTone';
-import { formatCountdown, formatTime } from '../lib/format';
+import { formatCountdown, formatFocusEta, formatTime } from '../lib/format';
 
 /** How long the "Double-tap to check off." hint stays on screen after a
  * first tap, in milliseconds. Long enough to read at a glance, short
@@ -24,6 +24,27 @@ interface StepFocusProps {
    * its own; meaningless (and unused) when `isCurrentStep` is false. */
   anchorIso: string | null;
   now: Date;
+  /**
+   * Step-focus-eta increment: the live projected arrival for the WHOLE
+   * departure (computeProjection's `projectedArrival`), not anything
+   * specific to this one step — while the countdown answers "how is this
+   * step going", this answers "what does that cost the whole plan", which
+   * is the reason someone would want it while staring at an overrun.
+   *
+   * Passed as the already-computed `Date` rather than the raw `departure`
+   * (mirroring `anchorIso` above, and for the same reason its own comment
+   * gives: this stays a dumb presentational component with no Dexie/
+   * projection knowledge of its own — Runway.tsx already calls
+   * computeProjection every tick for its own centerpiece figure, so this
+   * is that same value handed down, not a second computation). `undefined`
+   * for callers with no departure-level projection to state — currently
+   * only TaskRun.tsx, whose task focus has a deadline (`bottomLine`) but no
+   * "arrival" concept; see this prop's render guard below, which also
+   * withholds it whenever `isCurrentStep` is false, same "no honest live
+   * reading for a step that hasn't started" reasoning as the countdown
+   * itself (see `remainingSeconds` below).
+   */
+  projectedArrival?: Date;
   /**
    * The bottom line's time and its label — different callers, different
    * honest readings of "when this all needs to land":
@@ -95,7 +116,17 @@ const DIGIT_COLOR: Record<FocusTone['phase'], string> = {
  * panel only truly turns pixels off at pure black. #020617 is dark enough
  * to look black in the rest of the app but still measurably lit here.
  */
-export function StepFocus({ step, isCurrentStep, anchorIso, now, bottomLine, onBack, onTap, onBackdate }: StepFocusProps) {
+export function StepFocus({
+  step,
+  isCurrentStep,
+  anchorIso,
+  now,
+  projectedArrival,
+  bottomLine,
+  onBack,
+  onTap,
+  onBackdate,
+}: StepFocusProps) {
   const plannedSeconds = step.plannedMinutes * 60;
 
   // A step that hasn't started yet has no real "time since it began" - any
@@ -316,6 +347,32 @@ export function StepFocus({ step, isCurrentStep, anchorIso, now, bottomLine, onB
         >
           {formatCountdown(remainingSeconds)}
         </p>
+        {/* Step-focus-eta increment: the live ETA line. Current step only —
+            `projectedArrival` render-guards itself here rather than at the
+            call site, matching `bottomLine`'s own "omitted entirely, not a
+            blank" discipline for the deadline-less-task case above. Fixed
+            height wrapper (h-9), not a fixed FONT size, is what prevents
+            reflow here: the two states below share the exact same string
+            LENGTH always ("Arrive " + zero-padded HH:mm never varies, see
+            formatFocusEta's own comment for why that rules out an "+88:88"-
+            style width reservation) but deliberately do NOT share a font
+            size - overrun needs to visibly gain weight (the whole point of
+            this increment) - so it's the vertical space that has to be
+            reserved instead, sized to fit text-2xl (the taller of the two
+            states) with room to spare, and centred inside via flex so
+            neither state's shorter line-height nudges anything below it up
+            or down as phase flips back and forth. */}
+        {isCurrentStep && projectedArrival && (
+          <div className="flex h-9 items-center justify-center">
+            <p
+              className={`tabular-nums motion-safe:transition-colors motion-safe:duration-1000 ${
+                phase === 'overrun' ? 'text-2xl font-semibold text-red-400' : 'text-sm text-slate-500'
+              }`}
+            >
+              {formatFocusEta(projectedArrival)}
+            </p>
+          </div>
+        )}
         {!isCurrentStep && <p className="text-sm text-slate-500">Starts when the steps before it are done.</p>}
         {/* Double-tap hint (field report #14): shares the same slot/style
             the "Starts when..." line above uses (`text-sm text-slate-500`,
