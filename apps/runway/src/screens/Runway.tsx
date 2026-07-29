@@ -940,24 +940,18 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
           // Step-focus-eta increment: `projectedArrival` is deliberately
           // NOT passed here, so this overlay shows no ETA line at all.
           //
-          // This overlay is only reachable once `arrived` is true (the
-          // arrival step list it opens from lives in that branch), and at
-          // that point computeProjection's figure is inflated: it adds
-          // `bufferMinutes + travelMinutes` unconditionally, and both are
-          // spent by the time you're standing in the building. With a 20
-          // min drive and a 10 min buffer, someone ten minutes early would
-          // be told a time half an hour later than the truth. Surfacing
-          // that number under a new label would just spread a wrong
-          // reading onto a second screen.
-          //
-          // Named honestly rather than patched here: the same inflation
-          // already affects this branch's own centerpiece figure below —
-          // it is a pre-existing flaw in computeProjection's post-arrival
-          // behaviour (projection.test.ts has no post-arrival case at
-          // all), not something this increment introduced. Zeroing travel
-          // and buffer once `arrivedAt` is set is the real fix, and it
-          // changes a shipped, in-use number, so it belongs in its own
-          // change with Deepak's approval — not smuggled in here.
+          // Post-departure fix (0.45.2): computeProjection's figure is
+          // honest now once `arrivedAt` is set (it used to inflate the
+          // arrival-phase ETA by re-adding already-spent buffer and travel
+          // minutes — see projection.ts's own doc comment for the fix).
+          // That removes the original reason this was omitted, but not the
+          // omission itself: this overlay's own `bottomLine` below already
+          // reads "Appointment HH:MM" for the exact same endpoint, and the
+          // arrival-phase screen one level up (this branch's centerpiece,
+          // `formatTime(projection.projectedArrival)`) already shows the
+          // projected arrival front and centre. A third reading of the same
+          // endpoint under a third label here wouldn't add information, so
+          // it stays omitted — now for redundancy, not dishonesty.
           bottomLine={{ label: 'Appointment', time: new Date(departure.appointmentAt) }}
           onBack={() => setFocusStepId(null)}
           onTap={focusedArrivalIsCurrent ? () => void advanceArrivalFocusAfterCheck() : undefined}

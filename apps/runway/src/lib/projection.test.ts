@@ -7,7 +7,7 @@ const NOW = new Date('2026-07-09T08:00:00.000Z');
 
 function makeDeparture(overrides: Partial<Departure> = {}): Pick<
   Departure,
-  'appointmentAt' | 'travelMinutes' | 'bufferMinutes' | 'steps' | 'arrivalSteps'
+  'appointmentAt' | 'travelMinutes' | 'bufferMinutes' | 'steps' | 'arrivalSteps' | 'leftAt' | 'arrivedAt'
 > {
   return {
     appointmentAt: '2026-07-09T09:00:00.000Z', // 60 min after NOW
@@ -19,6 +19,10 @@ function makeDeparture(overrides: Partial<Departure> = {}): Pick<
       { id: 's3', name: 'Pack bag', plannedMinutes: 5, checkedAt: null },
     ],
     arrivalSteps: [],
+    // Not-yet-left is the default phase for every existing test above —
+    // the post-departure describe block below overrides these explicitly.
+    leftAt: null,
+    arrivedAt: null,
     ...overrides,
   };
 }
@@ -183,6 +187,155 @@ describe('computeProjection — arrival steps', () => {
 
     expect(legacyResult.projectedArrival.toISOString()).toBe(explicitEmptyResult.projectedArrival.toISOString());
     expect(legacyResult.leaveBy.toISOString()).toBe(explicitEmptyResult.leaveBy.toISOString());
+  });
+});
+
+// Post-departure fix (0.45.2): before this, projectedArrival used the
+// not-yet-left four-term equation unconditionally, in every phase — which
+// silently re-added already-spent buffer/travel minutes once `leftAt`/
+// `arrivedAt` were set, and re-anchored the travel term to `now` on every
+// tick while driving instead of measuring it from `leftAt`, so the ETA
+// slid forward continuously instead of converging. This block is the
+// regression coverage that never existed for that: projection.test.ts had
+// zero cases with `leftAt` or `arrivedAt` set before this increment.
+describe('computeProjection — post-departure phases', () => {
+  it('not-yet-left behaviour is unchanged (leftAt/arrivedAt both null, guards the pre-fix branch)', () => {
+    // Identical numbers and expectation to the very first test in this
+    // file ("sums all steps when none are checked") — restated here,
+    // explicitly under the new phase-aware code path, as a regression
+    // guard against the branch that already worked.
+    const departure = makeDeparture({ leftAt: null, arrivedAt: null });
+    const { projectedArrival, slackMinutes, state } = computeProjection(NOW, departure);
+
+    expect(projectedArrival.toISOString()).toBe('2026-07-09T09:00:00.000Z');
+    expect(slackMinutes).toBe(0);
+    expect(state).toBe('tight');
+  });
+
+  it('arrived: projectedArrival is exactly now + remaining arrival minutes — travel, buffer and an unchecked prep step all contribute nothing', () => {
+    const departure = makeDeparture({
+      leftAt: '2026-07-09T07:30:00.000Z',
+      arrivedAt: '2026-07-09T07:55:00.000Z',
+      travelMinutes: 20,
+      bufferMinutes: 10,
+      // Unchecked on purpose: proves an unchecked prep step is excluded
+      // once arrived, not just that checked ones already summed to zero.
+      steps: [{ id: 's2', name: 'Dress', plannedMinutes: 10, checkedAt: null }],
+      arrivalSteps: [{ id: 'a1', name: 'Change into scrubs', plannedMinutes: 8, checkedAt: null }],
+    });
+    const { projectedArrival } = computeProjection(NOW, departure);
+
+    // NOW (08:00) + 8 remaining arrival minutes = 08:08. Not 08:00 + 8 +
+    // 10 buffer + 20 travel + 10 prep = 08:48, which is what the pre-fix
+    // formula would have said.
+    expect(projectedArrival.toISOString()).toBe('2026-07-09T08:08:00.000Z');
+  });
+
+  it('arrived with all arrival steps checked: projectedArrival === now', () => {
+    const departure = makeDeparture({
+      leftAt: '2026-07-09T07:30:00.000Z',
+      arrivedAt: '2026-07-09T07:55:00.000Z',
+      arrivalSteps: [
+        { id: 'a1', name: 'Change into scrubs', plannedMinutes: 8, checkedAt: '2026-07-09T07:58:00.000Z' },
+        { id: 'a2', name: 'Take the lift', plannedMinutes: 5, checkedAt: '2026-07-09T07:59:00.000Z' },
+      ],
+    });
+    const { projectedArrival } = computeProjection(NOW, departure);
+
+    expect(projectedArrival.toISOString()).toBe(NOW.toISOString());
+  });
+
+  it('left, mid-drive: leftAt 5 min ago + 20 min travel = 15 min from now, plus remaining arrival minutes', () => {
+    const departure = makeDeparture({
+      leftAt: '2026-07-09T07:55:00.000Z', // 5 min before NOW
+      arrivedAt: null,
+      travelMinutes: 20,
+      arrivalSteps: [{ id: 'a1', name: 'Change into scrubs', plannedMinutes: 8, checkedAt: null }],
+    });
+    const { projectedArrival } = computeProjection(NOW, departure);
+
+    // driveEnds = 07:55 + 20 = 08:15 (15 min after NOW). + 8 arrival = 08:23.
+    expect(projectedArrival.toISOString()).toBe('2026-07-09T08:23:00.000Z');
+  });
+
+  it('left, mid-drive: projectedArrival stays FIXED as now advances (regression test for the sliding-window bug)', () => {
+    // Same leftAt/travelMinutes as the previous case: driveEnds = 08:15,
+    // still in the future at both `now`s below, so both reads should
+    // anchor to the same fixed driveEnds instant rather than to `now`.
+    const departure = makeDeparture({
+      leftAt: '2026-07-09T07:55:00.000Z',
+      arrivedAt: null,
+      travelMinutes: 20,
+      arrivalSteps: [],
+    });
+
+    const atNow = computeProjection(NOW, departure).projectedArrival;
+    const twoMinutesLater = computeProjection(new Date('2026-07-09T08:02:00.000Z'), departure).projectedArrival;
+
+    // Pre-fix, this would have been 08:15 vs 08:17 — sliding forward with
+    // `now` instead of converging on the actual drive.
+    expect(atNow.toISOString()).toBe('2026-07-09T08:15:00.000Z');
+    expect(twoMinutesLater.toISOString()).toBe('2026-07-09T08:15:00.000Z');
+  });
+
+  it('left, drive overrun: anchor is now (not the past), and projectedArrival keeps slipping as now advances', () => {
+    // leftAt 40 min ago, 20 min travel -> the drive was "due" 20 min ago
+    // (07:40); max(driveEnds, now) must not let the projection land there.
+    const departure = makeDeparture({
+      leftAt: '2026-07-09T07:20:00.000Z',
+      arrivedAt: null,
+      travelMinutes: 20,
+      arrivalSteps: [],
+    });
+
+    const atNow = computeProjection(NOW, departure).projectedArrival;
+    expect(atNow.toISOString()).toBe(NOW.toISOString());
+
+    const tenMinutesLater = new Date('2026-07-09T08:10:00.000Z');
+    const laterProjection = computeProjection(tenMinutesLater, departure).projectedArrival;
+    // Still overrunning at the later `now`, so the projection slips right
+    // along with it rather than staying pinned to the stale driveEnds.
+    expect(laterProjection.toISOString()).toBe(tenMinutesLater.toISOString());
+  });
+
+  it('slackMinutes/state are correct while driving: on pace reads calm, not the old always-recomputed figure', () => {
+    const departure = makeDeparture({
+      appointmentAt: '2026-07-09T08:30:00.000Z',
+      leftAt: '2026-07-09T07:55:00.000Z', // 5 min before NOW
+      arrivedAt: null,
+      travelMinutes: 20, // driveEnds 08:15
+      arrivalSteps: [],
+    });
+    const { projectedArrival, slackMinutes, state } = computeProjection(NOW, departure);
+
+    expect(projectedArrival.toISOString()).toBe('2026-07-09T08:15:00.000Z');
+    expect(slackMinutes).toBe(15);
+    expect(state).toBe('calm');
+  });
+
+  it('a departure reported "late" under the old inflated post-arrival math is genuinely "calm" once arrived, under the new math — the case this fix exists for', () => {
+    const departure = makeDeparture({
+      appointmentAt: '2026-07-09T08:25:00.000Z',
+      leftAt: '2026-07-09T07:50:00.000Z',
+      arrivedAt: '2026-07-09T07:58:00.000Z',
+      travelMinutes: 20,
+      bufferMinutes: 10,
+      // Left unchecked deliberately: the old formula would have added its
+      // 15 minutes on top of buffer and travel too.
+      steps: [{ id: 's1', name: 'Shower', plannedMinutes: 15, checkedAt: null }],
+      arrivalSteps: [],
+    });
+
+    // What the OLD (pre-fix) unconditional formula would have said:
+    // now + 15 prep + 10 buffer + 20 travel + 0 arrival = 08:00 + 45 = 08:45.
+    // Appointment 08:25 - 08:45 = -20 min slack -> 'late'.
+    //
+    // What the fixed, arrived-phase formula actually says:
+    const { projectedArrival, slackMinutes, state } = computeProjection(NOW, departure);
+
+    expect(projectedArrival.toISOString()).toBe(NOW.toISOString()); // 08:00, nothing left but arrival steps (none)
+    expect(slackMinutes).toBe(25); // 08:25 - 08:00
+    expect(state).toBe('calm');
   });
 });
 

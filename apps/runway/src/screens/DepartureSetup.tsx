@@ -460,6 +460,13 @@ export function DepartureSetup({
             bufferMinutes,
             steps,
             arrivalSteps,
+            // Preview of a departure that doesn't exist yet — nobody has
+            // left or arrived, and this call only reads `.leaveBy` anyway
+            // (phase-independent, see projection.ts), but the type is now
+            // required so this has to be said explicitly rather than left
+            // implicit.
+            leftAt: null,
+            arrivedAt: null,
           }).leaveBy,
         }
       : null;

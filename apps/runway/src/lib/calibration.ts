@@ -131,7 +131,22 @@ export function medianMinutes(values: number[]): number | null {
 export function plannedLeaveBy(
   departure: Pick<
     Departure,
-    'appointmentAt' | 'originalAppointmentAt' | 'travelMinutes' | 'bufferMinutes' | 'steps' | 'arrivalSteps'
+    | 'appointmentAt'
+    | 'originalAppointmentAt'
+    | 'travelMinutes'
+    | 'bufferMinutes'
+    | 'steps'
+    | 'arrivalSteps'
+    // Required by computeProjection's parameter type (post-departure fix,
+    // 0.45.2) but irrelevant to the value this function actually reads:
+    // `{ ...departure, appointmentAt: anchor }` re-anchors appointmentAt to
+    // ask "what would leaveBy have been against the original commitment",
+    // and leaveBy doesn't branch on phase (see computeProjection's own doc
+    // comment) — so whatever leftAt/arrivedAt this departure carries passes
+    // through unread. Widened here only so every real caller (all of which
+    // pass a full `Departure`) still compiles.
+    | 'leftAt'
+    | 'arrivedAt'
   >,
 ): Date {
   const anchor = departure.originalAppointmentAt ?? departure.appointmentAt;

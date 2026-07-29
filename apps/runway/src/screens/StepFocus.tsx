@@ -40,10 +40,14 @@ interface StepFocusProps {
    * for callers with no HONEST departure-level projection to state, of
    * which there are two: TaskRun.tsx, whose task focus has a deadline
    * (`bottomLine`) but no "arrival" concept at all, and Runway.tsx's
-   * arrival-phase overlay, where computeProjection's figure is inflated by
-   * already-spent travel and buffer — see that call site's own comment for
-   * the full reason and why it is not fixed there. See this prop's render
-   * guard below, which also
+   * arrival-phase overlay, which omits it for a different reason —
+   * computeProjection's figure is honest there now (post-departure fix,
+   * 0.45.2), but that overlay's own `bottomLine` already reads "Appointment
+   * HH:MM" for the same endpoint, and the arrival-phase screen one level up
+   * already shows the projected arrival as its centerpiece. A third reading
+   * of the same endpoint under a third label wouldn't add information, so
+   * that call site still omits it — see its own comment for the full
+   * reasoning. See this prop's render guard below, which also
    * withholds it whenever `isCurrentStep` is false, same "no honest live
    * reading for a step that hasn't started" reasoning as the countdown
    * itself (see `remainingSeconds` below).
