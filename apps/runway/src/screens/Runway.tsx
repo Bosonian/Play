@@ -937,13 +937,27 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
           isCurrentStep={focusedArrivalIsCurrent}
           anchorIso={focusArrivalAnchorIso}
           now={now}
-          // Step-focus-eta increment: the SAME `projection` this branch
-          // already computes every tick for its own centerpiece figure
-          // (see this branch's own comment on why arrival-phase reuses
-          // computeProjection unchanged) — handed straight through rather
-          // than recomputed, same "one call, one value threaded down"
-          // shape as `anchorIso` above.
-          projectedArrival={projection.projectedArrival}
+          // Step-focus-eta increment: `projectedArrival` is deliberately
+          // NOT passed here, so this overlay shows no ETA line at all.
+          //
+          // This overlay is only reachable once `arrived` is true (the
+          // arrival step list it opens from lives in that branch), and at
+          // that point computeProjection's figure is inflated: it adds
+          // `bufferMinutes + travelMinutes` unconditionally, and both are
+          // spent by the time you're standing in the building. With a 20
+          // min drive and a 10 min buffer, someone ten minutes early would
+          // be told a time half an hour later than the truth. Surfacing
+          // that number under a new label would just spread a wrong
+          // reading onto a second screen.
+          //
+          // Named honestly rather than patched here: the same inflation
+          // already affects this branch's own centerpiece figure below —
+          // it is a pre-existing flaw in computeProjection's post-arrival
+          // behaviour (projection.test.ts has no post-arrival case at
+          // all), not something this increment introduced. Zeroing travel
+          // and buffer once `arrivedAt` is set is the real fix, and it
+          // changes a shipped, in-use number, so it belongs in its own
+          // change with Deepak's approval — not smuggled in here.
           bottomLine={{ label: 'Appointment', time: new Date(departure.appointmentAt) }}
           onBack={() => setFocusStepId(null)}
           onTap={focusedArrivalIsCurrent ? () => void advanceArrivalFocusAfterCheck() : undefined}

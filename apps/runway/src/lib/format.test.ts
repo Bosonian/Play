@@ -193,15 +193,15 @@ describe('formatCountdown', () => {
 });
 
 describe('formatFocusEta', () => {
-  it('prefixes the 24h time with "Arrive "', () => {
-    expect(formatFocusEta(new Date('2026-07-09T08:42:00'))).toBe('Arrive 08:42');
+  it('prefixes the 24h time with "Projected arrival "', () => {
+    expect(formatFocusEta(new Date('2026-07-09T08:42:00'))).toBe('Projected arrival 08:42');
   });
 
   it('is always 24h (no AM/PM), even for an afternoon time', () => {
-    expect(formatFocusEta(new Date('2026-07-09T14:05:00'))).toBe('Arrive 14:05');
+    expect(formatFocusEta(new Date('2026-07-09T14:05:00'))).toBe('Projected arrival 14:05');
   });
 
   it('always zero-pads both hours and minutes, so the string length never varies', () => {
-    expect(formatFocusEta(new Date('2026-07-09T00:03:00'))).toBe('Arrive 00:03');
+    expect(formatFocusEta(new Date('2026-07-09T00:03:00'))).toBe('Projected arrival 00:03');
   });
 });

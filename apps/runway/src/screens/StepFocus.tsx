@@ -37,9 +37,13 @@ interface StepFocusProps {
    * projection knowledge of its own — Runway.tsx already calls
    * computeProjection every tick for its own centerpiece figure, so this
    * is that same value handed down, not a second computation). `undefined`
-   * for callers with no departure-level projection to state — currently
-   * only TaskRun.tsx, whose task focus has a deadline (`bottomLine`) but no
-   * "arrival" concept; see this prop's render guard below, which also
+   * for callers with no HONEST departure-level projection to state, of
+   * which there are two: TaskRun.tsx, whose task focus has a deadline
+   * (`bottomLine`) but no "arrival" concept at all, and Runway.tsx's
+   * arrival-phase overlay, where computeProjection's figure is inflated by
+   * already-spent travel and buffer — see that call site's own comment for
+   * the full reason and why it is not fixed there. See this prop's render
+   * guard below, which also
    * withholds it whenever `isCurrentStep` is false, same "no honest live
    * reading for a step that hasn't started" reasoning as the countdown
    * itself (see `remainingSeconds` below).
@@ -341,7 +345,16 @@ export function StepFocus({
                 positioned name/leave-by lines above/below it - 11rem is
                 the largest round Tailwind arbitrary value that leaves
                 comfortable headroom for all of that rather than landing
-                exactly on the computed ceiling. */}
+                exactly on the computed ceiling.
+              - amended by the step-focus-eta increment: the ETA line below
+                adds 36px (its h-9 wrapper) plus 16px (this column's gap-4)
+                to this stack in landscape. Computed, not rendered: digits
+                ~176px + 16 + 36 = 228px in a ~360-412px landscape viewport,
+                leaving comfortable room against the absolutely pinned name
+                and bottom lines (~35px total). Tightest case — browser
+                chrome visible AND the double-tap hint showing — leaves
+                roughly 13px, crowded but not overlapping. UNVERIFIED on a
+                real device; landscape cannot be rendered here. */}
         <p
           className={`text-7xl font-bold tabular-nums motion-safe:transition-colors motion-safe:duration-1000 sm:text-8xl landscape:text-[11rem] ${DIGIT_COLOR[phase]}`}
         >
@@ -361,12 +374,21 @@ export function StepFocus({
             reserved instead, sized to fit text-2xl (the taller of the two
             states) with room to spare, and centred inside via flex so
             neither state's shorter line-height nudges anything below it up
-            or down as phase flips back and forth. */}
+            or down as phase flips back and forth.
+
+            Size and brightness carry the escalation, NOT a third red: the
+            digits above already turn red in overrun (DIGIT_COLOR) and the
+            red fill is already rising behind everything. A red line here
+            would add a third simultaneous alarm in the same hue while
+            saying nothing the other two don't — and the colour was never
+            the point. What this line contributes is the COST (where the
+            plan now lands), which weight and brightness state perfectly
+            well. slate-100 stays legible against the red-950/60 fill. */}
         {isCurrentStep && projectedArrival && (
           <div className="flex h-9 items-center justify-center">
             <p
               className={`tabular-nums motion-safe:transition-colors motion-safe:duration-1000 ${
-                phase === 'overrun' ? 'text-2xl font-semibold text-red-400' : 'text-sm text-slate-500'
+                phase === 'overrun' ? 'text-2xl font-semibold text-slate-100' : 'text-sm text-slate-500'
               }`}
             >
               {formatFocusEta(projectedArrival)}

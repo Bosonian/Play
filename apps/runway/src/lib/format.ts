@@ -242,18 +242,26 @@ export function formatCountdown(remainingSeconds: number): string {
   return overrun ? `+${clock}` : clock;
 }
 
-/** "Arrive 08:42" — the step-focus screen's live ETA line (step-focus-eta
- * increment): while the countdown is the hero, it says nothing about what
- * an overrun actually costs, so this reads the same live `projectedArrival`
- * the rest of the app already computes (computeProjection) and states it
- * plainly. Just `formatTime` with a fixed prefix — deliberately NOT a new
- * time-formatting choke point (formatTime already is one); this exists so
- * StepFocus never inlines its own "Arrive " + string concatenation. Unlike
+/** "Projected arrival 08:42" — the step-focus screen's live ETA line
+ * (step-focus-eta increment): while the countdown is the hero, it says
+ * nothing about what an overrun actually costs, so this reads the same live
+ * `projectedArrival` the rest of the app already computes
+ * (computeProjection) and states it plainly. Just `formatTime` with a fixed
+ * prefix — deliberately NOT a new time-formatting choke point (formatTime
+ * already is one); this exists so StepFocus never inlines its own prefix +
+ * string concatenation.
+ *
+ * The prefix is "Projected arrival", not the shorter "Arrive", on purpose.
+ * This line sits directly above the bottom line's "Leave by 08:15", which
+ * IS an imperative — read in parallel, "Arrive 08:42" would be taken as a
+ * second instruction ("arrive by 08:42"), and it isn't one: it's a forecast
+ * that slips a little every tick. Naming it a projection costs a word and
+ * removes the misreading. Unlike
  * `formatCountdown`'s worst-case "+88:88", this string's length never
  * varies (24h HH:mm is always two digits either side of the colon), so
  * there is no analogous "reserve for the longest case" concern at the
  * string level — see StepFocus's own comment on why a *height* reservation
  * is still needed for this line even though its length is fixed. */
 export function formatFocusEta(date: Date): string {
-  return `Arrive ${formatTime(date)}`;
+  return `Projected arrival ${formatTime(date)}`;
 }
