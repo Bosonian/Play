@@ -9,7 +9,7 @@ import {
   bodyFatTrend,
   currentTrend,
   formatBodyFatTrendLine,
-  formatLastReadingLine,
+  formatLastWeighInLine,
   formatTrendLine,
   MIN_POINTS,
 } from '../lib/trend';
@@ -84,27 +84,80 @@ export function Home({ onNavigate }: HomeProps) {
   // `readDailyShapeTarget`) is used directly here because it's synchronous
   // and this component already has the raw row from `useLiveQuery` — no
   // reason to await a second Dexie round trip for a value already in hand.
-  const dailyShapeSetting = useLiveQuery(() => db.settings.get(DAILY_SHAPE_TARGET_SETTING), []);
+  //
+  // Sentinel pattern (`.then((row) => row ?? null)`, review fix 0.11.1) —
+  // see the setup-prompt block below for the full rationale. `?.value`
+  // below treats `undefined` (loading) and `null` (genuinely absent) the
+  // same way `parseDailyShapeTarget` already did before this fix (both
+  // become `undefined`, which it maps to `null`), so this line's own
+  // behaviour is unchanged; the setup-prompt block is what needed the two
+  // states told apart, and it reads this same query result to get them.
+  const dailyShapeSetting = useLiveQuery(
+    () => db.settings.get(DAILY_SHAPE_TARGET_SETTING).then((row) => row ?? null),
+    [],
+  );
   const dailyShapeTarget = parseDailyShapeTarget(dailyShapeSetting?.value);
 
   // Setup prompt increment (increment 11, TIDE_PLAN.md's "ask before adding
   // features" boundary respected — this is the smallest honest nudge, not
-  // an onboarding flow): reads the same two settings rows Settings.tsx
-  // itself reads (HEALTH_CONNECT_ENABLED_SETTING directly here;
-  // dailyShapeTarget is already computed above for the block further down)
-  // plus its own durable dismissal flag. `healthConnectSetting?.value !==
-  // 'true'` mirrors Settings.tsx's own `isConnected` check exactly, just
-  // inverted — see that file's comment for why `undefined` (not yet
-  // connected, or the row hasn't loaded yet) correctly falls on the
-  // "missing" side of that check.
-  const healthConnectSetting = useLiveQuery(() => db.settings.get(HEALTH_CONNECT_ENABLED_SETTING), []);
-  const healthConnectMissing = healthConnectSetting?.value !== 'true';
-  const dailyShapeMissing = dailyShapeTarget === null;
-  const setupPromptDismissedSetting = useLiveQuery(() => db.settings.get(SETUP_PROMPT_DISMISSED_SETTING), []);
-  const showSetupPrompt = shouldShowSetupPrompt(
-    { healthConnectMissing, dailyShapeMissing },
-    setupPromptDismissedSetting?.value === 'true',
+  // an onboarding flow): reads the same settings rows Settings.tsx itself
+  // reads (HEALTH_CONNECT_ENABLED_SETTING and DAILY_SHAPE_TARGET_SETTING)
+  // plus its own durable dismissal flag.
+  //
+  // SENTINEL PATTERN (review fix, 0.11.1) — `.then((row) => row ?? null)`
+  // turns Dexie's own two-state read (`undefined` while loading, the row
+  // once it resolves — `undefined` again if there IS no row) into three
+  // states useLiveQuery can actually distinguish: `undefined` = this
+  // query's first read hasn't resolved yet; `null` = it resolved and there
+  // is genuinely no row (the feature was never touched); a real row =
+  // resolved AND present, whatever its value. That third state matters
+  // because `handleDisconnect` writes HEALTH_CONNECT_ENABLED_SETTING =
+  // 'false' and `clearDailyShapeTarget` writes DAILY_SHAPE_TARGET_SETTING =
+  // '' — present-but-declining rows, not deleted ones (see both functions'
+  // own comments) — and this card must tell "never offered" (missing, nudge
+  // again) apart from "offered and explicitly declined" (not missing, stop
+  // nagging). The PREVIOUS version of this comment claimed `undefined`
+  // "correctly falls on the missing side" of the check below — true for the
+  // genuinely-never-set case, but wrong for the not-yet-loaded case, where
+  // it just meant "we don't know yet" and got treated as "missing" anyway.
+  const healthConnectSetting = useLiveQuery(
+    () => db.settings.get(HEALTH_CONNECT_ENABLED_SETTING).then((row) => row ?? null),
+    [],
   );
+  // Missing = the row was never written at all. A row present with 'false'
+  // means Health Connect was connected once and explicitly disconnected —
+  // re-showing "Connect health data" for that is exactly the nag CLAUDE.md
+  // forbids, since Deepak never got a live card to dismiss while he was
+  // using the feature (the card only renders when something IS missing).
+  const healthConnectMissing = healthConnectSetting === null;
+  // Missing = the row was never written at all. A row present with ''
+  // means a daily-shape target was set once and explicitly removed
+  // (`handleRemoveDailyShape` in Settings.tsx) — same "explicitly declined,
+  // not missing" reasoning as Health Connect above. `dailyShapeTarget`
+  // itself (computed above from the same row, for the block further down)
+  // can't be reused for this check: `parseDailyShapeTarget` returns `null`
+  // for BOTH "row absent" and "row present but ''", collapsing exactly the
+  // distinction this check needs.
+  const dailyShapeMissing = dailyShapeSetting === null;
+  const setupPromptDismissedSetting = useLiveQuery(
+    () => db.settings.get(SETUP_PROMPT_DISMISSED_SETTING).then((row) => row ?? null),
+    [],
+  );
+  // Cold-start flash fix (review fix, 0.11.1): these three queries resolve
+  // independently of each other and of `weighIns` above, each triggering
+  // its own re-render as it settles. Without this gate, a fully set-up (or
+  // already-dismissed) device could render the card for one frame using
+  // whichever settings happened to still read `undefined` — which, before
+  // this fix, was treated the same as "missing" — before the rest caught
+  // up. Requiring all three to be resolved first means the card's very
+  // first paint already reflects the real, settled state.
+  const setupSettingsLoaded =
+    healthConnectSetting !== undefined &&
+    dailyShapeSetting !== undefined &&
+    setupPromptDismissedSetting !== undefined;
+  const showSetupPrompt =
+    setupSettingsLoaded &&
+    shouldShowSetupPrompt({ healthConnectMissing, dailyShapeMissing }, setupPromptDismissedSetting?.value === 'true');
 
   async function handleDismissSetupPrompt() {
     await dismissSetupPrompt();
@@ -228,8 +281,20 @@ export function Home({ onNavigate }: HomeProps) {
                 this micro-label is the smallest fix that doesn't restructure
                 the headline itself. Same micro-label treatment as every
                 other uppercase heading in this app
-                (text-[11px]/tracking-[0.15em]/text-slate-500). */}
-            <p className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Smoothed trend</p>
+                (text-[11px]/tracking-[0.15em]/text-slate-500).
+
+                "Smoothed weight", NOT "Smoothed trend" (review fix, 0.11.1):
+                `formatTrendLine` one line below already prints "Trend: …
+                kg/week" for the SLOPE — a different quantity (a rate) from
+                this LEVEL (a kg figure). Reusing "trend" for both, one line
+                apart, told the reader they were the same thing. Also
+                deliberately NOT "21-day smoothed weight" — TREND_WINDOW_DAYS
+                (trend.ts) bounds only the slope fit below; the EMA level
+                itself has no fixed window at all (its effective memory is
+                roughly 1/EMA_ALPHA, about 10 readings — see EMA_ALPHA's own
+                doc comment). A day count on this label would sound precise
+                and describe the wrong mechanism. */}
+            <p className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Smoothed weight</p>
             <p className="text-huge font-semibold tracking-tight tabular-nums text-slate-100">
               {trend.smoothedKg.toFixed(1)}
               {/* kg unit: smaller, lighter weight, one shade dimmer than
@@ -259,17 +324,19 @@ export function Home({ onNavigate }: HomeProps) {
             {MIN_POINTS - weighIns.length} more weigh-in{MIN_POINTS - weighIns.length === 1 ? '' : 's'} to a trend.
           </p>
         )}
-        {/* Last-actual-reading reconciliation line (increment 11) — see
-            trend.ts's own header comment on `formatLastReadingLine`. Placed
-            directly below the trend/no-trend block above and above the
-            bfTrend/movementLine lines: it's the one line that explains BOTH
-            of the states above it (why the hero number doesn't match the
-            scale; and, below the evidence floor, what the scale actually
-            said while there's no trend yet to show at all) — the brief's
-            own instruction that it "should still appear" in that second
-            case is exactly why this isn't nested inside the `trend &&`
-            branch above. */}
-        {latestWeighIn && <p className="text-sm tabular-nums text-slate-500">{formatLastReadingLine(latestWeighIn)}</p>}
+        {/* Last-actual-weigh-in reconciliation line (increment 11) — see
+            trend.ts's own header comment on `formatLastWeighInLine`
+            (renamed from `formatLastReadingLine`, review fix 0.11.1 — see
+            that function's own doc comment for why "reading" was the wrong
+            noun here). Placed directly below the trend/no-trend block above
+            and above the bfTrend/movementLine lines: it's the one line that
+            explains BOTH of the states above it (why the hero number
+            doesn't match the scale; and, below the evidence floor, what the
+            scale actually said while there's no trend yet to show at all) —
+            the brief's own instruction that it "should still appear" in
+            that second case is exactly why this isn't nested inside the
+            `trend &&` branch above. */}
+        {latestWeighIn && <p className="text-sm tabular-nums text-slate-500">{formatLastWeighInLine(latestWeighIn)}</p>}
         {/* Health Connect bridge increment (0.3.0): both lines below are
             quiet, secondary, and simply absent when there's nothing to
             show — no "N more readings" placeholder the way the weight
@@ -359,7 +426,14 @@ export function Home({ onNavigate }: HomeProps) {
                 onClick={() => onNavigate({ name: 'settings', scrollTo: 'healthConnect' })}
                 className="flex min-h-12 items-center text-left text-sm text-slate-300 transition-colors hover:text-slate-100"
               >
-                Connect health data — weigh-ins and steps arrive on their own.
+                {/* NOT "arrive on their own" (review fix, 0.11.1) — that
+                    read as background push. The truth: Tide reads Health
+                    Connect at app open/resume and on manual sync, and a
+                    weigh-in only shows up here at all if the Renpho ->
+                    Samsung Health -> Health Connect chain is set up
+                    upstream (see this screen's Health Connect section in
+                    Settings.tsx for that chain spelled out in full). */}
+                Connect health data — weigh-ins and steps read in from your scale and watch.
               </button>
             )}
             {dailyShapeMissing && (
@@ -368,7 +442,12 @@ export function Home({ onNavigate }: HomeProps) {
                 onClick={() => onNavigate({ name: 'settings', scrollTo: 'dailyShape' })}
                 className="flex min-h-12 items-center text-left text-sm text-slate-300 transition-colors hover:text-slate-100"
               >
-                Set a daily shape — a day-sized target on this screen.
+                {/* NOT "on this screen" (review fix, 0.11.1) — wrong twice
+                    over: the tap navigates OFF Home to Settings, and the
+                    target isn't rendered here until AFTER it's set (see the
+                    daily-shape block below, `dailyShape &&`). "Shown here
+                    once set" is the honest version of the same pointer. */}
+                Set a daily shape — a day-sized target, shown here once set.
               </button>
             )}
           </div>

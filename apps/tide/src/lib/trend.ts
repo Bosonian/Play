@@ -380,14 +380,14 @@ export function formatBodyFatTrendLine(trend: Pick<BodyFatTrend, 'slopePctPerWee
   return `Body fat: ${sign}${Math.abs(rounded).toFixed(1)} pts/week over ${pointsLabel}.`;
 }
 
-// --- Last-reading reconciliation line (increment 11) ---
+// --- Last-weigh-in reconciliation line (increment 11) ---
 // TIDE_PLAN.md's north star is the SMOOTHED trend, deliberately not "today's
 // weight" — but that means Home's hero number (`trend.smoothedKg`) can sit
 // a full kilo or more away from the number Deepak actually just read off
 // the scale, especially early on (EMA_ALPHA's own doc comment: ~10
 // readings before the lag mostly closes). Unlabelled, that gap reads as a
 // bug, not a design choice, to someone who reads numbers as carefully as
-// Deepak does. `formatLastReadingLine` is the quiet, honest line that makes
+// Deepak does. `formatLastWeighInLine` is the quiet, honest line that makes
 // the two numbers reconcilable at a glance: "here is what the scale said,
 // and when" placed right alongside the smoothed headline it doesn't match.
 
@@ -400,6 +400,16 @@ export function formatBodyFatTrendLine(trend: Pick<BodyFatTrend, 'slopePctPerWee
  * does the Dexie-shaped bookkeeping" split every other formatter in this
  * file follows.
  *
+ * "weigh-in", NOT "reading" (review fix, 0.11.1 — renamed from
+ * `formatLastReadingLine`): this codebase deliberately partitions the two
+ * nouns, see `formatBodyFatTrendLine`'s own doc comment above —
+ * "reading"/"readings" names body-fat and sensor data specifically ("not
+ * every weigh-in has one"), while every user-facing string about a weight
+ * row on this screen already says weigh-in ("Add weigh-in", "No weigh-ins
+ * yet.", "N more weigh-ins to a trend."). This line describes a weight row,
+ * so it uses weigh-in — the previous "Last reading:" borrowed the body-fat
+ * word for the weight number one line above.
+ *
  * Date/time formatting mirrors the existing convention this app already
  * uses in every other place a weigh-in timestamp is shown to a human
  * (History.tsx, PlatesToday.tsx, Settings.tsx's `formatDateTime`): a
@@ -409,11 +419,26 @@ export function formatBodyFatTrendLine(trend: Pick<BodyFatTrend, 'slopePctPerWee
  * deliberately NOT reinventing a fourth date-formatting idiom for this one
  * line. `weightKg` is rounded to one decimal, matching the hero number
  * immediately above this line so the two are visually comparable digit for
- * digit.
+ * digit. The year is included ONLY when the weigh-in's own year differs
+ * from the current one (review fix, 0.11.1) — `formatDateTime` in
+ * Settings.tsx stays year-less because both its call sites describe
+ * something that just happened, but this line has no such guarantee: a
+ * weigh-in can be the last one Deepak ever logged, arbitrarily long ago,
+ * and this line's whole job is telling him how current it is. Silently
+ * printing "25 Jul" for a reading from 14 months ago would claim this year
+ * for it. History.tsx already shows a year on its own rows, so a year
+ * here — only when it's not the obvious default — is not a new idiom.
+ * Terminal period added to match every sibling line in the same stack
+ * ("Trend: … weigh-ins.", "Body fat: … readings.", "Steps today: … kcal.");
+ * this was the one line in that stack missing one.
  */
-export function formatLastReadingLine(point: WeighInPoint): string {
+export function formatLastWeighInLine(point: WeighInPoint): string {
   const date = new Date(point.at);
-  const datePart = date.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+  const includeYear = date.getFullYear() !== new Date().getFullYear();
+  const datePart = date.toLocaleDateString(
+    undefined,
+    includeYear ? { day: '2-digit', month: 'short', year: 'numeric' } : { day: '2-digit', month: 'short' },
+  );
   const timePart = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
-  return `Last reading: ${point.weightKg.toFixed(1)} kg, ${datePart}, ${timePart}`;
+  return `Last weigh-in: ${point.weightKg.toFixed(1)} kg, ${datePart}, ${timePart}.`;
 }

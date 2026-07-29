@@ -60,17 +60,31 @@ const SUGGESTED_DAILY_SHAPE_TARGET: DailyShapeTarget = { checkIns: 3, steps: 600
  */
 export function Settings({ onNavigate, scrollTo }: SettingsProps) {
   // Setup-card deep link (increment 11) — one ref per section it can point
-  // at. Scrolling happens ONCE, on mount ([] deps): this is a nav-time jump
-  // ("land where the tap meant to go"), not a live-following scroll that
-  // would fight the user's own scrolling on a screen visit that started
-  // with a `scrollTo`.
+  // at, plus a ref (not state — see below) holding which one, if any, still
+  // needs scrolling into view this screen visit.
   const healthConnectSectionRef = useRef<HTMLElement>(null);
   const dailyShapeSectionRef = useRef<HTMLElement>(null);
-  useEffect(() => {
-    if (scrollTo === 'healthConnect') healthConnectSectionRef.current?.scrollIntoView({ block: 'start' });
-    else if (scrollTo === 'dailyShape') dailyShapeSectionRef.current?.scrollIntoView({ block: 'start' });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // A ref, not state: writing it must not itself force a re-render — only
+  // the effect further down (keyed on the things that actually move Daily
+  // shape's position) should react to it. Seeded from `scrollTo` once, at
+  // construction, matching the old mount-only effect's intent; cleared to
+  // `null` below once the target has been reached and the layout above it
+  // has settled, or once the user starts scrolling/touching on their own.
+  //
+  // BUG THIS REPLACES (review fix, 0.11.1): the original effect ran once on
+  // mount with `[]` deps and scrolled immediately. At that instant
+  // `enabledSetting` (below) is still `undefined` — Dexie's first read
+  // hasn't resolved — so `showConnected` reads `false` and Health Connect
+  // renders its SHORT unconnected branch. The scroll landed against THAT
+  // layout. Milliseconds later the section swapped to the much taller
+  // connected branch, then `refreshStepSources()` added step-source rows on
+  // top of that — both changes happen entirely below Health Connect's own
+  // heading, i.e. above Daily shape, so each one silently pushed Daily
+  // shape further down the page than where the one-shot scroll had already
+  // landed. The result: exactly the documented flow (connect Health
+  // Connect, return to Home, tap "Set a daily shape") landed mid-Health-
+  // Connect-section instead of on Daily shape.
+  const pendingScrollTarget = useRef<'healthConnect' | 'dailyShape' | null>(scrollTo ?? null);
 
   // Same read-and-derive pattern as Home.tsx's own update card — see that
   // file's comment for why the versionCode is re-checked at render rather
@@ -154,6 +168,54 @@ export function Settings({ onNavigate, scrollTo }: SettingsProps) {
   useEffect(() => {
     if (showConnected) void refreshStepSources();
   }, [showConnected]);
+
+  // Re-run the pending scroll (see `pendingScrollTarget`'s own comment
+  // above) every time something ABOVE the target section can have changed
+  // the page's height: `showConnected` flipping the Health Connect section
+  // between its short and tall branches, and `stepSources`/
+  // `stepSourcesLoading` — the step-source rows that grow the tall branch
+  // further once `refreshStepSources` resolves. Both live above Daily
+  // shape in the DOM, so both are exactly the things a scroll aimed at
+  // Daily shape needs to re-fire against.
+  //
+  // TRADEOFF, stated plainly: within the short window before
+  // `showConnected`/`stepSources` settle, the page can visibly re-jump once
+  // or twice as this effect re-fires on each dependency change. That is the
+  // real cost of anchoring against async-height content instead of
+  // reserving layout space for it up front — accepted here because a
+  // visible re-jump that ends on the right section is still better than a
+  // smooth scroll that lands on the wrong one and stays there.
+  useEffect(() => {
+    const target = pendingScrollTarget.current;
+    if (!target) return;
+    const ref = target === 'healthConnect' ? healthConnectSectionRef : dailyShapeSectionRef;
+    ref.current?.scrollIntoView({ block: 'start' });
+    // Stop once the step-source fetch has actually settled (not just
+    // started) — `stepSources !== null` means at least one fetch has
+    // resolved, and `!stepSourcesLoading` means no fetch is still in
+    // flight. Past that point nothing further changes Health Connect's
+    // height, so there's nothing left for a re-fire to correct.
+    if (showConnected && stepSources !== null && !stepSourcesLoading) {
+      pendingScrollTarget.current = null;
+    }
+  }, [showConnected, stepSources, stepSourcesLoading]);
+
+  // Give up the moment the user takes over scrolling themselves — a
+  // re-jump fighting an active touch/wheel gesture would be worse than
+  // leaving them wherever they already are. `passive: true` on both:
+  // this listener never calls preventDefault, so it must not block the
+  // scroll/touch it's merely observing.
+  useEffect(() => {
+    function stopPendingScroll() {
+      pendingScrollTarget.current = null;
+    }
+    window.addEventListener('touchstart', stopPendingScroll, { passive: true });
+    window.addEventListener('wheel', stopPendingScroll, { passive: true });
+    return () => {
+      window.removeEventListener('touchstart', stopPendingScroll);
+      window.removeEventListener('wheel', stopPendingScroll);
+    };
+  }, []);
 
   /** Selecting "All sources" writes an empty selection (see
    * MOVEMENT_STEP_SOURCES_SETTING's own doc comment on why empty means "all

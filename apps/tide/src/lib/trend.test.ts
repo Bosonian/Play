@@ -4,7 +4,7 @@ import {
   type BodyFatPoint,
   currentTrend,
   formatBodyFatTrendLine,
-  formatLastReadingLine,
+  formatLastWeighInLine,
   formatTrendLine,
   MIN_POINTS,
   trendSeries,
@@ -344,23 +344,61 @@ describe('formatBodyFatTrendLine', () => {
 // reason: the exact rendered string depends on the runtime's default
 // locale, which this test suite has no business pinning down. What IS
 // pinned down and asserted directly: the label text, the weight rounded to
-// one decimal, and the exact assembly/ordering of the three parts.
-describe('formatLastReadingLine', () => {
+// one decimal, and the exact assembly/ordering of the parts.
+//
+// Fixtures below are built OFF `new Date()` (this year's July 25th, or N
+// years before it) rather than a hard-coded ISO string (review fix,
+// 0.11.1): the function under test now compares the weigh-in's year
+// against the REAL current year to decide whether to print one, so a
+// fixture pinned to a literal past year (e.g. "2026-07-25") would silently
+// start failing the no-year assertions the day the calendar year changes
+// underneath this test suite. Anchoring to `new Date().getFullYear()`
+// keeps "same year as today" and "different year than today" fixtures
+// correct regardless of when the suite actually runs. July 25th specifically
+// avoids any December/January boundary a timezone offset could otherwise
+// shift a UTC timestamp across.
+describe('formatLastWeighInLine', () => {
   it('assembles the label, one-decimal weight, and date/time in order', () => {
-    const point: WeighInPoint = { at: '2026-07-25T09:14:00.000Z', weightKg: 100.23 };
+    const currentYear = new Date().getFullYear();
+    const point: WeighInPoint = { at: new Date(Date.UTC(currentYear, 6, 25, 9, 14)).toISOString(), weightKg: 100.23 };
     const date = new Date(point.at);
     const expectedDatePart = date.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
     const expectedTimePart = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
-    expect(formatLastReadingLine(point)).toBe(`Last reading: 100.2 kg, ${expectedDatePart}, ${expectedTimePart}`);
+    expect(formatLastWeighInLine(point)).toBe(`Last weigh-in: 100.2 kg, ${expectedDatePart}, ${expectedTimePart}.`);
   });
 
   it('rounds a whole-number weight to one decimal place, not a bare integer', () => {
-    const point: WeighInPoint = { at: '2026-07-25T09:14:00.000Z', weightKg: 100 };
-    expect(formatLastReadingLine(point)).toContain('100.0 kg');
+    const currentYear = new Date().getFullYear();
+    const point: WeighInPoint = { at: new Date(Date.UTC(currentYear, 6, 25, 9, 14)).toISOString(), weightKg: 100 };
+    expect(formatLastWeighInLine(point)).toContain('100.0 kg');
   });
 
-  it('always renders 24-hour time (no am/pm), regardless of the reading hour', () => {
-    const evening: WeighInPoint = { at: '2026-07-25T21:05:00.000Z', weightKg: 99 };
-    expect(formatLastReadingLine(evening)).not.toMatch(/am|pm/i);
+  it('always renders 24-hour time (no am/pm), regardless of the weigh-in hour', () => {
+    const currentYear = new Date().getFullYear();
+    const evening: WeighInPoint = { at: new Date(Date.UTC(currentYear, 6, 25, 21, 5)).toISOString(), weightKg: 99 };
+    expect(formatLastWeighInLine(evening)).not.toMatch(/am|pm/i);
+  });
+
+  it('ends with a terminal period, matching the other lines in the same visual stack', () => {
+    const currentYear = new Date().getFullYear();
+    const point: WeighInPoint = { at: new Date(Date.UTC(currentYear, 6, 25, 9, 14)).toISOString(), weightKg: 100.23 };
+    expect(formatLastWeighInLine(point)).toMatch(/\.$/);
+  });
+
+  it('omits the year when the weigh-in falls in the current year', () => {
+    const currentYear = new Date().getFullYear();
+    const point: WeighInPoint = { at: new Date(Date.UTC(currentYear, 6, 25, 9, 14)).toISOString(), weightKg: 100.23 };
+    expect(formatLastWeighInLine(point)).not.toContain(String(currentYear));
+  });
+
+  it('includes the year when the weigh-in falls in a different year than today', () => {
+    // Two years back, not one — safe against a test run that happens to
+    // land in the last days of December, where "one year back" could
+    // still land on a date the local timezone rolls into the current year.
+    const pastYear = new Date().getFullYear() - 2;
+    const point: WeighInPoint = { at: new Date(Date.UTC(pastYear, 6, 25, 9, 14)).toISOString(), weightKg: 100.23 };
+    const date = new Date(point.at);
+    const expectedDatePart = date.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+    expect(formatLastWeighInLine(point)).toContain(expectedDatePart);
   });
 });
