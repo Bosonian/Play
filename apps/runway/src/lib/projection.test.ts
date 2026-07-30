@@ -337,6 +337,59 @@ describe('computeProjection — post-departure phases', () => {
     expect(slackMinutes).toBe(25); // 08:25 - 08:00
     expect(state).toBe('calm');
   });
+
+  // The two cases below close the edges the review pass reasoned about but
+  // nothing actually pinned. Both are cheap; neither was covered.
+
+  it('left, drive ends EXACTLY at now: the pinned and slipping branches agree at the boundary, so there is no jump', () => {
+    // driveEnds = 07:40 + 20 = 08:00 = NOW exactly. This is the instant the
+    // `driveEnds > now` test flips from true to false, i.e. where the
+    // projection stops being pinned to driveEnds and starts slipping with
+    // `now`. Both expressions evaluate to the same instant here, which is
+    // what makes that a smooth handover rather than a visible jump in the
+    // arrival-phase centerpiece figure — worth pinning precisely because a
+    // `>=` vs `>` slip in that comparison would be invisible everywhere
+    // else and would still read correctly at every other moment.
+    const departure = makeDeparture({
+      leftAt: '2026-07-09T07:40:00.000Z',
+      arrivedAt: null,
+      travelMinutes: 20,
+      arrivalSteps: [{ id: 'a1', name: 'Change into scrubs', plannedMinutes: 8, checkedAt: null }],
+    });
+
+    const oneMinuteBefore = computeProjection(new Date('2026-07-09T07:59:00.000Z'), departure).projectedArrival;
+    const atBoundary = computeProjection(NOW, departure).projectedArrival;
+
+    // Pinned at 07:59 (driveEnds still ahead) and slipping at 08:00 — and
+    // both land on 08:08, the same instant, from the two different branches.
+    expect(oneMinuteBefore.toISOString()).toBe('2026-07-09T08:08:00.000Z');
+    expect(atBoundary.toISOString()).toBe('2026-07-09T08:08:00.000Z');
+  });
+
+  it('arrivedAt set with leftAt still null falls to the ARRIVED branch, not the driving one', () => {
+    // Not reachable through the UI today — `leftAt` is only ever written
+    // alongside `status: 'left'` (Runway.tsx's handleLeave and its backdate
+    // twin), and the arrival tap requires that status first. But the two
+    // fields are independent columns in Dexie, and a restored backup or a
+    // future write path could present this shape. The branch order
+    // (`arrivedAt` tested first) is what decides it, and that ordering is
+    // the safe one: "already at the building" is the stronger fact, and
+    // reading it as still-driving would silently add a whole travel leg to
+    // the ETA of someone standing in the lobby. Pinned so the ordering
+    // can't be swapped later without a test noticing.
+    const departure = makeDeparture({
+      leftAt: null,
+      arrivedAt: '2026-07-09T07:58:00.000Z',
+      travelMinutes: 20,
+      bufferMinutes: 10,
+      arrivalSteps: [{ id: 'a1', name: 'Change into scrubs', plannedMinutes: 8, checkedAt: null }],
+    });
+    const { projectedArrival } = computeProjection(NOW, departure);
+
+    // now + 8 arrival = 08:08. The driving branch would have needed a
+    // `leftAt` it doesn't have; the pre-fix formula would have said 08:38.
+    expect(projectedArrival.toISOString()).toBe('2026-07-09T08:08:00.000Z');
+  });
 });
 
 describe('computeStartBy', () => {
