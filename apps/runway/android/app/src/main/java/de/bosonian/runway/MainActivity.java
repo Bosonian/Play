@@ -1,9 +1,16 @@
 package de.bosonian.runway;
 
+import android.app.PictureInPictureParams;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.util.Rational;
+import com.getcapacitor.Bridge;
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.Plugin;
+import com.getcapacitor.PluginHandle;
 
 /**
  * Widgets increment (Runway 0.10.0): registers WidgetBridgePlugin, the
@@ -16,7 +23,12 @@ import com.getcapacitor.BridgeActivity;
  * the same way again — BluetoothTransitReceiver, the OTHER new class this
  * increment ships, is a manifest-declared BroadcastReceiver, not a plugin,
  * so it needs no registerPlugin() call here at all (see its own class doc
- * comment and AndroidManifest.xml's <receiver> entry).
+ * comment and AndroidManifest.xml's <receiver> entry). Picture-in-picture
+ * increment (0.46.0) adds PipBridgePlugin the same way once more, plus two
+ * new Activity lifecycle overrides (onPictureInPictureModeChanged,
+ * onUserLeaveHint) that PipBridgePlugin has no way to receive itself — see
+ * those methods' own doc comments below for why entering/reporting PiP has
+ * to happen on the Activity rather than the plugin.
  *
  * The registerPlugin() call has to happen BEFORE super.onCreate() runs, not
  * after: BridgeActivity.onCreate() (see
@@ -86,7 +98,83 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(DayGaugePlugin.class);
         // Car Bluetooth transit increment (0.36.0): BluetoothBridgePlugin.java.
         registerPlugin(BluetoothBridgePlugin.class);
+        // Picture-in-picture increment (0.46.0): PipBridgePlugin.java.
+        registerPlugin(PipBridgePlugin.class);
         super.onCreate(savedInstanceState);
+    }
+
+    /**
+     * Picture-in-picture increment: Android calls this whenever the Activity
+     * transitions in or out of PiP — including a transition the OS itself
+     * drove (Deepak dragging the pill back to full screen), not only one
+     * this app triggered. super runs first, per Android's own documented
+     * contract for overriding this method; the new mode is then forwarded to
+     * PipBridgePlugin so StepFocus.tsx's usePipMode() hook can swap in the
+     * compact pill layout — see that hook and
+     * PipBridgePlugin.handlePipModeChanged for the JS side.
+     */
+    @Override
+    public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, Configuration newConfig) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+        PipBridgePlugin plugin = getPipBridgePlugin();
+        if (plugin != null) plugin.handlePipModeChanged(isInPictureInPictureMode);
+    }
+
+    /**
+     * Picture-in-picture increment: the API 26-30 FALLBACK path only. Fires
+     * whenever this Activity is about to leave the foreground for a reason
+     * the user can navigate back from (home button, recents, app switch) —
+     * not on every pause (e.g. a permission dialog appearing over the app
+     * does not trigger this). On API 31+, setAutoEnterEnabled
+     * (PipBridgePlugin.setAutoEnter) already tells the OS to enter PiP
+     * automatically at this same moment, with no app code needed at all —
+     * calling enterPictureInPictureMode() here TOO on those OS versions
+     * would ask Android to enter PiP twice for the same transition, which is
+     * exactly why this whole body is guarded to SDK_INT < S. The try/catch
+     * mirrors PipBridgePlugin.setAutoEnter's own — same IllegalStateException
+     * the OS can throw for the same two reasons (PiP unsupported here, or
+     * turned off for this app in Settings), same deliberate silent
+     * degradation: the app just stays in the foreground, not a crash.
+     */
+    @Override
+    public void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return;
+
+        PipBridgePlugin plugin = getPipBridgePlugin();
+        if (plugin == null || !plugin.isAutoEnterArmed()) return;
+
+        try {
+            PictureInPictureParams params = new PictureInPictureParams.Builder().setAspectRatio(new Rational(16, 9)).build();
+            enterPictureInPictureMode(params);
+        } catch (IllegalStateException e) {
+            // See PipBridgePlugin.setAutoEnter's own comment on this exact
+            // exception — deliberate silent degradation, not swallowed.
+        }
+    }
+
+    /**
+     * Looks up the running PipBridgePlugin instance through the Bridge,
+     * never a static field — a static reference to a plugin holding an
+     * Activity would leak that Activity past its own lifecycle. Every step
+     * is null-guarded rather than assumed: getBridge() can be null before
+     * onCreate() finishes constructing it and during teardown, and
+     * getPlugin() returns null for a plugin id that isn't registered (should
+     * be unreachable here — PipBridgePlugin.class is registered above — but
+     * guarded anyway, same defensive posture this file already takes
+     * elsewhere). Verified against
+     * node_modules/@capacitor/android/capacitor/src/main/java/com/getcapacitor/BridgeActivity.java's
+     * getBridge(), Bridge.java's getPlugin(String) -> PluginHandle, and
+     * PluginHandle.java's getInstance() -> Plugin.
+     */
+    private PipBridgePlugin getPipBridgePlugin() {
+        Bridge bridge = getBridge();
+        if (bridge == null) return null;
+        PluginHandle handle = bridge.getPlugin("PipBridge");
+        if (handle == null) return null;
+        Plugin instance = handle.getInstance();
+        if (!(instance instanceof PipBridgePlugin)) return null;
+        return (PipBridgePlugin) instance;
     }
 
     /**

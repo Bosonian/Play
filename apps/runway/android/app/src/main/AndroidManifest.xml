@@ -15,7 +15,20 @@
             android:label="@string/title_activity_main"
             android:theme="@style/AppTheme.NoActionBarLaunch"
             android:launchMode="singleTask"
-            android:exported="true">
+            android:exported="true"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true">
+            <!-- Picture-in-picture increment (0.46.0): screenSize|
+                 smallestScreenSize|screenLayout in configChanges above were
+                 already there for rotation, but they are now ALSO
+                 load-bearing for PiP — entering/leaving the pill resizes
+                 this Activity's window exactly the way a rotation does, and
+                 without these three flags Android would destroy and
+                 recreate the Activity on that resize instead of just
+                 relaying a new Configuration to it. Trimming them later
+                 (e.g. "cleaning up" configChanges for an unrelated change)
+                 would silently break PiP, not just rotation — keep this
+                 comment attached to that risk. -->
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

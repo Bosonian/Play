@@ -5,6 +5,8 @@ import { isSecondTap } from '../lib/doubleTap';
 import { focusTone } from '../lib/focusTone';
 import type { FocusTone } from '../lib/focusTone';
 import { formatCountdown, formatFocusEta, formatTime } from '../lib/format';
+import { usePipMode } from '../hooks/usePipMode';
+import { setPipAutoEnter } from '../native/pip';
 
 /** How long the "Double-tap to check off." hint stays on screen after a
  * first tap, in milliseconds. Long enough to read at a glance, short
@@ -176,6 +178,33 @@ export function StepFocus({
     };
   }, []);
 
+  // Picture-in-picture increment (0.46.0): whether the app is currently
+  // rendering as the small floating pill, not the full screen — see
+  // usePipMode's own doc comment. Read unconditionally, before the compact-
+  // layout branch below, so this hook's position in the call order never
+  // depends on `isCurrentStep`/`isInPip` themselves (React's rule that every
+  // hook runs on every render, in the same order).
+  const isInPip = usePipMode();
+
+  // Arms auto-enter-PiP for exactly as long as this overlay has a LIVE
+  // countdown to show off-app: mounted AND `isCurrentStep`. A step that
+  // hasn't started yet (`isCurrentStep` false — see `remainingSeconds`'
+  // own comment above) has nothing honest to keep visible in a pill, so it
+  // must not arm. The cleanup disarms unconditionally, and runs whether
+  // this effect is re-running because `isCurrentStep` just flipped false,
+  // or because the whole component unmounted (back chevron, a confirmed
+  // double-tap advancing focus, or the caller clearing focusStepId out from
+  // under it) — React guarantees the cleanup fires either way, which is
+  // exactly what "disarm reliably" needs here; there's no separate teardown
+  // path this could miss.
+  useEffect(() => {
+    if (!isCurrentStep) return;
+    void setPipAutoEnter(true);
+    return () => {
+      void setPipAutoEnter(false);
+    };
+  }, [isCurrentStep]);
+
   const handleTap = () => {
     if (!onTap) return;
     const nowMs = Date.now();
@@ -203,6 +232,105 @@ export function StepFocus({
     hintTimeoutRef.current = setTimeout(() => setHintVisible(false), HINT_VISIBLE_MS);
   };
 
+  // Picture-in-picture increment: the compact pill layout, rendered instead
+  // of the full screen below for as long as `isInPip` is true. Exactly two
+  // things — the step name and the countdown digits — no back chevron, no
+  // "Done earlier", no ETA line, no bottom line, no double-tap hint, no tap
+  // handler: at pill size every one of those is noise, and the tap itself is
+  // owned by Android (tapping the pill reopens the app — the OS's own
+  // default behaviour, nothing this component does).
+  //
+  // Same pure-black background and the same DIGIT_COLOR phase colours the
+  // full screen uses below, reusing `phase`/`remainingSeconds` computed
+  // above — this is meant to read as the same object shrunk down, not a
+  // different screen.
+  //
+  // Deliberately drops the full screen's rising red overrun fill (see the
+  // `phase === 'overrun'` block in the main return below): at pill size the
+  // digit colour alone already carries the same signal, and CLAUDE.md's
+  // "defaults lean toward less, not more" rule picks the smaller of two
+  // honest options when both say the same thing.
+  //
+  // SIZING: viewport-relative units (vw/vh) for the digits, not the full
+  // screen's fixed rem sizes. A PiP window is small and Deepak can resize
+  // it, so a fixed rem size is either unreadable at the smallest window or
+  // overflows at the largest — vw/vh instead track whatever size the pill
+  // actually is, the same way this whole file's landscape sizing already
+  // tracks the rotated viewport rather than assuming one fixed size (see
+  // that comment further down for the same shown-the-arithmetic discipline
+  // this one follows).
+  //
+  // Arithmetic, same worst case string as the landscape comment below
+  // ("+88:88" — overrun sign + unpadded minutes that happen to land on two
+  // digits + ":" + two-digit seconds — 6 characters):
+  //   - this compact view fills the ENTIRE PiP window (fixed inset-0), and
+  //     MainActivity/PipBridgePlugin fix that window's aspect to 16:9
+  //     (setAspectRatio), so sizing against vw (the window's own width) is
+  //     sizing against a KNOWN proportion of the window's height too, with
+  //     no separate portrait/landscape case to handle the way the full
+  //     screen's rem sizing does.
+  //   - tabular-nums digits advance at ~0.6em per character (same estimate
+  //     the landscape comment below uses), so 6ch * 0.6em/ch = 3.6em of
+  //     width at font-size F — i.e. the string's pixel width is 3.6 * F.
+  //   - target: stay comfortably under the window's own width, leaving room
+  //     on both sides AND leaving vertical room above the digits for the
+  //     step-name row, rather than maxing out either axis: 3.6F <= 0.72 *
+  //     100vw, i.e. F <= 20vw.
+  //   - `min(20vw, 40vh)` — the vw figure computed above, clamped by a vh
+  //     ceiling too. The 16:9 aspect is what the OS is ASKED to hold, not a
+  //     hard guarantee this file can rely on for every OEM (see this
+  //     increment's own report for the Samsung One UI resize risk flagged
+  //     there); a window resized short-and-wide would let 20vw alone
+  //     overflow the available height, and the vh clamp is the cheap
+  //     defensive floor against exactly that.
+  //   - the vh figure is 40, NOT the 24 this first shipped as — corrected in
+  //     review, because 24 quietly made the whole vw calculation above dead
+  //     code. At the 16:9 the OS is asked to hold, height = 0.5625 * width,
+  //     so 24vh = 0.135 * width while 20vw = 0.2 * width: the clamp would
+  //     have won ALWAYS, at every window size, making the digits a third
+  //     smaller than the arithmetic above intended and leaving most of the
+  //     pill empty. A clamp that binds in the ordinary case isn't a
+  //     defensive floor, it's the real value with a misleading comment over
+  //     it. 40vh = 0.225 * width at 16:9, just above 20vw, so vw governs
+  //     while the aspect holds — which is the point — and vh only takes over
+  //     once a window is squashed shorter than about 16:11, where it is
+  //     genuinely needed. Headroom check at 40vh: the name row (10px text,
+  //     gap-1) plus a ~1.0 line-height digit box still clears the window
+  //     height with room to spare.
+  //
+  // UNVERIFIED (no device in this environment — see this increment's own
+  // report): whether Android's WebView inside a resized PiP Activity window
+  // actually reports vw/vh relative to the PILL's shrunk bounds rather than
+  // the phone's full physical screen. This is the same inference
+  // AndroidManifest.xml's own PiP comment on `configChanges` rests on (the
+  // window genuinely resizes rather than the Activity being recreated), but
+  // "the WebView's CSS viewport resizes with it" is reasoned from that, not
+  // separately observed.
+  if (isInPip) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-1 bg-black px-2 text-center">
+        <p className="w-full truncate text-[10px] uppercase tracking-widest text-slate-500">{step.name || 'Step'}</p>
+        <p
+          className={`font-bold tabular-nums motion-safe:transition-colors motion-safe:duration-1000 ${DIGIT_COLOR[phase]}`}
+          style={{ fontSize: 'min(20vw, 40vh)' }}
+        >
+          {formatCountdown(remainingSeconds)}
+        </p>
+      </div>
+    );
+  }
+
+  // Closing the PiP window via its own [x] control finishes the Activity
+  // outright (Android's documented PiP behaviour, not something this app
+  // configures) — the same MainActivity instance is gone, not just
+  // backgrounded. Nothing is lost by that: every piece of state this screen
+  // reads (the departure/task row, `startedAt`, each step's `checkedAt`)
+  // already lives in Dexie, not in memory here, so reopening the app is a
+  // fresh read of the same durable record, same as any other cold start.
+  // Stated plainly per CLAUDE.md's own rule rather than left as an assumed
+  // "should be fine": this is REASONED from where the data lives, not
+  // something this increment could observe on a real device closing a real
+  // pill.
   return (
     <div
       // pb-safe-bottom here, pb-8 on the inner wrapper below (not both on
