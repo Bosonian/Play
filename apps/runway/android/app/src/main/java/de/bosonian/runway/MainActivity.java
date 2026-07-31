@@ -6,7 +6,6 @@ import android.content.res.Configuration;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.util.Rational;
 import com.getcapacitor.Bridge;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.Plugin;
@@ -145,7 +144,13 @@ public class MainActivity extends BridgeActivity {
         if (plugin == null || !plugin.isAutoEnterArmed()) return;
 
         try {
-            PictureInPictureParams params = new PictureInPictureParams.Builder().setAspectRatio(new Rational(16, 9)).build();
+            // PipBridgePlugin.PILL_ASPECT, not a second literal — the two
+            // paths request the same shape by construction, so the API 26-30
+            // fallback can't drift away from the API 31+ path. See that
+            // constant's own comment for why 2.39:1 and why it cannot go
+            // wider.
+            PictureInPictureParams params =
+                new PictureInPictureParams.Builder().setAspectRatio(PipBridgePlugin.PILL_ASPECT).build();
             enterPictureInPictureMode(params);
         } catch (IllegalStateException e) {
             // See PipBridgePlugin.setAutoEnter's own comment on this exact

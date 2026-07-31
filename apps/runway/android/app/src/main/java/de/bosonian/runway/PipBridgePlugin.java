@@ -49,6 +49,31 @@ public class PipBridgePlugin extends Plugin {
     private volatile boolean autoEnterArmed = false;
 
     /**
+     * The PiP window's requested shape: 2.39:1, the WIDEST and shortest
+     * Android permits (0.46.2 — was 16:9). Shared with MainActivity's own
+     * fallback path so the two can never drift apart.
+     *
+     * Why this exact number, from measuring a photo of both running side by
+     * side on the S25 Ultra: Samsung's own Clock timer floats as a 651x150
+     * px pill, an aspect of about 4.34:1. This app's PiP window at 16:9 was
+     * 791x445 — nearly three times as tall. 2.39:1 roughly halves that
+     * height and is as close as this mechanism gets.
+     *
+     * It does NOT get all the way there, and it never will. Android's
+     * documented PiP aspect range is 1:2.39 to 2.39:1 — request 4.34:1 and
+     * setAspectRatio throws IllegalArgumentException (caught below, which
+     * would mean no pill at all rather than a wider one). Samsung's timer is
+     * not PiP: it is drawn by One UI itself, with fully rounded ends and no
+     * aspect limit, using system-level surfaces no third-party app can
+     * reach. PiP corner radius is applied by the system too, so an app can
+     * neither round its own window into a true pill nor make it transparent
+     * and draw one inside. A genuine pill needs the SYSTEM_ALERT_WINDOW
+     * ("Display over other apps") overlay route and a custom native View —
+     * a different mechanism entirely, not a tweak to this one.
+     */
+    static final Rational PILL_ASPECT = new Rational(239, 100);
+
+    /**
      * Resolves `{ supported: boolean }` — never rejects. True only when BOTH
      * the OS is new enough (the PictureInPictureParams/setAutoEnterEnabled
      * APIs this plugin and MainActivity call are API 26/Oreo+) AND the
@@ -130,7 +155,7 @@ public class PipBridgePlugin extends Plugin {
             activity.runOnUiThread(() -> {
                 try {
                     PictureInPictureParams params = new PictureInPictureParams.Builder()
-                        .setAspectRatio(new Rational(16, 9))
+                        .setAspectRatio(PILL_ASPECT)
                         .setAutoEnterEnabled(enabled)
                         .build();
                     activity.setPictureInPictureParams(params);

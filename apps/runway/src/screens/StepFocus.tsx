@@ -276,27 +276,32 @@ export function StepFocus({
   //     on both sides AND leaving vertical room above the digits for the
   //     step-name row, rather than maxing out either axis: 3.6F <= 0.72 *
   //     100vw, i.e. F <= 20vw.
-  //   - `min(20vw, 40vh)` — the vw figure computed above, clamped by a vh
-  //     ceiling too. The 16:9 aspect is what the OS is ASKED to hold, not a
-  //     hard guarantee this file can rely on for every OEM (see this
-  //     increment's own report for the Samsung One UI resize risk flagged
-  //     there); a window resized short-and-wide would let 20vw alone
-  //     overflow the available height, and the vh clamp is the cheap
-  //     defensive floor against exactly that.
-  //   - the vh figure is 40, NOT the 24 this first shipped as — corrected in
-  //     review, because 24 quietly made the whole vw calculation above dead
-  //     code. At the 16:9 the OS is asked to hold, height = 0.5625 * width,
-  //     so 24vh = 0.135 * width while 20vw = 0.2 * width: the clamp would
-  //     have won ALWAYS, at every window size, making the digits a third
-  //     smaller than the arithmetic above intended and leaving most of the
-  //     pill empty. A clamp that binds in the ordinary case isn't a
-  //     defensive floor, it's the real value with a misleading comment over
-  //     it. 40vh = 0.225 * width at 16:9, just above 20vw, so vw governs
-  //     while the aspect holds — which is the point — and vh only takes over
-  //     once a window is squashed shorter than about 16:11, where it is
-  //     genuinely needed. Headroom check at 40vh: the name row (10px text,
-  //     gap-1) plus a ~1.0 line-height digit box still clears the window
-  //     height with room to spare.
+  //   - `min(20vw, 50vh)` — the vw figure computed above, clamped by a vh
+  //     ceiling too. The aspect is what the OS is ASKED to hold, not a hard
+  //     guarantee this file can rely on for every OEM (see this increment's
+  //     own report for the Samsung One UI resize risk flagged there); a
+  //     window resized shorter than requested would let 20vw alone overflow
+  //     the available height, and the vh clamp is the cheap defensive floor
+  //     against exactly that.
+  //   - the vh figure has to be re-derived every time the requested aspect
+  //     changes, which is the trap this line has already fallen into once.
+  //     It first shipped as 24vh against a 16:9 window: height = 0.5625 *
+  //     width there, so 24vh = 0.135 * width against 20vw = 0.2 * width —
+  //     the clamp won at EVERY window size, making the vw arithmetic above
+  //     it dead code and the digits a third smaller than intended. A clamp
+  //     that binds in the ordinary case is not a defensive floor, it is the
+  //     real value wearing a misleading comment.
+  //   - now 50vh, re-derived for the 2.39:1 window this increment requests
+  //     (PipBridgePlugin.PILL_ASPECT): height = width / 2.39 = 0.418 *
+  //     width, so 50vh = 0.209 * width against 20vw = 0.2 * width. vw
+  //     governs by a hair while the aspect holds — which is the point — and
+  //     vh only takes over on a window squashed shorter than requested,
+  //     where it is genuinely needed.
+  //   - vertical headroom at 2.39:1, the tightest axis now that the window
+  //     is roughly half as tall as the 16:9 one: name row (10px) + gap +
+  //     digits (~1.0 line-height at 0.2 * width) + gap + the "left" row
+  //     (10px) sums to about 0.34 * width, inside the 0.418 * width
+  //     available. Three rows still fit; a fourth would not.
   //
   // UNVERIFIED (no device in this environment — see this increment's own
   // report): whether Android's WebView inside a resized PiP Activity window
@@ -312,7 +317,7 @@ export function StepFocus({
         <p className="w-full truncate text-[10px] uppercase tracking-widest text-slate-500">{step.name || 'Step'}</p>
         <p
           className={`font-bold tabular-nums motion-safe:transition-colors motion-safe:duration-1000 ${DIGIT_COLOR[phase]}`}
-          style={{ fontSize: 'min(20vw, 40vh)' }}
+          style={{ fontSize: 'min(20vw, 50vh)' }}
         >
           {formatCountdown(remainingSeconds)}
         </p>
