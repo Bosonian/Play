@@ -316,6 +316,25 @@ export function StepFocus({
         >
           {formatCountdown(remainingSeconds)}
         </p>
+        {/* "left" / "over" (0.46.1, from looking at the pill on the phone —
+            the only way this was ever going to be caught). formatCountdown
+            renders "15:43", and Runway's own convention EVERYWHERE else —
+            the ETA line, "Leave by", the appointment line — is a 24-hour
+            clock time in exactly that shape. On the full screen the huge
+            digits and the bottom line make the difference obvious. Stripped
+            down to a bare pill sitting on the home screen, next to a status
+            bar showing a genuinely different real time, "TOILET 15:43"
+            reads just as easily as "toilet AT 15:43". One word fixes it.
+
+            Lowercase, unlike the uppercase step name above: the name is an
+            identity, this is a unit. Different case keeps them from reading
+            as one two-line title.
+
+            "over" rather than "left" in overrun, where formatCountdown
+            already prefixes a "+" — "+00:12 left" would be actively wrong,
+            and this line exists precisely because approximate copy on this
+            surface gets misread. */}
+        <p className="text-[10px] tracking-widest text-slate-500">{phase === 'overrun' ? 'over' : 'left'}</p>
       </div>
     );
   }
