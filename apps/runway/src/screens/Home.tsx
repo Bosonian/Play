@@ -43,6 +43,7 @@ import { refreshDayGauge } from '../lib/dayGaugeRefresh';
 import { logEvent } from '../lib/eventLog';
 import { APP_VERSION, APP_VERSION_CODE } from '../lib/appVersion';
 import { AVAILABLE_UPDATE_SETTING, parseAvailableUpdate } from '../lib/updateCheck';
+import { findDuplicateTemplates } from '../lib/duplicateTemplates';
 
 /** Cap on "From your calendar" cards shown at once (E1; CLAUDE.md's
  * "defaults lean toward less, not more") — same shape as
@@ -76,10 +77,32 @@ interface HomeProps {
   onNavigate: (screen: Screen) => void;
 }
 
-/** Cap on suggestions shown at once (increment-5 spec §4: "defaults lean
- * toward less, not more"). Any beyond the cap simply wait for a future
- * visit - nothing is lost, they're just not all dumped on screen together. */
-const MAX_VISIBLE_SUGGESTIONS = 2;
+/** Cap on suggestions shown at once, PER suggestion type — step-time
+ * (`suggestions`), buffer (`bufferSuggestions`) and transit
+ * (`transitSuggestionsList`) all share this one constant, deliberately: the
+ * three render as visually identical cards (a sentence, a primary "Update"/
+ * "Add" button, a secondary "Not now"), so there's no principled reason one
+ * type should get a bigger allowance than another. Splitting them into
+ * separate constants would only be worth doing once there's a real reason
+ * to tune them independently, which there isn't yet.
+ *
+ * 1, not 2 (Home-screen decluttering fix): each suggestion card carries its
+ * own primary button, and Home already has two primary buttons of its own
+ * ("New departure", "New task") at the top of the screen. At the old cap of
+ * 2, a SINGLE suggestion type alone could put four competing primary
+ * buttons on screen at once. Capping to 1 per type means accepting or
+ * dismissing the one showing simply reveals the next — any beyond the cap
+ * simply wait for a future visit, nothing is lost.
+ *
+ * Named honestly, not glossed over: this caps each type at 1, but the three
+ * types are still three independent sections below — if step-time, buffer,
+ * AND transit suggestions all have something to say at once (uncommon, but
+ * possible), up to three suggestion cards can still coexist alongside the
+ * two create buttons. A single cross-type "show the next suggestion,
+ * whichever kind it is" queue would close that gap, but unifying three
+ * already-independent sections is a larger change than this constant is
+ * scoped to make — flagged here rather than silently left unfixed. */
+const MAX_VISIBLE_SUGGESTIONS = 1;
 
 /** Cap on Upcoming cards shown at once (recurring-departures increment;
  * CLAUDE.md's "defaults lean toward less, not more"). A recurring template
@@ -104,6 +127,42 @@ const MAX_VISIBLE_TASKS = 3;
  * above: a shelf of half-formed captures is meant to stay small enough to
  * scan at a glance, not become a second backlog to manage. */
 const MAX_VISIBLE_CAPTURED = 3;
+
+/**
+ * How long a "Past departure time" card survives on Home before it stops
+ * being offered at all (Home-screen decluttering fix). Separate from
+ * `PAST_DEPARTURE_THRESHOLD_MS` (departureThreshold.ts) — that one only
+ * decides when a slipped departure LEAVES Upcoming and enters this dimmed
+ * section; this one decides when it leaves THIS section too, since nothing
+ * previously did (his own screenshot: a 27 Jul entry still showing on 31
+ * Jul, four days on).
+ *
+ * VERIFIED, not assumed, before writing this: a departure that reaches this
+ * section is — by construction — still `status` 'planned' or 'running'
+ * (Home's `upcoming` query above only ever selects those two statuses; a
+ * 'left'/'done' departure is never shown here). History.tsx's own query
+ * (`db.departures.where('status').anyOf(['left', 'done'])`) means NEITHER
+ * status a departure in this section can hold is ever listed in History.
+ * So expiring a card here does NOT tuck it away somewhere else visible —
+ * this is a render-time filter, not a delete, so the underlying Dexie row
+ * is untouched and still reachable by anyone who already knows its id
+ * (Runway's own screen still opens it), but once it ages past this
+ * threshold there is genuinely no remaining screen in the app that
+ * surfaces it. The honest tradeoff this trades away, named rather than
+ * glossed over: a departure Deepak genuinely still meant to open — mark
+ * late, reschedule, whatever — but hasn't touched in two days, quietly
+ * stops being offered. 48h (not 24, not a week) survives a single missed
+ * or busy day without turning this section into a growing record of
+ * mornings from a week ago.
+ */
+const PAST_DEPARTURE_EXPIRE_MS = 48 * 60 * 60_000;
+
+/** Cap on Past departure cards shown at once — same "+N more" pattern as
+ * every other capped list on this screen (Upcoming, Tasks, To arm). The
+ * list feeding this cap is sorted most-recently-missed first (see
+ * `pastDepartures` below), so the 3 shown are the ones still most
+ * plausibly worth a second look, not whichever three happen to be oldest. */
+const MAX_VISIBLE_PAST_DEPARTURES = 3;
 
 /** "Not now" dismissals, scoped to templateId+stepName. A module-level Set
  * (not component state) so a dismissal survives navigating away from Home
@@ -297,9 +356,27 @@ export function Home({ onNavigate }: HomeProps) {
   const upcomingDepartures = upcoming?.filter(
     (departure) => new Date(departure.appointmentAt).getTime() >= now.getTime() - PAST_DEPARTURE_THRESHOLD_MS,
   );
-  const pastDepartures = upcoming?.filter(
-    (departure) => new Date(departure.appointmentAt).getTime() < now.getTime() - PAST_DEPARTURE_THRESHOLD_MS,
-  );
+  // Past-due (< PAST_DEPARTURE_THRESHOLD_MS) but not yet expired
+  // (>= PAST_DEPARTURE_EXPIRE_MS) — see that constant's own doc comment for
+  // why "expired" means dropped from view entirely, not moved anywhere.
+  // Sorted most-recently-missed first (unlike `upcoming`'s own soonest-
+  // first order, which would put the OLDEST stale morning at the top of a
+  // capped list) so `visiblePastDepartures` below shows the departures
+  // still most plausibly worth a second look.
+  const pastDepartures = upcoming
+    ?.filter((departure) => {
+      const appointmentMs = new Date(departure.appointmentAt).getTime();
+      return (
+        appointmentMs < now.getTime() - PAST_DEPARTURE_THRESHOLD_MS &&
+        appointmentMs >= now.getTime() - PAST_DEPARTURE_EXPIRE_MS
+      );
+    })
+    .sort((a, b) => new Date(b.appointmentAt).getTime() - new Date(a.appointmentAt).getTime());
+
+  // Cap the rendered list, don't cap the data — same "+N more" split as
+  // Upcoming/Tasks above.
+  const visiblePastDepartures = pastDepartures?.slice(0, MAX_VISIBLE_PAST_DEPARTURES);
+  const hiddenPastDeparturesCount = Math.max(0, (pastDepartures?.length ?? 0) - MAX_VISIBLE_PAST_DEPARTURES);
 
   // Tasks increment: planned/running tasks, same status scope as `upcoming`
   // above but its own query — a task and a departure are different tables,
@@ -349,6 +426,22 @@ export function Home({ onNavigate }: HomeProps) {
     for (const template of templates ?? []) map.set(template.id, template);
     return map;
   }, [templates]);
+
+  // Duplicate-template repair (field report #12's residue — see
+  // src/lib/duplicateTemplates.ts's header comment). The actual repair
+  // lives in Settings (a real confirm step needs more room than a Home
+  // card), but a tool he never finds is useless, so this quiet single line
+  // is the pointer to it — and ONLY it: no card, no button row, nothing
+  // that adds back the clutter this whole increment exists to remove. It
+  // renders only while `findDuplicateTemplates` still finds a group, so it
+  // disappears for good the moment the last duplicate is merged, rather
+  // than becoming a permanent fixture on an already-full screen. Reuses
+  // `templates`/`allDepartures`, both already fetched above for this
+  // screen's own sections — no extra query.
+  const duplicateTemplateGroups = useMemo(() => {
+    if (!templates || !allDepartures) return [];
+    return findDuplicateTemplates(templates, allDepartures);
+  }, [templates, allDepartures]);
 
   // Field report #9: "we don't need to show all the upcoming repeat
   // templates populated, we can show it as one repeating event." A
@@ -951,37 +1044,41 @@ export function Home({ onNavigate }: HomeProps) {
           in the two-up button row above, so this header is just the
           section label — no duplicate "New task" action a few lines below
           the one that already exists (CLAUDE.md: defaults lean smaller).
-          The header and the quiet "No tasks in progress." line still render
-          when empty (a genuine affordance to discover, not a guilt list) —
-          unlike Waiting on arrival just below, which deliberately has no
-          empty state at all (see that section's own comment). */}
-      <section className="flex flex-col gap-3">
-        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Tasks</h2>
+          No empty state — same "an absence is not a thing to comment on"
+          rule Waiting on arrival's own comment (just below) already states.
+          This section used to defend rendering the header plus a quiet "No
+          tasks in progress." line even when empty as "a genuine affordance
+          to discover" — that argument doesn't hold once "New task" is
+          already a primary button three rows above (Home-screen decluttering
+          fix): the line was never teaching anyone anything the button
+          hadn't already said. */}
+      {tasksInProgress && tasksInProgress.length > 0 && (
+        <section className="flex flex-col gap-3">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Tasks</h2>
 
-        {tasksInProgress?.length === 0 && <p className="text-sm text-slate-500">No tasks in progress.</p>}
+          <div className="flex flex-col gap-2">
+            {visibleTasks?.map((task) => {
+              const checkedCount = task.units.filter((unit) => unit.checkedAt !== null).length;
+              const projection = taskProjection(now, task);
+              return (
+                <Card key={task.id} onClick={() => onNavigate({ name: 'task', taskId: task.id })}>
+                  <p className="text-xl font-medium text-slate-100">{task.name}</p>
+                  <p className="text-sm text-slate-400">
+                    {checkedCount} of {task.units.length} units
+                  </p>
+                  <p className="mt-1 text-sm tabular-nums text-slate-500">
+                    {task.deadlineAt
+                      ? `Deadline ${formatTime(new Date(task.deadlineAt))} · ${formatSlackLine(projection.slackMinutes ?? 0, 'past the deadline')}`
+                      : `Finishes ${formatTime(projection.projectedFinish)}`}
+                  </p>
+                </Card>
+              );
+            })}
+          </div>
 
-        <div className="flex flex-col gap-2">
-          {visibleTasks?.map((task) => {
-            const checkedCount = task.units.filter((unit) => unit.checkedAt !== null).length;
-            const projection = taskProjection(now, task);
-            return (
-              <Card key={task.id} onClick={() => onNavigate({ name: 'task', taskId: task.id })}>
-                <p className="text-xl font-medium text-slate-100">{task.name}</p>
-                <p className="text-sm text-slate-400">
-                  {checkedCount} of {task.units.length} units
-                </p>
-                <p className="mt-1 text-sm tabular-nums text-slate-500">
-                  {task.deadlineAt
-                    ? `Deadline ${formatTime(new Date(task.deadlineAt))} · ${formatSlackLine(projection.slackMinutes ?? 0, 'past the deadline')}`
-                    : `Finishes ${formatTime(projection.projectedFinish)}`}
-                </p>
-              </Card>
-            );
-          })}
-        </div>
-
-        {hiddenTasksCount > 0 && <p className="text-sm text-slate-500">+{hiddenTasksCount} more</p>}
-      </section>
+          {hiddenTasksCount > 0 && <p className="text-sm text-slate-500">+{hiddenTasksCount} more</p>}
+        </section>
+      )}
 
       {/* No empty state here on purpose — a departure only ever appears in
           this section for as long as it's genuinely waiting, and "Skip"
@@ -1228,6 +1325,23 @@ export function Home({ onNavigate }: HomeProps) {
           <TextAction onClick={() => onNavigate({ name: 'templateEdit' })}>New template</TextAction>
         </div>
 
+        {duplicateTemplateGroups.length > 0 && (
+          <TextAction onClick={() => onNavigate({ name: 'settings' })} className="self-start">
+            {duplicateTemplateGroups.length === 1
+              ? // Candidate count (not a hard-coded "two") so a genuine
+                // three-way duplicate — same routine saved three times, not
+                // two — still reads exactly, not approximately.
+                `"${duplicateTemplateGroups[0].candidates[0].template.name}" appears as ${duplicateTemplateGroups[0].candidates.length} templates. Merge them in Settings.`
+              : // "templates have duplicates", not "routines are saved as
+                // duplicate templates" (review fix): this app's vocabulary
+                // is exactly two nouns — template and departure. "Routine"
+                // was a third name for a thing already named, on a line
+                // whose whole job is telling Deepak that one thing got
+                // saved under two names.
+                `${duplicateTemplateGroups.length} templates have duplicates. Merge them in Settings.`}
+          </TextAction>
+        )}
+
         {templates?.length === 0 && (
           <p className="text-sm text-slate-500">No templates yet.</p>
         )}
@@ -1261,115 +1375,129 @@ export function Home({ onNavigate }: HomeProps) {
         </div>
       </section>
 
-      <section className="flex flex-col gap-3">
-        <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Upcoming</h2>
+      {/* No empty state — found during the Home-screen decluttering audit:
+          "New departure" is already a primary button at the top of this
+          screen, so a bare "No departure planned." under this heading was
+          telling Deepak nothing the button hadn't already said, the same
+          redundancy the Tasks section's own comment (above) names for "New
+          task". Same idiom as Waiting on arrival below: render nothing at
+          all rather than a heading over an empty list. Gated on
+          `collapsedUpcoming` (not raw `upcoming`) because that's what
+          `visibleUpcomingDepartures`/`hiddenUpcomingCount` below actually
+          render from — `upcoming` alone can be non-empty while every one of
+          those rows is past-due (split out to its own section further
+          down), which would otherwise still show this heading over nothing. */}
+      {collapsedUpcoming && collapsedUpcoming.length > 0 && (
+        <section className="flex flex-col gap-3">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Upcoming</h2>
 
-        {upcoming?.length === 0 && (
-          <p className="text-sm text-slate-500">No departure planned.</p>
-        )}
-
-        <div className="flex flex-col gap-2">
-          {visibleUpcomingDepartures?.map((departure) => {
-            const repeats = repeatsLine(departure);
-            return (
-              <div key={departure.id} className="flex flex-col gap-1">
-                <Card onClick={() => onNavigate({ name: 'runway', departureId: departure.id })}>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <p className="text-xl font-medium text-slate-100">{departure.name}</p>
-                        {departure.status === 'running' && (
-                          <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-sky-400">
-                            Running
-                          </span>
-                        )}
+          <div className="flex flex-col gap-2">
+            {visibleUpcomingDepartures?.map((departure) => {
+              const repeats = repeatsLine(departure);
+              return (
+                <div key={departure.id} className="flex flex-col gap-1">
+                  <Card onClick={() => onNavigate({ name: 'runway', departureId: departure.id })}>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <p className="text-xl font-medium text-slate-100">{departure.name}</p>
+                          {departure.status === 'running' && (
+                            <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-sky-400">
+                              Running
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-slate-400">{departure.destination || 'No destination set'}</p>
                       </div>
-                      <p className="text-sm text-slate-400">{departure.destination || 'No destination set'}</p>
+                      <div className="text-right">
+                        <p className="text-lg font-semibold tabular-nums text-slate-100">
+                          {formatTime(new Date(departure.appointmentAt))}
+                        </p>
+                        <p className="text-sm text-slate-500">
+                          {formatDateDisplay(new Date(departure.appointmentAt))}
+                        </p>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-lg font-semibold tabular-nums text-slate-100">
-                        {formatTime(new Date(departure.appointmentAt))}
-                      </p>
-                      <p className="text-sm text-slate-500">
-                        {formatDateDisplay(new Date(departure.appointmentAt))}
-                      </p>
-                    </div>
-                  </div>
-                  {/* Field report #9: this card stands in for every occurrence
-                      of the template collapsed into it (see `collapsedUpcoming`
-                      above) - this line is the only thing on screen that says
-                      so, since the card otherwise looks identical to a
-                      one-off departure. */}
-                  {repeats && <p className="mt-1 text-sm text-slate-500">{repeats}</p>}
-                </Card>
-                {/* Quiet secondary actions. These sit outside the Card
-                    <button> rather than nested inside it - a <button> inside a
-                    <button> is invalid HTML and Card is already a button.
-                    F3 (recover-instead-of-forfeit spec): Edit is now offered
-                    for 'running' cards too, not just 'planned' - editing a
-                    running departure is for when REALITY moved (the Termin
-                    got pushed back, a step turned out to need longer than
-                    planned) and DepartureSetup's own edit path locks already-
-                    checked steps so that isn't a rewrite of history, just a
-                    correction to what's still ahead (see DepartureSetup.tsx).
-                    Remove stays 'planned'-only, unchanged from M1/M2: a
-                    'running' departure's equivalent action is Runway's own
-                    "Abandon this departure", already reachable from the
-                    screen you'd be on to check a running departure's
-                    progress - duplicating it here would just be a second
-                    path to the same confirm dialog. */}
-                {(departure.status === 'planned' || departure.status === 'running') && (
-                  <div className="flex justify-end gap-1 px-1">
-                    <TextAction onClick={() => onNavigate({ name: 'departureSetup', departureId: departure.id })}>
-                      Edit
-                    </TextAction>
-                    {/* Field report #10 §3: "Make repeating" promotes a
-                        one-off departure into a Template with a schedule,
-                        instead of the app ever running a second scheduler
-                        on the departure itself (this fix's binding design
-                        decision - ONE recurrence engine, templates). Only
-                        offered for a departure that ISN'T already tied to
-                        one - `templateId == null` is exactly the set of
-                        departures with nothing to promote FROM otherwise
-                        (a template-linked departure already has its
-                        template's own Edit/Repeat controls, reachable via
-                        the Templates section above). 'planned'-only, same
-                        scope as Remove just below - a 'running' departure
-                        is already under way; TemplateEdit's own
-                        `fromDepartureId` prefill isn't built to read a
-                        run's already-checked steps. */}
-                    {departure.status === 'planned' && departure.templateId == null && (
-                      <TextAction
-                        onClick={() => onNavigate({ name: 'templateEdit', fromDepartureId: departure.id })}
-                      >
-                        Make repeating
+                    {/* Field report #9: this card stands in for every occurrence
+                        of the template collapsed into it (see `collapsedUpcoming`
+                        above) - this line is the only thing on screen that says
+                        so, since the card otherwise looks identical to a
+                        one-off departure. */}
+                    {repeats && <p className="mt-1 text-sm text-slate-500">{repeats}</p>}
+                  </Card>
+                  {/* Quiet secondary actions. These sit outside the Card
+                      <button> rather than nested inside it - a <button> inside a
+                      <button> is invalid HTML and Card is already a button.
+                      F3 (recover-instead-of-forfeit spec): Edit is now offered
+                      for 'running' cards too, not just 'planned' - editing a
+                      running departure is for when REALITY moved (the Termin
+                      got pushed back, a step turned out to need longer than
+                      planned) and DepartureSetup's own edit path locks already-
+                      checked steps so that isn't a rewrite of history, just a
+                      correction to what's still ahead (see DepartureSetup.tsx).
+                      Remove stays 'planned'-only, unchanged from M1/M2: a
+                      'running' departure's equivalent action is Runway's own
+                      "Abandon this departure", already reachable from the
+                      screen you'd be on to check a running departure's
+                      progress - duplicating it here would just be a second
+                      path to the same confirm dialog. */}
+                  {(departure.status === 'planned' || departure.status === 'running') && (
+                    <div className="flex justify-end gap-1 px-1">
+                      <TextAction onClick={() => onNavigate({ name: 'departureSetup', departureId: departure.id })}>
+                        Edit
                       </TextAction>
-                    )}
-                    {departure.status === 'planned' && (
-                      <TextAction onClick={() => void removeDeparture(departure)}>Remove</TextAction>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                      {/* Field report #10 §3: "Make repeating" promotes a
+                          one-off departure into a Template with a schedule,
+                          instead of the app ever running a second scheduler
+                          on the departure itself (this fix's binding design
+                          decision - ONE recurrence engine, templates). Only
+                          offered for a departure that ISN'T already tied to
+                          one - `templateId == null` is exactly the set of
+                          departures with nothing to promote FROM otherwise
+                          (a template-linked departure already has its
+                          template's own Edit/Repeat controls, reachable via
+                          the Templates section above). 'planned'-only, same
+                          scope as Remove just below - a 'running' departure
+                          is already under way; TemplateEdit's own
+                          `fromDepartureId` prefill isn't built to read a
+                          run's already-checked steps. */}
+                      {departure.status === 'planned' && departure.templateId == null && (
+                        <TextAction
+                          onClick={() => onNavigate({ name: 'templateEdit', fromDepartureId: departure.id })}
+                        >
+                          Make repeating
+                        </TextAction>
+                      )}
+                      {departure.status === 'planned' && (
+                        <TextAction onClick={() => void removeDeparture(departure)}>Remove</TextAction>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
 
-        {hiddenUpcomingCount > 0 && (
-          <p className="text-sm text-slate-500">+{hiddenUpcomingCount} more planned</p>
-        )}
-      </section>
+          {hiddenUpcomingCount > 0 && (
+            <p className="text-sm text-slate-500">+{hiddenUpcomingCount} more planned</p>
+          )}
+        </section>
+      )}
 
       {/* M4: appointments that slipped more than an hour into the past
           without being started, checked, or abandoned - dimmed and
           demoted below Upcoming rather than mixed into it, so a missed
           appointment from this morning doesn't bury today's actual next
-          departure. */}
+          departure. Home-screen decluttering fix: capped at
+          MAX_VISIBLE_PAST_DEPARTURES (+N more, same pattern as Upcoming/
+          Tasks above) and dropped entirely once PAST_DEPARTURE_EXPIRE_MS
+          old — see that constant's own doc comment for exactly what
+          "dropped" means and its honest tradeoff. */}
       {pastDepartures && pastDepartures.length > 0 && (
         <section className="flex flex-col gap-3 opacity-60">
           <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Past departure time</h2>
           <div className="flex flex-col gap-2">
-            {pastDepartures.map((departure) => (
+            {visiblePastDepartures?.map((departure) => (
               <div key={departure.id} className="rounded-xl border border-slate-800/60 bg-surface p-4">
                 <div className="flex items-center justify-between">
                   <div>
@@ -1398,6 +1526,9 @@ export function Home({ onNavigate }: HomeProps) {
               </div>
             ))}
           </div>
+          {hiddenPastDeparturesCount > 0 && (
+            <p className="text-sm text-slate-500">+{hiddenPastDeparturesCount} more</p>
+          )}
         </section>
       )}
 

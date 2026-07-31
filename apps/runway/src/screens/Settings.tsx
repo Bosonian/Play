@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
 import type { Screen } from '../App';
@@ -7,6 +7,8 @@ import { TextField } from '../ui/TextField';
 import { ScreenHeader } from '../ui/ScreenHeader';
 import { TextAction } from '../ui/TextAction';
 import { LIVE_TRAVEL_ENABLED_SETTING, ROUTES_API_KEY_SETTING } from '../lib/liveTravelSettings';
+import { findDuplicateTemplates } from '../lib/duplicateTemplates';
+import { decideMerge, mergeTemplates } from '../lib/mergeTemplates';
 import { DEFAULT_FEEDBACK_REPO, FEEDBACK_REPO_SETTING, FEEDBACK_TOKEN_SETTING } from '../lib/reportSettings';
 import { GEMINI_API_KEY_SETTING } from '../lib/captureSettings';
 import { CALENDAR_ENABLED_SETTING } from '../lib/calendarSettings';
@@ -428,6 +430,56 @@ export function Settings({ onNavigate }: SettingsProps) {
     setUpdateCheckOutcome(outcome === 'throttled' ? 'upToDate' : outcome);
   }
 
+  // Duplicate-template repair (field report #12's residue — see
+  // duplicateTemplates.ts's header comment for the full background). Own,
+  // clearly-named live queries here rather than reusing handleExportBackup's
+  // one-off Promise.all fetch above — that one is a point-in-time snapshot
+  // for a file, not something a render should re-subscribe to.
+  const duplicateTemplatesData = useLiveQuery(() => db.templates.toArray(), []);
+  const duplicateDeparturesData = useLiveQuery(() => db.departures.toArray(), []);
+  const duplicateGroups = useMemo(() => {
+    if (!duplicateTemplatesData || !duplicateDeparturesData) return [];
+    return findDuplicateTemplates(duplicateTemplatesData, duplicateDeparturesData);
+  }, [duplicateTemplatesData, duplicateDeparturesData]);
+
+  // Which candidate is marked "keep" per group (keyed by the group's own
+  // `key`, not by template id — a group's membership can change across
+  // renders once a merge resolves it). Undefined for a group not yet touched
+  // means "use the default" (candidates[0], the richest history) rather than
+  // an explicit choice — read via `?? group.candidates[0].template.id`
+  // everywhere below, same undefined-as-default shape this app's settings
+  // rows already use.
+  const [duplicateKeepChoice, setDuplicateKeepChoice] = useState<Record<string, string>>({});
+  // The merge currently being reviewed (Deepak must see exactly what a merge
+  // does before it happens — explicit condition of approval for this
+  // feature). `null` when no confirm panel is open. Cleared automatically
+  // once its group no longer exists (see the render below), so a stale
+  // review can never point at an already-merged template.
+  const [duplicateReview, setDuplicateReview] = useState<{ groupKey: string; winnerId: string; loserId: string } | null>(
+    null,
+  );
+  const [duplicateMerging, setDuplicateMerging] = useState(false);
+  const [duplicateMergeError, setDuplicateMergeError] = useState<string | null>(null);
+
+  async function handleMergeDuplicates(winnerId: string, loserId: string) {
+    setDuplicateMerging(true);
+    setDuplicateMergeError(null);
+    try {
+      await mergeTemplates(winnerId, loserId);
+      setDuplicateReview(null);
+    } catch (err) {
+      // Real failure mode, not decorated: a Dexie write failing here leaves
+      // both templates exactly as they were (the transaction in
+      // mergeTemplates.ts never partially commits), so "try again" is
+      // genuinely safe advice, not a reassurance papering over a worse
+      // state.
+      setDuplicateMergeError('Could not merge. Try again.');
+      console.warn('Runway: mergeTemplates failed', err);
+    } finally {
+      setDuplicateMerging(false);
+    }
+  }
+
   return (
     <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-6 px-4 pb-12 pt-safe-top">
       <div className="pt-8">
@@ -701,6 +753,133 @@ export function Settings({ onNavigate }: SettingsProps) {
           </Button>
         </div>
       </section>
+
+      {/* Duplicate-template repair (field report #12's residue). Same
+          "render nothing when there's nothing to show" rule Home.tsx's own
+          empty sections follow — a duplicate set is the ONLY reason this
+          section has anything to say, so absent one there is nothing here,
+          not an empty heading. */}
+      {duplicateGroups.length > 0 && (
+        <section className="flex flex-col gap-4 border-t border-slate-800 pt-6">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">
+            Duplicate templates
+          </h2>
+          <p className="text-sm text-slate-500">
+            The same routine, saved twice, splits its history between the two copies. Merging moves
+            the completed departures onto one template and removes the other.
+          </p>
+
+          {duplicateGroups.map((group) => {
+            const keepId = duplicateKeepChoice[group.key] ?? group.candidates[0].template.id;
+            const keepCandidate = group.candidates.find((c) => c.template.id === keepId) ?? group.candidates[0];
+            const reviewingThisGroup = duplicateReview?.groupKey === group.key ? duplicateReview : null;
+            const reviewWinner = reviewingThisGroup
+              ? group.candidates.find((c) => c.template.id === reviewingThisGroup.winnerId)?.template
+              : undefined;
+            const reviewLoser = reviewingThisGroup
+              ? group.candidates.find((c) => c.template.id === reviewingThisGroup.loserId)?.template
+              : undefined;
+            // Recomputed at render time from the live departures list, using
+            // the exact same pure decision `mergeTemplates` itself will run
+            // at commit time — this preview can only ever be as stale as one
+            // render tick (e.g. a departure's status changing the instant
+            // between opening this panel and tapping Merge), and the real
+            // merge always re-reads fresh data, so a stale preview can never
+            // cause a wrong write, only a momentarily wrong-looking count.
+            const reviewCounts =
+              reviewingThisGroup && reviewLoser
+                ? decideMerge(reviewLoser.id, duplicateDeparturesData ?? [], Date.now())
+                : null;
+
+            return (
+              <div key={group.key} className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
+                <div>
+                  <p className="text-slate-100">{keepCandidate.template.name}</p>
+                  <p className="text-sm text-slate-400">{keepCandidate.template.destination || 'No destination set'}</p>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  {group.candidates.map((candidate) => {
+                    const totalPrepMinutes = candidate.template.steps.reduce((sum, step) => sum + step.minutes, 0);
+                    const selected = candidate.template.id === keepId;
+                    return (
+                      <div
+                        key={candidate.template.id}
+                        className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
+                          selected ? 'border-sky-500 bg-sky-950/30' : 'border-slate-800/60 bg-raised'
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDuplicateKeepChoice((prev) => ({ ...prev, [group.key]: candidate.template.id }))
+                          }
+                          className="min-h-12 flex-1 text-left"
+                        >
+                          <p className="tabular-nums text-slate-100">
+                            {totalPrepMinutes} min prep &middot; {candidate.template.travelMinutes} min travel
+                          </p>
+                          <p className="text-sm text-slate-500">
+                            {candidate.completedDepartureCount}{' '}
+                            {candidate.completedDepartureCount === 1 ? 'completed departure' : 'completed departures'}
+                            {selected ? ' — kept' : ''}
+                          </p>
+                        </button>
+                        {!selected && (
+                          <TextAction
+                            onClick={() =>
+                              setDuplicateReview({ groupKey: group.key, winnerId: keepId, loserId: candidate.template.id })
+                            }
+                          >
+                            Merge in
+                          </TextAction>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {reviewingThisGroup && reviewWinner && reviewLoser && reviewCounts && (
+                  <div className="flex flex-col gap-2 rounded-lg border border-amber-800/60 bg-amber-950/20 p-3">
+                    <p className="text-sm text-amber-200">
+                      Keep &quot;{reviewWinner.name}&quot;. Delete &quot;{reviewLoser.name}&quot;.
+                    </p>
+                    <p className="text-sm text-slate-300">
+                      {/* "departures", not "past departures" (review fix):
+                          decideMerge re-points EVERY row that isn't a
+                          future untouched materialized occurrence — which
+                          includes running and abandoned departures, and any
+                          one-off someone typed by hand against this
+                          template, none of which are "past". The count is
+                          the honest thing to state; qualifying it with a
+                          word that doesn't cover every row it counts is
+                          exactly the approximate copy CLAUDE.md rules out,
+                          and this number sits directly above a Delete. */}
+                      {reviewCounts.toRepoint.length}{' '}
+                      {reviewCounts.toRepoint.length === 1 ? 'departure moves' : 'departures move'} onto the kept
+                      template. {reviewCounts.toDelete.length}{' '}
+                      {reviewCounts.toDelete.length === 1 ? 'future occurrence is' : 'future occurrences are'} deleted.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        onClick={() => void handleMergeDuplicates(reviewingThisGroup.winnerId, reviewingThisGroup.loserId)}
+                        disabled={duplicateMerging}
+                        className="flex-1"
+                      >
+                        {duplicateMerging ? 'Merging.' : 'Merge'}
+                      </Button>
+                      <TextAction onClick={() => setDuplicateReview(null)} disabled={duplicateMerging}>
+                        Cancel
+                      </TextAction>
+                    </div>
+                    {duplicateMergeError && <p className="text-sm text-red-400">{duplicateMergeError}</p>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </section>
+      )}
 
       <section className="flex flex-col gap-3 border-t border-slate-800 pt-6">
         <h2 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Backup</h2>
