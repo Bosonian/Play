@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/db';
 import type { Sprint } from '../db/types';
@@ -5,6 +6,8 @@ import type { Screen } from '../App';
 import { ScreenHeader } from '../ui/ScreenHeader';
 import { Button } from '../ui/Button';
 import { TextAction } from '../ui/TextAction';
+import { NumberField } from '../ui/NumberField';
+import { BackdateDialog } from '../ui/BackdateDialog';
 import { useNow } from '../hooks/useNow';
 import {
   DEFAULT_PACE_HOURS_PER_WEEK,
@@ -21,6 +24,8 @@ import { isoWeekday, todayLine } from '../lib/dailyShape';
 import { nextMove } from '../lib/nextMove';
 import type { NextMove } from '../lib/nextMove';
 import { PRUEFUNG_GUIDED_DONE_KEY, isGuidedPassActive, markGuidedPassDone } from '../lib/guidedPass';
+import { MAX_PAST_SPRINT_MINUTES, buildPastSprint, validatePastSprint } from '../lib/pastSprint';
+import type { PastSprintValidation } from '../lib/pastSprint';
 import {
   formatDateLong,
   formatDateMedium,
@@ -33,6 +38,8 @@ import {
 import { cancelSprintEndAlarm } from '../native/notifications';
 import { refreshWidgets } from '../native/widgets';
 import { refreshDayGauge } from '../lib/dayGaugeRefresh';
+import { hapticImpact } from '../native/haptics';
+import { logEvent } from '../lib/eventLog';
 
 interface ExamOverviewProps {
   onNavigate: (screen: Screen) => void;
@@ -66,6 +73,23 @@ const NEXT_MOVE_REASON_LINE: Record<NextMove['reason'], (topicName: string) => s
   momentum: (topicName) => `Continuing ${topicName} — recently worked.`,
   behind: (topicName) => `${topicName} is furthest behind its estimate.`,
   start: () => 'Nothing logged yet. First topic in your list.',
+};
+
+// Past-sprint increment: one copy line per validatePastSprint failure
+// reason (lib/pastSprint.ts), kept as a lookup for the same reason
+// NEXT_MOVE_REASON_LINE above is — a new reason added to that function
+// later can't compile without its copy being added here too. Reused for
+// BOTH the pre-submit "longer than 8 hours" hint (shown as soon as the
+// typed duration exceeds the bound, before Confirm is even reachable) and
+// the post-validation error banner, so the two can never say something
+// different about the same limit.
+type PastSprintFailureReason = Extract<PastSprintValidation, { ok: false }>['reason'];
+const PAST_SPRINT_ERROR_LINE: Record<PastSprintFailureReason, string> = {
+  'in-future': "That's in the future.",
+  'non-positive-duration': 'Enter a duration greater than zero.',
+  'duration-too-long': `Longer than ${MAX_PAST_SPRINT_MINUTES / 60} hours in one entry. Split it into two.`,
+  'before-exam-created': 'That would start before this exam was created.',
+  'overlaps-existing-sprint': 'That overlaps a sprint already logged.',
 };
 
 // findLiveSprint/zombieSprints/LIVE_SPRINT_THRESHOLD_MS (examProjection.ts)
@@ -128,6 +152,25 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
   // ..." honest as the day rolls over without re-rendering this screen 60x
   // more often than the displayed number could ever visibly change.
   const now = useNow(60_000);
+
+  // Past-sprint increment (F: logging work that already happened, not
+  // starting a live one): local form state for the quiet "Log a sprint you
+  // already did" panel below. Declared here, ahead of the early return,
+  // for the same "hooks run unconditionally" reason `guidedSetting` above
+  // is. `now` for this panel's BackdateDialog ticks at the same 60s
+  // cadence as the rest of this screen (not the 1s cadence Runway.tsx/
+  // TaskRun.tsx use for their own BackdateDialogs) — TRADEOFF: for up to a
+  // few seconds after this screen's last tick, a duration that ends
+  // "right now" could transiently read as fractionally in the future and
+  // show "That's in the future." until the next tick catches up. Accepted
+  // rather than adding a faster tick just for this one dialog: every real
+  // use of this panel logs a session at least minutes old, never the
+  // literal current second, so this only matters in a rare edge case that
+  // self-corrects within a minute.
+  const [logPastOpen, setLogPastOpen] = useState(false);
+  const [pastTopicId, setPastTopicId] = useState<string | null>(null);
+  const [pastMinutes, setPastMinutes] = useState(0);
+  const [pastSprintError, setPastSprintError] = useState<string | null>(null);
 
   // Reachable only from Home's Prüfung link, which already routes to
   // examSetup instead of here when no exam exists — so `exam` being
@@ -257,6 +300,73 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
    * real "actual minutes" to log, only the box it was set up for). */
   function zombiePlannedEndIso(target: Sprint): string {
     return new Date(new Date(target.startedAt).getTime() + target.plannedMinutes * 60_000).toISOString();
+  }
+
+  // Collapses the "Log a sprint you already did" panel back to closed and
+  // clears its fields — shared by BackdateDialog's own Cancel/back-gesture
+  // and by a successful save, so neither path leaves stale topic/duration
+  // choices sitting around for the next time the panel opens.
+  function resetPastSprintForm() {
+    setLogPastOpen(false);
+    setPastTopicId(null);
+    setPastMinutes(0);
+    setPastSprintError(null);
+  }
+
+  /**
+   * The panel's actual write path, called from BackdateDialog's onConfirm
+   * once a topic and a (within-bound) duration are chosen and a finish
+   * time has been picked. Re-validates via validatePastSprint rather than
+   * trusting the panel's own field-level checks — BackdateDialog's Confirm
+   * button only guarantees the chosen instant is within ITS OWN
+   * [examCreatedAt, now] bound (a time-of-day check); it knows nothing
+   * about the overlap-with-existing-sprints or before-exam-created (via
+   * the DERIVED startedAt, not endedAt) checks validatePastSprint also
+   * makes, so this is the one place both sets of rules are actually
+   * enforced together before anything is written.
+   */
+  async function handleLogPastSprint(endedAt: Date) {
+    // `topics`/`sprints` are already guaranteed non-null by the early
+    // `return null` above at render time — restated here only because
+    // TypeScript's control-flow narrowing doesn't carry a useLiveQuery
+    // result's narrowed type across a nested function's own boundary, not
+    // because either can actually be undefined when this runs (this
+    // handler is only ever reachable from a button rendered after that
+    // same guard already passed).
+    if (!exam || !topics || !sprints || pastTopicId === null) return;
+    const validation = validatePastSprint(
+      { endedAt, durationMinutes: pastMinutes },
+      now,
+      new Date(exam.createdAt),
+      sprints,
+    );
+    if (!validation.ok) {
+      setPastSprintError(PAST_SPRINT_ERROR_LINE[validation.reason]);
+      return;
+    }
+    void hapticImpact('light');
+    const sprint = buildPastSprint(
+      { examId: exam.id, topicId: pastTopicId, endedAt, durationMinutes: pastMinutes },
+      validation.startedAt,
+      new Date(),
+    );
+    await db.sprints.add(sprint);
+    const topicName = topics.find((t) => t.id === pastTopicId)?.name ?? '';
+    // "Logged", not "started"/"ended" — SprintSetup and Sprint.tsx's own
+    // logEvent lines describe a live sprint's lifecycle; this event
+    // describes a row that was written once, after the fact, with no live
+    // phase at all. Keeping the verb distinct means ActivityLog.tsx's
+    // trail can tell the two apart at a glance.
+    void logEvent(
+      'sprint',
+      `Sprint logged: ${topicName}, ${pastMinutes} min, ended ${formatDateLong(endedAt)} ${formatTime(endedAt)}.`,
+    );
+    // Same post-write refresh as Sprint.tsx's finishSprint and
+    // ExamOverview's own resolveZombie above: logged hours just changed,
+    // and the widget/day-gauge surfaces both depend on them.
+    await refreshWidgets();
+    await refreshDayGauge();
+    resetPastSprintForm();
   }
 
   return (
@@ -560,6 +670,101 @@ export function ExamOverview({ onNavigate }: ExamOverviewProps) {
           <Button onClick={() => onNavigate({ name: 'sprintSetup' })} className="w-full">
             Start a sprint
           </Button>
+        ))}
+
+      {/* Past-sprint increment: recording work that already happened, next
+          to (not competing with) the action above that starts a live one.
+          A quiet TextAction, not a Button — this is the secondary path,
+          used only when a real study session never got a sprint started
+          for it (the field report this answers: 3 hours of real prep,
+          never logged because no sprint was ever begun). Hidden once
+          there are no topics to attribute the sprint to — same "Edit
+          topics first" reasoning the primary action above already
+          applies. */}
+      {topics.length > 0 &&
+        (!logPastOpen ? (
+          <TextAction onClick={() => setLogPastOpen(true)} className="self-start">
+            Log a sprint you already did
+          </TextAction>
+        ) : (
+          <div className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4">
+            {/* Same words as the TextAction this panel replaces (review
+                fix). The trigger said "Log a sprint you already did" and
+                this heading said "Log a sprint that already happened" — two
+                phrasings of one thing, in the same slot, one tap apart.
+                Matching them makes the panel read as the thing that was
+                tapped rather than a second, slightly different offer. */}
+            <p className="text-sm text-slate-200">Log a sprint you already did.</p>
+
+            <div className="flex flex-col gap-2">
+              <h3 className="text-[11px] font-medium uppercase tracking-[0.15em] text-slate-500">Topic</h3>
+              <div className="flex flex-wrap gap-2">
+                {topics.map((topic) => {
+                  const selected = pastTopicId === topic.id;
+                  return (
+                    <button
+                      key={topic.id}
+                      type="button"
+                      onClick={() => {
+                        setPastTopicId(topic.id);
+                        setPastSprintError(null);
+                      }}
+                      className={`min-h-12 rounded-lg border px-3 py-2 text-sm transition-colors ${
+                        selected
+                          ? 'border-sky-500 bg-raised text-slate-100'
+                          : 'border-slate-800/60 bg-surface/60 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      {topic.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <NumberField
+              label="Minutes"
+              hint={`Up to ${MAX_PAST_SPRINT_MINUTES / 60} hours in one entry.`}
+              value={pastMinutes}
+              onChange={(value) => {
+                setPastMinutes(value);
+                setPastSprintError(null);
+              }}
+              min={1}
+            />
+
+            {/* Pre-submit hint: reuses the exact same copy the post-
+                validation error would show for 'duration-too-long' (the
+                PAST_SPRINT_ERROR_LINE lookup above), so the two can never
+                drift into describing the same 8h bound differently. Shown
+                as soon as the typed value crosses it, before the "when did
+                it finish" step even appears below. */}
+            {pastMinutes > MAX_PAST_SPRINT_MINUTES && (
+              <p className="text-sm text-red-300">{PAST_SPRINT_ERROR_LINE['duration-too-long']}</p>
+            )}
+
+            {pastTopicId !== null && pastMinutes > 0 && pastMinutes <= MAX_PAST_SPRINT_MINUTES ? (
+              <BackdateDialog
+                caption="When did it finish?"
+                lowerBound={new Date(exam.createdAt)}
+                now={now}
+                onConfirm={(at) => void handleLogPastSprint(at)}
+                onCancel={resetPastSprintForm}
+              />
+            ) : (
+              <TextAction onClick={resetPastSprintForm} className="self-start">
+                Cancel
+              </TextAction>
+            )}
+
+            {/* Overlap/before-exam-created errors only surface here, after
+                a real Confirm tap — BackdateDialog's own Confirm button
+                already screens out an in-future or before-lowerBound
+                choice on its own, so this line is reserved for the checks
+                only validatePastSprint makes (see handleLogPastSprint's
+                comment). */}
+            {pastSprintError && <p className="text-sm text-red-300">{pastSprintError}</p>}
+          </div>
         ))}
 
       {/* Milestones — the real external dates (RUNWAY_PRUFUNG_PLAN.md §3,
