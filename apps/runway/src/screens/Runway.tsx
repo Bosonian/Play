@@ -1866,6 +1866,38 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
           setFocusStepId(null);
           setStepBackdateOpen(true);
         }}
+        // Ad-hoc-step increment: same close-focus-then-open-the-card
+        // handoff as onBackdate just above — the add-step panel already
+        // lives on this same checklist card (see its own `addStepOpen`
+        // block further up this file), StepFocus never renders it.
+        //
+        // Only supplied while `departure.status === 'running'` — the
+        // exact condition that panel's own render guard already requires
+        // (see its comment: "a 'planned' departure hasn't started its
+        // clock yet, so 'takes over the running clock' has nothing honest
+        // to take over"). Without this guard, tapping "Add a step" during
+        // preview-before-start (the current-step card, and so this
+        // overlay, are both reachable before "Start getting ready" is
+        // pressed — see the "Done earlier" gate's own comment above for
+        // the same pre-start reachability) would flip `addStepOpen` true
+        // and open a panel that then fails its own render condition and
+        // shows nothing — a real dead tap, not a hypothetical one, so it's
+        // worth the extra condition here even though `onBackdate` above
+        // doesn't need the equivalent (its own panel has no such gate to
+        // mirror).
+        //
+        // This overlay is the ONLY StepFocus caller that gets this prop —
+        // see onAddStep's own doc comment in StepFocus.tsx for why the
+        // arrival-phase overlay just above and TaskRun.tsx both simply
+        // omit it.
+        onAddStep={
+          departure.status === 'running'
+            ? () => {
+                setFocusStepId(null);
+                setAddStepOpen(true);
+              }
+            : undefined
+        }
       />
     )}
     </>

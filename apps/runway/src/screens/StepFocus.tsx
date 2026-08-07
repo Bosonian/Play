@@ -102,6 +102,31 @@ interface StepFocusProps {
    * opens anything itself - see those callers' own comments on the
    * close-focus-then-open-the-card's-dialog handoff. */
   onBackdate?: () => void;
+  /** Ad-hoc-step increment: "this step is running, but there's a step my
+   * template doesn't have" (Deepak's own example: shaving) - a small,
+   * quiet escape hatch beside "Done earlier", deliberately NOT part of
+   * the whole-screen tap zone `onTap` owns (same exclusion, same reason
+   * as `onBackdate` above: a stray tap here must never silently check the
+   * step off at `now`). Rendered only when `isCurrentStep` is also true -
+   * see `onBackdate`'s own comment above for why a step that hasn't
+   * started can't honestly take over a clock that isn't running either.
+   * The caller owns what happens next; this component only ever fires
+   * the callback, never renders the add-step form itself - that form
+   * stays where it already lived before this increment, on the checklist
+   * card underneath, via the same close-focus-then-open-the-card handoff
+   * `onBackdate` already uses (see that prop's own comment).
+   *
+   * Only ever supplied by Runway.tsx's PREP-phase overlay. Two other
+   * StepFocus callers exist and neither passes this: Runway.tsx's
+   * arrival-phase overlay has a separate steps list with no add-step
+   * panel of its own (arrival steps were explicit non-scope for the
+   * add-step feature), and TaskRun.tsx's task focus has units, not
+   * steps, so there is nothing here to add one to. The optional-prop-
+   * plus-`isCurrentStep`-guard shape makes both omissions automatic
+   * rather than something each caller has to remember - same reasoning
+   * `projectedArrival`'s own comment above gives for why `undefined` is
+   * itself information here, not a gap. */
+  onAddStep?: () => void;
 }
 
 const DIGIT_COLOR: Record<FocusTone['phase'], string> = {
@@ -136,6 +161,7 @@ export function StepFocus({
   onBack,
   onTap,
   onBackdate,
+  onAddStep,
 }: StepFocusProps) {
   const plannedSeconds = step.plannedMinutes * 60;
 
@@ -421,7 +447,34 @@ export function StepFocus({
           short text button) that a stray brush is unlikely to hit at all,
           so the extra confirmation step would only slow down a genuinely
           deliberate tap without buying any real accidental-touch
-          protection. */}
+          protection.
+
+          Ad-hoc-step increment: "Add a step" joins "Done earlier" in a
+          shared group on the right, same reasoning and same single-tap
+          treatment as above - it's a third small, aimed, quiet escape
+          hatch, not a fourth kind of thing. Grouped in its own wrapper
+          (rather than a third `justify-between` child) so the two text
+          buttons stay visually paired at the row's right edge instead of
+          `justify-between` spreading three items evenly across the row.
+
+          Width check for a 412px-wide phone viewport (S25 Ultra portrait,
+          the narrowest case this row has to fit - landscape has roughly
+          2x that, see the digits' own sizing comment further down):
+            - chevron: fixed 48px (h-12 w-12).
+            - "Add a step" (10 chars) and "Done earlier" (13 chars) at
+              text-sm font-medium: proportional sans-serif text averages
+              ~0.5em/char, i.e. ~7px/char at a 14px root - call it 8px/char
+              to stay pessimistic. 10*8=80px, 13*8=104px.
+            - each button adds px-2 padding (8px each side, 16px total).
+              80+16=96px, 104+16=120px.
+            - gap-1 between the two buttons (4px) plus mr-2 on the wrapper
+              (8px) at the row's right edge: 96+4+120+8=228px.
+            - total row content: 48 (chevron) + 228 (right group) = 276px,
+              leaving ~136px of the 412px viewport for `justify-between`'s
+              own gap between the two ends - comfortable room to spare,
+              not a tight fit. "Add a step" reuses the checklist screen's
+              own wording rather than a shortened alternative because the
+              arithmetic says it fits; no truncation needed. */}
       <div className="relative z-10 mt-safe-top flex items-center justify-between">
         <button
           type="button"
@@ -437,21 +490,39 @@ export function StepFocus({
         >
           ‹
         </button>
-        {/* Only the CURRENT step gets this - see onBackdate's own doc
-            comment above for why a step that hasn't started can't
-            honestly have finished "earlier." */}
-        {isCurrentStep && onBackdate && (
-          <button
-            type="button"
-            onClick={(e) => {
-              // Same exclusion as the back chevron above, same reason.
-              e.stopPropagation();
-              onBackdate();
-            }}
-            className="mr-2 min-h-11 shrink-0 rounded-lg px-2 text-sm font-medium text-slate-500 transition-colors hover:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
-          >
-            Done earlier
-          </button>
+        {/* Only the CURRENT step gets either of these - see onBackdate's
+            and onAddStep's own doc comments above for why a step that
+            hasn't started can't honestly have finished "earlier" or take
+            over a clock that isn't running. */}
+        {isCurrentStep && (onAddStep || onBackdate) && (
+          <div className="mr-2 flex shrink-0 items-center gap-1">
+            {onAddStep && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  // Same exclusion as the back chevron above, same reason.
+                  e.stopPropagation();
+                  onAddStep();
+                }}
+                className="min-h-11 shrink-0 rounded-lg px-2 text-sm font-medium text-slate-500 transition-colors hover:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+              >
+                Add a step
+              </button>
+            )}
+            {onBackdate && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  // Same exclusion as the back chevron above, same reason.
+                  e.stopPropagation();
+                  onBackdate();
+                }}
+                className="min-h-11 shrink-0 rounded-lg px-2 text-sm font-medium text-slate-500 transition-colors hover:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+              >
+                Done earlier
+              </button>
+            )}
+          </div>
         )}
       </div>
 

@@ -50,7 +50,22 @@ describe('pinkNoise', () => {
     // diverging.
     expect(maxAbs).toBeLessThan(2);
     expect(maxAbs).toBeGreaterThan(0);
-  });
+    // Explicit 60s timeout, added after this test flaked once in a full
+    // suite run and passed the next five. Diagnosed rather than retried
+    // away: it measures 8.7s on this machine against vitest's 5000ms
+    // DEFAULT, which vitest.config.ts does not override. The reason it
+    // almost always passes anyway is that the body is SYNCHRONOUS — it
+    // blocks the event loop, so the timeout timer usually cannot fire to
+    // begin with. Under load the check occasionally does land, and the
+    // test fails for a reason that has nothing to do with the filter.
+    //
+    // The timeout is raised rather than the sample count lowered. 1e6
+    // samples IS the property under test — a stable IIR filter driven for
+    // an entire sprint's worth of audio — and shrinking it to fit a
+    // default would quietly test something weaker while still claiming
+    // "1e6" in its own name. 60s is ~7x the measured cost, headroom for a
+    // CI runner that is also building an APK.
+  }, 60_000);
 
   it('handles n = 0 without error', () => {
     expect(pinkNoise(0)).toHaveLength(0);
