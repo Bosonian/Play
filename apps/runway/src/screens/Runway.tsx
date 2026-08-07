@@ -21,9 +21,12 @@ import { refreshWidgets } from '../native/widgets';
 import { refreshDayGauge } from '../lib/dayGaugeRefresh';
 import { compressPlan, suggestNewTarget } from '../lib/replan';
 import type { CompressResult } from '../lib/replan';
-import { learnedRushedFloor, rushedActualsByStepName } from '../lib/learning';
+import { learnedEstimate, learnedRushedFloor, naturalActualsByStepName, rushedActualsByStepName } from '../lib/learning';
 import { applyAutoLearn } from '../lib/autoLearn';
+import { insertStepIntoRun } from '../lib/insertStepIntoRun';
+import type { InsertStepPosition } from '../lib/insertStepIntoRun';
 import { TextField } from '../ui/TextField';
+import { NumberField } from '../ui/NumberField';
 import { TextAction } from '../ui/TextAction';
 import { BackdateDialog } from '../ui/BackdateDialog';
 import { getCurrentSsid } from '../native/wifi';
@@ -292,6 +295,83 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [wifiDetectionActive, departure?.id, arrivalWifiTarget]);
+
+  // Ad-hoc step increment (field report, verbatim: "so that the statistics
+  // of the other steps won't get polluted") — adding a step to a RUNNING
+  // departure, from this screen. See insertStepIntoRun.ts's own header
+  // comment for the full reasoning on the two positions and why this is a
+  // per-run addition only, never written back to the template.
+  const [addStepOpen, setAddStepOpen] = useState(false);
+  const [addStepName, setAddStepName] = useState('');
+  const [addStepMinutes, setAddStepMinutes] = useState(5);
+  // Same "a hand-edit is always manual, and once touched a name change
+  // stops overwriting it" rule as DepartureSetup's updateStepMinutes -
+  // tracked here as two separate flags (touched + source) because a
+  // learned prefill needs to keep re-applying as the name field settles
+  // (the user is still typing towards a match) right up until the moment
+  // the minutes field itself is hand-edited, at which point it must never
+  // be silently overwritten again.
+  const [addStepMinutesTouched, setAddStepMinutesTouched] = useState(false);
+  const [addStepMinutesSource, setAddStepMinutesSource] = useState<'manual' | 'learned'>('manual');
+  const [addStepPosition, setAddStepPosition] = useState<InsertStepPosition>('now');
+  const [addStepTouched, setAddStepTouched] = useState(false);
+
+  // Reset on close - same "one-shot decision, discard on close" reasoning
+  // as replanOpen's own reset effect above: reopening the panel later
+  // should start fresh, not resume a half-typed, possibly stale draft.
+  useEffect(() => {
+    if (!addStepOpen) {
+      setAddStepName('');
+      setAddStepMinutes(5);
+      setAddStepMinutesTouched(false);
+      setAddStepMinutesSource('manual');
+      setAddStepPosition('now');
+      setAddStepTouched(false);
+    }
+  }, [addStepOpen]);
+
+  // Learned-duration prefill (spec §c): this departure's TEMPLATE's own
+  // natural run history, name-keyed - loaded lazily, only while the panel
+  // is open, same "lazy, on panel open" shape as replanFloorsSource above.
+  // Deliberately mirrors computeSuggestions' own per-template filter
+  // (learning.ts) rather than stepNameLibrary's global corpus: "Shave"
+  // should prefill from what THIS routine has taught the app, not from
+  // every other template or task that happens to share the name.
+  const addStepHistorySource = useLiveQuery(async () => {
+    if (!addStepOpen || departure?.templateId == null) return undefined;
+    const all = await db.departures.toArray();
+    return all.filter((d) => d.templateId === departure.templateId);
+  }, [addStepOpen, departure?.templateId]);
+
+  const addStepNaturalByName = useMemo(
+    () => (addStepHistorySource ? naturalActualsByStepName(addStepHistorySource) : undefined),
+    [addStepHistorySource],
+  );
+
+  const addStepTrimmedName = addStepName.trim();
+  // learnedEstimate itself enforces the 3-sample floor (learning.ts) - a
+  // name with 1-2 real runs correctly yields no prefill here, same as
+  // everywhere else in the app that reads this function.
+  const addStepLearned = useMemo(() => {
+    if (!addStepNaturalByName || addStepTrimmedName === '') return null;
+    const actuals = addStepNaturalByName.get(addStepTrimmedName);
+    return actuals ? learnedEstimate(actuals) : null;
+  }, [addStepNaturalByName, addStepTrimmedName]);
+
+  // Applies the learned match to the minutes field, exactly like
+  // StepNameAutocomplete's own onSelect (DepartureSetup/TemplateEdit) does
+  // for the same 'learned' provenance - except there's no dropdown here to
+  // select from (the match is template-scoped, not the global step-name
+  // library StepNameAutocomplete draws from), so this applies it live as
+  // the typed name settles into a match, right up until addStepMinutesTouched
+  // says the user's own hand has taken over.
+  useEffect(() => {
+    if (addStepMinutesTouched) return;
+    if (addStepLearned) {
+      setAddStepMinutes(addStepLearned.minutes);
+      setAddStepMinutesSource('learned');
+    }
+  }, [addStepLearned, addStepMinutesTouched]);
 
   if (!departure) {
     // Still loading from Dexie (or a stale id) - nothing to show yet.
@@ -683,6 +763,52 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     void refreshWidgets();
     void refreshDayGauge();
     setReplanOpen(false);
+  };
+
+  const canAddStep = addStepTrimmedName !== '' && addStepMinutes > 0;
+
+  // Ad-hoc step increment: writes the new step into THIS departure's own
+  // `steps` array only - see insertStepIntoRun.ts's header comment for why
+  // the template is never touched. Computed inside the `.modify()`
+  // transaction against fresh `d.steps` (not the render-time `departure`
+  // snapshot), same race protection as toggleStep/applyReplan above - a
+  // step checked off in the instant this saves must not be clobbered, and
+  // the insertion position (current step's index) must be measured against
+  // whatever is actually current at write time, not whatever was current
+  // when the panel was opened.
+  const handleAddStep = async () => {
+    setAddStepTouched(true);
+    if (!canAddStep) return;
+    void hapticImpact('light');
+
+    const newStep: DepartureStep = {
+      id: crypto.randomUUID(),
+      name: addStepTrimmedName,
+      plannedMinutes: addStepMinutes,
+      checkedAt: null,
+      estimateSource: addStepMinutesSource,
+    };
+
+    let stepsAfterInsert: DepartureStep[] = [];
+    await db.departures.where('id').equals(departure.id).modify((d) => {
+      stepsAfterInsert = insertStepIntoRun(d.steps, newStep, addStepPosition);
+      d.steps = stepsAfterInsert;
+    });
+
+    // Adding minutes to a running departure legitimately pushes the
+    // projected arrival later - that's correct and must not be softened
+    // (spec §e). wrapUp/startBy shift exactly as they do after a replan or
+    // re-anchor, so this reschedules against the fresh steps the same way
+    // applyReplan does above, rather than leaving the four staged alarms
+    // pointing at a plan that's now short one step.
+    await scheduleDepartureAlarms({ ...departure, steps: stepsAfterInsert });
+    void logEvent(
+      'departure',
+      `Step added mid-run: ${addStepTrimmedName} (${addStepPosition === 'now' ? 'now' : 'after current step'}).`,
+    );
+    void refreshWidgets();
+    void refreshDayGauge();
+    setAddStepOpen(false);
   };
 
   // Arrival-steps increment (ward-station insight): status 'left' with a
@@ -1504,6 +1630,105 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
                 )
               )}
             </div>
+          )}
+
+          {/* Ad-hoc step increment: RUNNING only (spec §a/§scope) - a
+              'planned' departure hasn't started its clock yet, so "takes
+              over the running clock" has nothing honest to take over.
+              Requires a current step to insert relative to; once every step
+              is checked the "Leave now" panel above takes the screen
+              instead (allChecked), so this is never reachable there. */}
+          {departure.status === 'running' && currentStep && (
+            addStepOpen ? (
+              <div className="flex flex-col gap-3 rounded-xl border border-slate-800/60 bg-surface p-4 motion-safe:animate-fade-in">
+                <TextField
+                  label="Step name"
+                  value={addStepName}
+                  onChange={(e) => setAddStepName(e.target.value)}
+                  placeholder="e.g. Shave"
+                  enterKeyHint="next"
+                />
+                <NumberField
+                  label="Minutes"
+                  value={addStepMinutes}
+                  min={1}
+                  onChange={(value) => {
+                    setAddStepMinutes(value);
+                    setAddStepMinutesTouched(true);
+                    setAddStepMinutesSource('manual');
+                  }}
+                />
+                {addStepLearned && !addStepMinutesTouched && (
+                  <p className="text-sm text-slate-500">learned · {addStepLearned.runCount} runs</p>
+                )}
+
+                {/* The whole point of this feature is honest time
+                    attribution - a wrong pick here silently corrupts the
+                    very statistics it exists to protect, so both options
+                    say what happens to the clock, not just what happens to
+                    the list order. */}
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAddStepPosition('now')}
+                    aria-pressed={addStepPosition === 'now'}
+                    className={`min-h-12 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                      addStepPosition === 'now'
+                        ? 'border-sky-500 bg-sky-500/10 text-slate-100'
+                        : 'border-slate-700 bg-raised text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    Now — takes over the clock already running on "{currentStep.name || 'this step'}".
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAddStepPosition('after-current')}
+                    aria-pressed={addStepPosition === 'after-current'}
+                    className={`min-h-12 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                      addStepPosition === 'after-current'
+                        ? 'border-sky-500 bg-sky-500/10 text-slate-100'
+                        : 'border-slate-700 bg-raised text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {/* "starts when that step is checked off", not "it keeps
+                        its own time" (review fix). Two problems with the
+                        old line: "it" sat next to the quoted step name and
+                        read as referring to THAT step rather than the new
+                        one, and it described the neighbour's fate while the
+                        "Now" option above describes the NEW step's. These
+                        two lines are the only thing standing between a
+                        mis-tap and the polluted statistics this whole
+                        feature exists to prevent, so both now say the same
+                        kind of thing about the same subject — what happens
+                        to the step being added. */}
+                    After "{currentStep.name || 'this step'}" — starts when that step is checked off.
+                  </button>
+                </div>
+
+                {addStepTouched && !canAddStep && (
+                  <ul className="flex flex-col gap-1 text-sm text-red-400">
+                    {addStepTrimmedName === '' && <li>Name this step.</li>}
+                    {/* Matches pastSprint.ts's "Enter a duration greater
+                        than zero." — same rejection, shipped one version
+                        ago, so it says it the same way. "Must be a positive
+                        number" was the only line in either feature written
+                        in spec voice rather than the app's. */}
+                    {addStepMinutes <= 0 && <li>Enter minutes greater than zero.</li>}
+                  </ul>
+                )}
+
+                <div className="mt-1 flex gap-2">
+                  <Button onClick={() => void handleAddStep()} className="flex-1">
+                    Add step
+                  </Button>
+                  <Button variant="secondary" onClick={() => setAddStepOpen(false)} className="flex-1">
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <TextAction onClick={() => setAddStepOpen(true)}>Add a step</TextAction>
+            )
           )}
 
           {laterSteps.length > 0 && (
