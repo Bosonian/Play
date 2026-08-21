@@ -1,0 +1,742 @@
+import { describe, expect, it } from 'vitest';
+import {
+  computeBufferSuggestions,
+  computeSuggestions,
+  isBatchedRun,
+  learnedBufferSuggestion,
+  learnedEstimate,
+  learnedRushedFloor,
+  learningReport,
+  naturalActualsByStepName,
+  quantile,
+  rushedActualsByStepName,
+  stepNameLibrary,
+} from './learning';
+import type { Departure, Template, WorkTask } from '../db/types';
+
+function makeTask(overrides: Partial<WorkTask> = {}): WorkTask {
+  return {
+    id: 't1',
+    name: 'Befunden EEG',
+    units: [],
+    deadlineAt: null,
+    status: 'done',
+    startedAt: '2026-07-09T08:00:00.000Z',
+    createdAt: '2026-07-09T07:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function makeDeparture(overrides: Partial<Departure> = {}): Departure {
+  return {
+    id: 'd1',
+    templateId: 'tpl1',
+    name: 'Klinik',
+    destination: 'Klinikum',
+    appointmentAt: '2026-07-09T09:00:00.000Z',
+    travelMinutes: 20,
+    bufferMinutes: 10,
+    steps: [],
+    status: 'done',
+    startedAt: '2026-07-09T08:00:00.000Z',
+    leftAt: '2026-07-09T08:40:00.000Z',
+    arrivalResult: null,
+    arrivalLateMinutes: null,
+    createdAt: '2026-07-09T07:00:00.000Z',
+    originalAppointmentAt: '2026-07-09T09:00:00.000Z',
+    scheduledForDate: null,
+    wasReplanned: false,
+    arrivalSteps: [],
+    arrivedAt: null,
+    arrivalWifiSsid: null,
+    ...overrides,
+  };
+}
+
+describe('quantile', () => {
+  it('p=0 returns the minimum', () => {
+    expect(quantile([5, 10, 15], 0)).toBe(5);
+  });
+
+  it('p=1 returns the maximum', () => {
+    expect(quantile([5, 10, 15], 1)).toBe(15);
+  });
+
+  it('p=0.5 on an even-length list matches medianMinutes exactly', () => {
+    // [10,20,30,40]: median averages the two middle values (20,30) = 25;
+    // quantile at p=0.5 interpolates halfway between the same two values.
+    expect(quantile([10, 20, 30, 40], 0.5)).toBe(25);
+  });
+
+  it('a single-element array returns that element regardless of p', () => {
+    expect(quantile([42], 0)).toBe(42);
+    expect(quantile([42], 0.5)).toBe(42);
+    expect(quantile([42], 1)).toBe(42);
+  });
+
+  it('interpolates a fractional index correctly', () => {
+    // index = 0.75 * 3 = 2.25 -> sorted[2] + (sorted[3]-sorted[2]) * 0.25
+    // = 30 + 10*0.25 = 32.5
+    expect(quantile([10, 20, 30, 40], 0.75)).toBe(32.5);
+  });
+});
+
+function checkedStep(name: string, checkedAt: string) {
+  return { id: name, name, plannedMinutes: 5, checkedAt };
+}
+
+describe('isBatchedRun', () => {
+  it('true for 3+ steps checked within a 60s span (retroactive door-checking)', () => {
+    const departure = {
+      steps: [
+        checkedStep('a', '2026-07-09T08:00:00.000Z'),
+        checkedStep('b', '2026-07-09T08:00:20.000Z'),
+        checkedStep('c', '2026-07-09T08:00:50.000Z'),
+      ],
+    };
+    expect(isBatchedRun(departure)).toBe(true);
+  });
+
+  it('false at exactly a 60s span (the boundary is strictly less-than)', () => {
+    const departure = {
+      steps: [
+        checkedStep('a', '2026-07-09T08:00:00.000Z'),
+        checkedStep('b', '2026-07-09T08:00:30.000Z'),
+        checkedStep('c', '2026-07-09T08:01:00.000Z'),
+      ],
+    };
+    expect(isBatchedRun(departure)).toBe(false);
+  });
+
+  it('false for only 2 steps checked close together (needs >= 3)', () => {
+    const departure = {
+      steps: [checkedStep('a', '2026-07-09T08:00:00.000Z'), checkedStep('b', '2026-07-09T08:00:05.000Z')],
+    };
+    expect(isBatchedRun(departure)).toBe(false);
+  });
+
+  it('false for 3 steps spread across more than 60s', () => {
+    const departure = {
+      steps: [
+        checkedStep('a', '2026-07-09T08:00:00.000Z'),
+        checkedStep('b', '2026-07-09T08:05:00.000Z'),
+        checkedStep('c', '2026-07-09T08:10:00.000Z'),
+      ],
+    };
+    expect(isBatchedRun(departure)).toBe(false);
+  });
+});
+
+describe('naturalActualsByStepName / rushedActualsByStepName', () => {
+  it('a natural (uncompressed) run contributes to naturalActualsByStepName only', () => {
+    const natural = makeDeparture({
+      id: 'natural',
+      wasReplanned: false,
+      startedAt: '2026-07-09T08:00:00.000Z',
+      steps: [checkedStep('Shower', '2026-07-09T08:15:00.000Z')],
+    });
+    const rushed = makeDeparture({
+      id: 'rushed',
+      wasReplanned: true,
+      startedAt: '2026-07-09T08:00:00.000Z',
+      steps: [checkedStep('Shower', '2026-07-09T08:06:00.000Z')],
+    });
+
+    expect(naturalActualsByStepName([natural, rushed]).get('Shower')).toEqual([15]);
+    expect(rushedActualsByStepName([natural, rushed]).get('Shower')).toEqual([6]);
+  });
+
+  it('excludes a batched (retroactive check-off) run entirely, from both pools', () => {
+    const batched = makeDeparture({
+      id: 'batched',
+      startedAt: '2026-07-09T08:00:00.000Z',
+      steps: [
+        checkedStep('a', '2026-07-09T08:20:00.000Z'),
+        checkedStep('b', '2026-07-09T08:20:10.000Z'),
+        checkedStep('c', '2026-07-09T08:20:20.000Z'),
+      ],
+    });
+
+    expect(naturalActualsByStepName([batched]).size).toBe(0);
+    expect(rushedActualsByStepName([batched]).size).toBe(0);
+  });
+
+  it('excludes departures that never started, and those not left/done', () => {
+    const notStarted = makeDeparture({ id: 'a', status: 'planned', startedAt: null, steps: [] });
+    const running = makeDeparture({
+      id: 'b',
+      status: 'running',
+      steps: [checkedStep('Shower', '2026-07-09T08:15:00.000Z')],
+    });
+
+    expect(naturalActualsByStepName([notStarted, running]).size).toBe(0);
+  });
+
+  it('caps each step name to the most recent 14 occurrences, newest last', () => {
+    const departures: Departure[] = [];
+    for (let i = 1; i <= 16; i++) {
+      // Spaced an hour apart so departureOccurredAtMs orders them
+      // unambiguously; actualMinutes == i, by construction (checkedAt is
+      // exactly i minutes after startedAt).
+      const startedAt = new Date(2026, 6, 1, i, 0, 0).toISOString();
+      const checkedAt = new Date(2026, 6, 1, i, i, 0).toISOString();
+      departures.push(
+        makeDeparture({
+          id: `d${i}`,
+          startedAt,
+          leftAt: checkedAt,
+          steps: [checkedStep('Shower', checkedAt)],
+        }),
+      );
+    }
+
+    const actuals = naturalActualsByStepName(departures).get('Shower');
+    expect(actuals).toHaveLength(14);
+    // The two oldest (1, 2) are dropped; newest (16) is last.
+    expect(actuals).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+  });
+
+  // Tasks increment: naturalActualsByStepName's optional second argument —
+  // a done task's unit actuals join the same name-keyed pool as departure
+  // step actuals, by task name (== every unit's own name, see db/types.ts's
+  // TaskUnit doc comment).
+  describe('naturalActualsByStepName — tasks', () => {
+    it('a done task\'s unit actuals join the same pool as a departure step of the same name', () => {
+      const departure = makeDeparture({
+        id: 'd1',
+        startedAt: '2026-07-01T08:00:00.000Z',
+        leftAt: '2026-07-01T08:15:00.000Z', // before the task below, so it sorts first
+        steps: [checkedStep('Befunden EEG', '2026-07-01T08:15:00.000Z')], // 15 min
+      });
+      const task = makeTask({
+        startedAt: '2026-07-02T08:00:00.000Z',
+        units: [
+          { id: 'u1', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-02T08:12:00.000Z' }, // 12 min
+          { id: 'u2', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-02T08:26:00.000Z' }, // 14 min
+        ],
+      });
+
+      expect(naturalActualsByStepName([departure], [task]).get('Befunden EEG')).toEqual([15, 12, 14]);
+    });
+
+    it('defaults to [] — a call site that never passes tasks is completely unaffected', () => {
+      const departure = makeDeparture({
+        startedAt: '2026-07-01T08:00:00.000Z',
+        steps: [checkedStep('Shower', '2026-07-01T08:15:00.000Z')],
+      });
+      expect(naturalActualsByStepName([departure])).toEqual(naturalActualsByStepName([departure], []));
+    });
+
+    it('excludes a batched (retroactive check-off) task run entirely — same guard as a departure', () => {
+      const task = makeTask({
+        startedAt: '2026-07-02T08:00:00.000Z',
+        units: [
+          { id: 'u1', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-02T08:20:00.000Z' },
+          { id: 'u2', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-02T08:20:10.000Z' },
+          { id: 'u3', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-02T08:20:20.000Z' },
+        ],
+      });
+      expect(naturalActualsByStepName([], [task]).size).toBe(0);
+    });
+
+    it('excludes tasks that never started, or are not done', () => {
+      const notStarted = makeTask({ id: 'a', status: 'planned', startedAt: null, units: [] });
+      const running = makeTask({
+        id: 'b',
+        status: 'running',
+        units: [{ id: 'u1', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-02T08:15:00.000Z' }],
+      });
+      expect(naturalActualsByStepName([], [notStarted, running]).size).toBe(0);
+    });
+
+    it('caps a name to the most recent 14 occurrences ACROSS departures and tasks combined, not 14 of each', () => {
+      const departures: Departure[] = [];
+      for (let i = 1; i <= 10; i++) {
+        const startedAt = new Date(2026, 6, 1, i, 0, 0).toISOString();
+        const checkedAt = new Date(2026, 6, 1, i, i, 0).toISOString();
+        departures.push(
+          makeDeparture({ id: `d${i}`, startedAt, leftAt: checkedAt, steps: [checkedStep('Befunden EEG', checkedAt)] }),
+        );
+      }
+      const tasks: WorkTask[] = [];
+      for (let i = 11; i <= 16; i++) {
+        const startedAt = new Date(2026, 6, 1, i, 0, 0).toISOString();
+        const checkedAt = new Date(2026, 6, 1, i, i, 0).toISOString();
+        tasks.push(
+          makeTask({
+            id: `t${i}`,
+            startedAt,
+            units: [{ id: `u${i}`, name: 'Befunden EEG', plannedMinutes: i, checkedAt }],
+          }),
+        );
+      }
+
+      const actuals = naturalActualsByStepName(departures, tasks).get('Befunden EEG');
+      // 10 departures + 6 tasks = 16 occurrences total; capped to the most
+      // recent 14 combined (the two oldest departures, 1 and 2, drop out),
+      // not 10 departures + a separately-capped-to-14 task pool.
+      expect(actuals).toHaveLength(14);
+      expect(actuals).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+    });
+  });
+});
+
+describe('learnedEstimate', () => {
+  it('returns null under 3 samples', () => {
+    expect(learnedEstimate([10, 20])).toBeNull();
+  });
+
+  it('computes rounded P75/P25/P90 from a 5-sample list', () => {
+    // sorted [10,12,14,16,20]; P75 index=3 -> 16 (exact); P25 index=1 -> 12
+    // (exact); P90 index=3.6 -> 16 + (20-16)*0.6 = 18.4 -> rounds to 18.
+    const result = learnedEstimate([20, 10, 16, 12, 14]);
+    expect(result).toEqual({ minutes: 16, runCount: 5, low: 12, high: 18 });
+  });
+});
+
+describe('learnedRushedFloor', () => {
+  it('returns null under 2 samples', () => {
+    expect(learnedRushedFloor([5])).toBeNull();
+  });
+
+  it('computes the rounded P25 of the rushed actuals', () => {
+    // sorted [4,5,6,7]; P25 index=0.75 -> 4 + (5-4)*0.75 = 4.75 -> rounds to 5.
+    expect(learnedRushedFloor([7, 4, 6, 5])).toBe(5);
+  });
+
+  it('never returns below 1, even when the data technically supports less', () => {
+    expect(learnedRushedFloor([0, 0])).toBe(1);
+  });
+});
+
+function slippedDeparture(id: string, slip: number, dayIso: string): Departure {
+  // appointmentAt 09:00 on `dayIso`'s date, travel 20 -> plannedLeaveBy is
+  // always that day's 08:40; leftAt is offset from that by exactly `slip`
+  // minutes. Varying the date (not just the id) per call is what gives each
+  // departure a genuinely distinct, orderable `leftAt` - the field
+  // learnedBufferSuggestion actually sorts "most recent" by.
+  const day = dayIso.slice(0, 10);
+  return makeDeparture({
+    id,
+    appointmentAt: `${day}T09:00:00.000Z`,
+    originalAppointmentAt: `${day}T09:00:00.000Z`,
+    travelMinutes: 20,
+    steps: [],
+    startedAt: `${day}T08:00:00.000Z`,
+    leftAt: new Date(new Date(`${day}T08:40:00.000Z`).getTime() + slip * 60_000).toISOString(),
+  });
+}
+
+describe('learnedBufferSuggestion', () => {
+  it('returns null under 5 eligible runs', () => {
+    const departures = [
+      slippedDeparture('a', 10, '2026-07-01T08:00:00.000Z'),
+      slippedDeparture('b', 10, '2026-07-02T08:00:00.000Z'),
+      slippedDeparture('c', 10, '2026-07-03T08:00:00.000Z'),
+      slippedDeparture('d', 10, '2026-07-04T08:00:00.000Z'),
+    ];
+    expect(learnedBufferSuggestion(departures)).toBeNull();
+  });
+
+  it('returns null when the median slip is at or below the 2-minute threshold', () => {
+    const departures = Array.from({ length: 5 }, (_, i) =>
+      slippedDeparture(`d${i}`, 2, `2026-07-0${i + 1}T08:00:00.000Z`),
+    );
+    expect(learnedBufferSuggestion(departures)).toBeNull();
+  });
+
+  it('surfaces the median slip when persistently late with enough evidence', () => {
+    const departures = Array.from({ length: 6 }, (_, i) =>
+      slippedDeparture(`d${i}`, 5, `2026-07-0${i + 1}T08:00:00.000Z`),
+    );
+    expect(learnedBufferSuggestion(departures)).toEqual({ minutes: 5, runCount: 6 });
+  });
+
+  it('caps evidence to the most recent 10 runs even when more are eligible', () => {
+    const departures = Array.from({ length: 15 }, (_, i) =>
+      slippedDeparture(`d${i}`, 5, `2026-07-${String(i + 1).padStart(2, '0')}T08:00:00.000Z`),
+    );
+    const result = learnedBufferSuggestion(departures);
+    expect(result?.runCount).toBe(10);
+    expect(result?.minutes).toBe(5);
+  });
+});
+
+describe('computeSuggestions', () => {
+  const template: Template = {
+    id: 'tpl1',
+    name: 'Klinik',
+    destination: 'Klinikum',
+    travelMinutes: 20,
+    bufferMinutes: 10,
+    steps: [
+      { id: 'st1', name: 'Shower', minutes: 15 },
+      { id: 'st2', name: 'Dress', minutes: 10 },
+    ],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    schedule: null,
+    autoLearn: false,
+    arrivalSteps: [],
+    arrivalWifiSsid: null,
+  };
+
+  function showeredRun(id: string, showerMinutes: number): Departure {
+    return makeDeparture({
+      id,
+      startedAt: '2026-07-09T08:00:00.000Z',
+      steps: [
+        {
+          id: 's1',
+          name: 'Shower',
+          plannedMinutes: 15,
+          checkedAt: new Date(new Date('2026-07-09T08:00:00.000Z').getTime() + showerMinutes * 60_000).toISOString(),
+        },
+      ],
+    });
+  }
+
+  it('suggests at exactly 3 runs and exactly a 3-minute delta (both thresholds inclusive)', () => {
+    const departures = [showeredRun('d1', 18), showeredRun('d2', 18), showeredRun('d3', 18)];
+    const suggestions = computeSuggestions([template], departures);
+
+    expect(suggestions).toEqual([
+      {
+        templateId: 'tpl1',
+        templateName: 'Klinik',
+        stepName: 'Shower',
+        plannedMinutes: 15,
+        learnedMinutes: 18,
+        runCount: 3,
+      },
+    ]);
+  });
+
+  it('does not suggest with only 2 runs, even with a large delta', () => {
+    const departures = [showeredRun('d1', 25), showeredRun('d2', 25)];
+    expect(computeSuggestions([template], departures)).toEqual([]);
+  });
+
+  it('does not suggest with 3 runs but only a 2-minute delta', () => {
+    const departures = [showeredRun('d1', 17), showeredRun('d2', 17), showeredRun('d3', 17)];
+    expect(computeSuggestions([template], departures)).toEqual([]);
+  });
+
+  it('skips a step name no longer present in the template (renamed step orphans old history)', () => {
+    const renamedTemplate: Template = {
+      ...template,
+      steps: [{ id: 'st1', name: 'Wash up', minutes: 15 }], // was "Shower"
+    };
+    const departures = [showeredRun('d1', 25), showeredRun('d2', 25), showeredRun('d3', 25)];
+
+    expect(computeSuggestions([renamedTemplate], departures)).toEqual([]);
+  });
+
+  it('ignores departures that never started, and those not left/done', () => {
+    const departures = [
+      showeredRun('d1', 25),
+      showeredRun('d2', 25),
+      makeDeparture({ id: 'd3', status: 'planned', startedAt: null }),
+      { ...showeredRun('d4', 25), status: 'running' as const },
+    ];
+
+    expect(computeSuggestions([template], departures)).toEqual([]);
+  });
+
+  it('ignores departures belonging to a different template', () => {
+    const departures = [
+      showeredRun('d1', 25),
+      showeredRun('d2', 25),
+      { ...showeredRun('d3', 25), templateId: 'other-template' },
+    ];
+
+    expect(computeSuggestions([template], departures)).toEqual([]);
+  });
+
+  it('excludes a compressed (wasReplanned) run from the natural pool entirely', () => {
+    // Only 2 genuinely natural runs plus 1 compressed one - the compressed
+    // one must not count toward the 3-run threshold.
+    const departures = [
+      showeredRun('d1', 25),
+      showeredRun('d2', 25),
+      { ...showeredRun('d3', 6), wasReplanned: true },
+    ];
+    expect(computeSuggestions([template], departures)).toEqual([]);
+  });
+});
+
+describe('computeBufferSuggestions', () => {
+  it('surfaces a per-template buffer suggestion mirroring learnedBufferSuggestion', () => {
+    const template: Template = {
+      id: 'tpl1',
+      name: 'Klinik',
+      destination: 'Klinikum',
+      travelMinutes: 20,
+      bufferMinutes: 10,
+      steps: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      schedule: null,
+      autoLearn: false,
+      arrivalSteps: [],
+      arrivalWifiSsid: null,
+    };
+    const departures = Array.from({ length: 6 }, (_, i) =>
+      slippedDeparture(`d${i}`, 5, `2026-07-0${i + 1}T08:00:00.000Z`),
+    );
+
+    expect(computeBufferSuggestions([template], departures)).toEqual([
+      { templateId: 'tpl1', templateName: 'Klinik', currentBufferMinutes: 10, slipMinutes: 5, runCount: 6 },
+    ]);
+  });
+
+  it('is empty when no template has enough slip evidence', () => {
+    const template: Template = {
+      id: 'tpl1',
+      name: 'Klinik',
+      destination: 'Klinikum',
+      travelMinutes: 20,
+      bufferMinutes: 10,
+      steps: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      schedule: null,
+      autoLearn: false,
+      arrivalSteps: [],
+      arrivalWifiSsid: null,
+    };
+    expect(computeBufferSuggestions([template], [])).toEqual([]);
+  });
+});
+
+describe('stepNameLibrary', () => {
+  it('sorts by run count descending, attaching a learned estimate only where >= 3 samples exist', () => {
+    const departures = [
+      makeDeparture({
+        id: 'd1',
+        startedAt: '2026-07-01T08:00:00.000Z',
+        leftAt: '2026-07-01T08:15:00.000Z',
+        steps: [checkedStep('Shower', '2026-07-01T08:15:00.000Z')],
+      }),
+      makeDeparture({
+        id: 'd2',
+        startedAt: '2026-07-02T08:00:00.000Z',
+        leftAt: '2026-07-02T08:15:00.000Z',
+        steps: [checkedStep('Shower', '2026-07-02T08:15:00.000Z')],
+      }),
+      makeDeparture({
+        id: 'd3',
+        startedAt: '2026-07-03T08:00:00.000Z',
+        leftAt: '2026-07-03T08:15:00.000Z',
+        steps: [checkedStep('Shower', '2026-07-03T08:15:00.000Z')],
+      }),
+      makeDeparture({
+        id: 'd4',
+        startedAt: '2026-07-04T08:00:00.000Z',
+        leftAt: '2026-07-04T08:05:00.000Z',
+        steps: [checkedStep('Dress', '2026-07-04T08:05:00.000Z')],
+      }),
+    ];
+    const template: Template = {
+      id: 'tpl1',
+      name: 'Klinik',
+      destination: '',
+      travelMinutes: 20,
+      bufferMinutes: 10,
+      steps: [{ id: 'st1', name: 'Shoes', minutes: 5 }], // never run - 0 samples
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      schedule: null,
+      autoLearn: false,
+      arrivalSteps: [],
+      arrivalWifiSsid: null,
+    };
+
+    const library = stepNameLibrary(departures, [template]);
+    expect(library.map((entry) => entry.name)).toEqual(['Shower', 'Dress', 'Shoes']);
+    expect(library[0]).toEqual({ name: 'Shower', learnedMinutes: 15, runCount: 3 });
+    expect(library[1]).toEqual({ name: 'Dress', learnedMinutes: null, runCount: 1 });
+    expect(library[2]).toEqual({ name: 'Shoes', learnedMinutes: null, runCount: 0 });
+  });
+
+  it('deduplicates a name that appears in both history and a template', () => {
+    const departures = [
+      makeDeparture({
+        id: 'd1',
+        steps: [checkedStep('Shower', '2026-07-01T08:15:00.000Z')],
+      }),
+    ];
+    const template: Template = {
+      id: 'tpl1',
+      name: 'Klinik',
+      destination: '',
+      travelMinutes: 20,
+      bufferMinutes: 10,
+      steps: [{ id: 'st1', name: 'Shower', minutes: 15 }],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      schedule: null,
+      autoLearn: false,
+      arrivalSteps: [],
+      arrivalWifiSsid: null,
+    };
+
+    const library = stepNameLibrary(departures, [template]);
+    expect(library.filter((entry) => entry.name === 'Shower')).toHaveLength(1);
+  });
+
+  it('includes task names (tasks increment), deduplicated against a matching departure step name', () => {
+    const departures = [
+      makeDeparture({
+        id: 'd1',
+        startedAt: '2026-07-01T08:00:00.000Z',
+        steps: [checkedStep('Befunden EEG', '2026-07-01T08:15:00.000Z')],
+      }),
+    ];
+    const tasks = [
+      makeTask({
+        id: 't1',
+        startedAt: '2026-07-02T08:00:00.000Z',
+        units: [
+          { id: 'u1', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-02T08:12:00.000Z' },
+          { id: 'u2', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-02T08:24:00.000Z' },
+        ],
+      }),
+      makeTask({ id: 't2', name: 'Sign discharge letters', startedAt: null, units: [] }),
+    ];
+
+    const library = stepNameLibrary(departures, [], tasks);
+    // "Befunden EEG" appears exactly once (deduplicated), with a learned
+    // estimate now that it has 3 combined natural samples (1 departure +
+    // 2 task units); "Sign discharge letters" appears with 0 runs, same
+    // "template-only name, never lived" treatment a never-run template
+    // step gets.
+    expect(library.filter((entry) => entry.name === 'Befunden EEG')).toHaveLength(1);
+    const eegEntry = library.find((entry) => entry.name === 'Befunden EEG');
+    expect(eegEntry?.runCount).toBe(3);
+    expect(eegEntry?.learnedMinutes).not.toBeNull();
+    expect(library.map((entry) => entry.name)).toContain('Sign discharge letters');
+  });
+});
+
+describe('learningReport', () => {
+  it('returns [] for empty inputs', () => {
+    expect(learningReport([], [])).toEqual([]);
+  });
+
+  it('a name that only ever ran rushed still gets a row, with runCount 0 and estimate null', () => {
+    // Two compressed (wasReplanned) runs of "Squeeze prep" — enough to clear
+    // learnedRushedFloor's 2-sample floor, but there is no natural run of
+    // this name at all, so it must not be silently dropped: it earns a row
+    // via the rushed-pool side of the union, not the natural side.
+    const departures = [
+      makeDeparture({
+        id: 'r1',
+        wasReplanned: true,
+        startedAt: '2026-07-01T08:00:00.000Z',
+        steps: [checkedStep('Squeeze prep', '2026-07-01T08:04:00.000Z')],
+      }),
+      makeDeparture({
+        id: 'r2',
+        wasReplanned: true,
+        startedAt: '2026-07-02T08:00:00.000Z',
+        steps: [checkedStep('Squeeze prep', '2026-07-02T08:06:00.000Z')],
+      }),
+    ];
+
+    const report = learningReport(departures, []);
+    // Rushed actuals [4, 6] -> learnedRushedFloor's P25: index 0.25*(2-1)=0.25,
+    // 4 + (6-4)*0.25 = 4.5 -> rounds to 5.
+    expect(report).toEqual([{ name: 'Squeeze prep', runCount: 0, estimate: null, rushedFloor: 5 }]);
+  });
+
+  it('a name under learnedEstimate\'s 3-sample floor still gets a row, with estimate null', () => {
+    const departures = [
+      makeDeparture({
+        id: 'd1',
+        startedAt: '2026-07-01T08:00:00.000Z',
+        steps: [checkedStep('Dress', '2026-07-01T08:10:00.000Z')],
+      }),
+      makeDeparture({
+        id: 'd2',
+        startedAt: '2026-07-02T08:00:00.000Z',
+        steps: [checkedStep('Dress', '2026-07-02T08:10:00.000Z')],
+      }),
+    ];
+
+    const report = learningReport(departures, []);
+    expect(report).toEqual([{ name: 'Dress', runCount: 2, estimate: null, rushedFloor: null }]);
+  });
+
+  it('a name with >=3 natural runs gets a full estimate and no rushed floor when never compressed', () => {
+    const departures = [10, 12, 14].map((minutes, i) =>
+      makeDeparture({
+        id: `d${i}`,
+        startedAt: '2026-07-0' + (i + 1) + 'T08:00:00.000Z',
+        steps: [checkedStep('Shower', `2026-07-0${i + 1}T08:${String(minutes).padStart(2, '0')}:00.000Z`)],
+      }),
+    );
+
+    const report = learningReport(departures, []);
+    expect(report).toEqual([
+      { name: 'Shower', runCount: 3, estimate: learnedEstimate([10, 12, 14]), rushedFloor: null },
+    ]);
+  });
+
+  it('sorts by runCount descending, then name ascending as a deterministic tiebreak', () => {
+    const departures = [
+      // "Zzz" and "Ants" both get exactly 1 natural run — tied on runCount,
+      // must land in alphabetical order regardless of insertion order.
+      makeDeparture({
+        id: 'd1',
+        startedAt: '2026-07-01T08:00:00.000Z',
+        steps: [checkedStep('Zzz', '2026-07-01T08:05:00.000Z')],
+      }),
+      makeDeparture({
+        id: 'd2',
+        startedAt: '2026-07-02T08:00:00.000Z',
+        steps: [checkedStep('Ants', '2026-07-02T08:05:00.000Z')],
+      }),
+      // "Shower" gets 3 natural runs — strictly more evidence, must sort first
+      // despite alphabetically following "Ants".
+      makeDeparture({
+        id: 'd3',
+        startedAt: '2026-07-03T08:00:00.000Z',
+        steps: [checkedStep('Shower', '2026-07-03T08:10:00.000Z')],
+      }),
+      makeDeparture({
+        id: 'd4',
+        startedAt: '2026-07-04T08:00:00.000Z',
+        steps: [checkedStep('Shower', '2026-07-04T08:10:00.000Z')],
+      }),
+      makeDeparture({
+        id: 'd5',
+        startedAt: '2026-07-05T08:00:00.000Z',
+        steps: [checkedStep('Shower', '2026-07-05T08:10:00.000Z')],
+      }),
+    ];
+
+    const report = learningReport(departures, []);
+    expect(report.map((entry) => entry.name)).toEqual(['Shower', 'Ants', 'Zzz']);
+  });
+
+  it('folds in task-unit actuals via the shared naturalActualsByStepName join (tasks increment)', () => {
+    const tasks = [
+      makeTask({
+        id: 't1',
+        startedAt: '2026-07-01T08:00:00.000Z',
+        units: [
+          { id: 'u1', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-01T08:12:00.000Z' },
+          { id: 'u2', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-01T08:26:00.000Z' },
+          { id: 'u3', name: 'Befunden EEG', plannedMinutes: 15, checkedAt: '2026-07-01T08:40:00.000Z' },
+        ],
+      }),
+    ];
+
+    const report = learningReport([], tasks);
+    expect(report).toHaveLength(1);
+    expect(report[0].name).toBe('Befunden EEG');
+    expect(report[0].runCount).toBe(3);
+    expect(report[0].estimate).not.toBeNull();
+  });
+});

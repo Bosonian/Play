@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Runway adaptive-icon foreground layer: the motif alone, transparent
+  background, no text (per the increment-6 brief). Two converging edge
+  lines plus a dashed centerline that shortens as it recedes — a runway
+  in one-point perspective, read as a whole from across a room the same
+  way the app's own Runway screen wants to be.
+
+  Canvas is the standard 108x108 adaptive-icon viewBox. Android's launcher
+  masks (circle, squircle, rounded square, teardrop) can clip anything
+  outside the inner 66% "safe zone" — a 66dp-diameter circle centered on
+  this canvas, i.e. everything within radius 33 of (54, 54). Every point
+  below is inside that circle; check before moving them
+  (dx^2 + dy^2 < 33^2 from center 54,54).
+
+  Single accent color, #38bdf8 (sky-400) — the same accent the rest of the
+  app uses for its one interactive color (see src/ui/Button.tsx). Restrained
+  on purpose: CLAUDE.md calls for "one restrained accent," not a logo with
+  its own palette.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <!-- Converging runway edges: two lines from the near corners up to a
+       shared vanishing point. The convergence itself reads as perspective;
+       no gradient or variable stroke width needed. -->
+  <line x1="40" y1="80" x2="54" y2="30" stroke="#38bdf8" stroke-width="4" stroke-linecap="round" />
+  <line x1="68" y1="80" x2="54" y2="30" stroke="#38bdf8" stroke-width="4" stroke-linecap="round" />
+
+  <!-- Dashed centerline, hand-spaced (not a single stroke-dasharray) so the
+       dashes shrink and close up as they approach the vanishing point —
+       the same cue that makes the edge lines read as depth rather than a
+       flat V. -->
+  <line x1="54" y1="80" x2="54" y2="74" stroke="#38bdf8" stroke-width="3" stroke-linecap="round" />
+  <line x1="54" y1="69" x2="54" y2="65" stroke="#38bdf8" stroke-width="3" stroke-linecap="round" />
+  <line x1="54" y1="61" x2="54" y2="58" stroke="#38bdf8" stroke-width="3" stroke-linecap="round" />
+  <line x1="54" y1="55" x2="54" y2="53" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" />
+  <line x1="54" y1="50.5" x2="54" y2="49.5" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" />
+</svg>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Runway adaptive-icon background layer. Solid slate-950 (#020617), the same
+  background color used throughout the app (see tailwind.config.ts / the
+  bg-slate-950 classes in src/screens). Android composites this behind
+  icon-foreground.svg for the adaptive icon, and it's also the flat backdrop
+  for the splash screens — one color, defined once, referenced everywhere by
+  scripts/generate-icons.mjs (kept in sync manually: if you change this file,
+  update BG_COLOR in that script to match).
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <rect width="108" height="108" fill="#020617" />
+</svg>
