@@ -116,6 +116,98 @@ describe('deriveStepActuals', () => {
   });
 });
 
+describe('deriveStepActuals — skipped steps (0.51.0)', () => {
+  it('emits no actual for a skipped step, while attributing the steps around it correctly', () => {
+    const departure = makeDeparture({
+      startedAt: '2026-07-09T08:00:00.000Z',
+      steps: [
+        { id: 's1', name: 'Shower', plannedMinutes: 15, checkedAt: '2026-07-09T08:15:00.000Z' },
+        { id: 's2', name: 'Bath', plannedMinutes: 20, checkedAt: '2026-07-09T08:20:00.000Z', skipped: true },
+        { id: 's3', name: 'Dress', plannedMinutes: 10, checkedAt: '2026-07-09T08:30:00.000Z' },
+      ],
+    });
+
+    expect(deriveStepActuals(departure)).toEqual([
+      { stepId: 's1', name: 'Shower', plannedMinutes: 15, actualMinutes: 15 }, // 08:15 - startedAt(08:00)
+      // s2 (Bath) skipped - no actual emitted for it at all.
+      { stepId: 's3', name: 'Dress', plannedMinutes: 10, actualMinutes: 10 }, // 08:30 - s2's checkedAt(08:20), NOT s1's(08:15)
+    ]);
+  });
+
+  it('measures the step after a skip from the skip instant, not from the step before the skip', () => {
+    const departure = makeDeparture({
+      startedAt: '2026-07-09T08:00:00.000Z',
+      steps: [
+        { id: 's1', name: 'Shower', plannedMinutes: 15, checkedAt: '2026-07-09T08:10:00.000Z' },
+        { id: 's2', name: 'Bath', plannedMinutes: 20, checkedAt: '2026-07-09T08:12:00.000Z', skipped: true },
+        { id: 's3', name: 'Dress', plannedMinutes: 10, checkedAt: '2026-07-09T08:19:00.000Z' },
+      ],
+    });
+
+    const dress = deriveStepActuals(departure).find((a) => a.stepId === 's3')!;
+    // 08:19 - s2's skip instant (08:12) = 7 min, NOT 08:19 - s1's checkedAt (08:10) = 9 min.
+    expect(dress.actualMinutes).toBe(7);
+  });
+
+  it('handles two skips in a row: neither emits an actual, and the next real step measures from the second skip', () => {
+    const departure = makeDeparture({
+      startedAt: '2026-07-09T08:00:00.000Z',
+      steps: [
+        { id: 's1', name: 'Shower', plannedMinutes: 15, checkedAt: '2026-07-09T08:10:00.000Z' },
+        { id: 's2', name: 'Bath', plannedMinutes: 20, checkedAt: '2026-07-09T08:12:00.000Z', skipped: true },
+        { id: 's3', name: 'Shave', plannedMinutes: 5, checkedAt: '2026-07-09T08:14:00.000Z', skipped: true },
+        { id: 's4', name: 'Dress', plannedMinutes: 10, checkedAt: '2026-07-09T08:20:00.000Z' },
+      ],
+    });
+
+    expect(deriveStepActuals(departure)).toEqual([
+      { stepId: 's1', name: 'Shower', plannedMinutes: 15, actualMinutes: 10 },
+      // s2, s3 both skipped - no actuals.
+      { stepId: 's4', name: 'Dress', plannedMinutes: 10, actualMinutes: 6 }, // 08:20 - s3's checkedAt(08:14)
+    ]);
+  });
+
+  it('measures the step after a first-step skip from the skip instant, not from startedAt', () => {
+    const departure = makeDeparture({
+      startedAt: '2026-07-09T08:00:00.000Z',
+      steps: [
+        { id: 's1', name: 'Bath', plannedMinutes: 20, checkedAt: '2026-07-09T08:03:00.000Z', skipped: true },
+        { id: 's2', name: 'Shower', plannedMinutes: 15, checkedAt: '2026-07-09T08:15:00.000Z' },
+      ],
+    });
+
+    expect(deriveStepActuals(departure)).toEqual([
+      { stepId: 's2', name: 'Shower', plannedMinutes: 15, actualMinutes: 12 }, // 08:15 - s1's checkedAt(08:03), not startedAt(08:00)
+    ]);
+  });
+
+  it('emits no actual when the LAST step is a skip, still advancing past the real steps before it', () => {
+    const departure = makeDeparture({
+      startedAt: '2026-07-09T08:00:00.000Z',
+      steps: [
+        { id: 's1', name: 'Shower', plannedMinutes: 15, checkedAt: '2026-07-09T08:15:00.000Z' },
+        { id: 's2', name: 'Bath', plannedMinutes: 20, checkedAt: '2026-07-09T08:22:00.000Z', skipped: true },
+      ],
+    });
+
+    expect(deriveStepActuals(departure)).toEqual([
+      { stepId: 's1', name: 'Shower', plannedMinutes: 15, actualMinutes: 15 },
+    ]);
+  });
+
+  it('emits no actuals at all when every step in a run is skipped', () => {
+    const departure = makeDeparture({
+      startedAt: '2026-07-09T08:00:00.000Z',
+      steps: [
+        { id: 's1', name: 'Shower', plannedMinutes: 15, checkedAt: '2026-07-09T08:05:00.000Z', skipped: true },
+        { id: 's2', name: 'Bath', plannedMinutes: 20, checkedAt: '2026-07-09T08:08:00.000Z', skipped: true },
+      ],
+    });
+
+    expect(deriveStepActuals(departure)).toEqual([]);
+  });
+});
+
 describe('deriveStepActuals — arrival steps (anchor split)', () => {
   it('anchors the first arrival step from arrivedAt, NOT from the prep chain\'s last check-off', () => {
     const departure = makeDeparture({

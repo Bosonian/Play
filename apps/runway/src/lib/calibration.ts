@@ -68,8 +68,22 @@ export function deriveStepActuals(
  * checked at the exact same instant keep their original relative order —
  * irrelevant to the result either way, since a 0-minute gap is 0-minute
  * regardless of which of the tied steps is treated as "later".
+ *
+ * Skip increment (0.51.0): a step with `skipped === true` stays IN this
+ * walk — it still has a real `checkedAt` (skipStep stamps it, exactly like
+ * a real check-off) and still advances `previousIso`, because the step
+ * AFTER it genuinely was measured from the skip instant, not from
+ * whenever the step before the skip finished. What it must NOT do is
+ * emit a `StepActual` of its own: a step Deepak didn't do contributes
+ * NOTHING to its own learned estimate, not a near-zero actual that would
+ * drag `learning.ts`'s median toward zero one skipped morning at a time.
+ * `continue` fires after `previousIso` is reassigned but before the push,
+ * which is what keeps the cursor honest while dropping the emission.
  */
-function deriveChain(anchorIso: string, steps: readonly { id: string; name: string; plannedMinutes: number; checkedAt: string | null }[]): StepActual[] {
+function deriveChain(
+  anchorIso: string,
+  steps: readonly { id: string; name: string; plannedMinutes: number; checkedAt: string | null; skipped?: boolean }[],
+): StepActual[] {
   const checked = steps
     .filter((step): step is typeof step & { checkedAt: string } => step.checkedAt !== null)
     .slice()
@@ -81,13 +95,14 @@ function deriveChain(anchorIso: string, steps: readonly { id: string; name: stri
     const actualMinutes = Math.round(
       (new Date(step.checkedAt).getTime() - new Date(previousIso).getTime()) / 60_000,
     );
+    previousIso = step.checkedAt; // advance the cursor regardless — the NEXT step's gap starts here either way
+    if (step.skipped) continue; // a step that was never done emits no actual of its own
     actuals.push({
       stepId: step.id,
       name: step.name,
       plannedMinutes: step.plannedMinutes,
       actualMinutes,
     });
-    previousIso = step.checkedAt;
   }
   return actuals;
 }

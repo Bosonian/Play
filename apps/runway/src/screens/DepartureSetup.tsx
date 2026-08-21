@@ -877,6 +877,12 @@ export function DepartureSetup({
             // increment): a locked row gets none, so a checked step's
             // position — like everything else about it — stays untouched
             // by this form.
+            //
+            // Skip increment (0.51.0): a skipped step is locked here too
+            // (it has a real `checkedAt`, same as a completed one — see
+            // DepartureStep.skipped's own doc comment), but "done" and a
+            // crossed-out name both lie about it — nothing was actually
+            // done. Neither renders for a skipped step below.
             const locked = step.checkedAt !== null;
             if (locked) {
               return (
@@ -884,14 +890,16 @@ export function DepartureSetup({
                   key={step.id}
                   className="flex items-center gap-2 rounded-lg border border-slate-800/60 bg-surface p-2 opacity-60"
                 >
-                  <span className="min-h-12 flex flex-1 items-center px-3 text-slate-400 line-through">
+                  <span
+                    className={`min-h-12 flex flex-1 items-center px-3 text-slate-400 ${step.skipped ? '' : 'line-through'}`}
+                  >
                     {step.name || 'Step'}
                   </span>
                   <span className="min-h-12 flex w-16 items-center justify-end px-2 text-sm tabular-nums text-slate-500">
                     {step.plannedMinutes} min
                   </span>
                   <span className="flex min-h-12 min-w-12 items-center justify-center text-xs font-medium uppercase tracking-wide text-slate-600">
-                    done
+                    {step.skipped ? 'skipped' : 'done'}
                   </span>
                 </div>
               );

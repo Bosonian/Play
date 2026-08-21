@@ -158,6 +158,43 @@ export interface DepartureStep {
    * estimateBias.ts's bias math, never assumed 'manual') for a row saved
    * before this field existed. */
   estimateSource?: 'manual' | 'learned';
+  /**
+   * Skip increment (0.51.0): true when this step was deliberately NOT done
+   * — "no bath this morning" — rather than actually completed. A skipped
+   * step still gets `checkedAt` stamped (Runway.tsx's `skipStep`, mirroring
+   * `toggleStep`): that's deliberate, not an oversight, because it's what
+   * lets `currentStepAnchor` (currentStepElapsed.ts) correctly move on to
+   * the next step and `computeProjection`'s `remainingPrepMinutes`
+   * (projection.ts) correctly drop the skipped step's minutes from the
+   * plan, both for free, by filtering on `checkedAt === null` exactly as
+   * they already did before this field existed — see those two files' own
+   * comments for the read side of that claim.
+   *
+   * The ONE place this field changes behaviour is `deriveChain`
+   * (calibration.ts): a step that was never actually done must contribute
+   * NOTHING to its own learned-time estimate, not a near-zero actual that
+   * would drag `learning.ts`'s median toward zero one skipped morning at a
+   * time — see that function's own comment for exactly how it excludes a
+   * skipped step from `StepActual` while still advancing the timestamp
+   * cursor for the step after it.
+   *
+   * Optional, not a plain `boolean` — same undefined-as-false idiom as
+   * `Template.schedule`'s own doc comment describes in full: `undefined`
+   * on every step written before this field existed (and on every ordinary
+   * completed or not-yet-checked step since), read everywhere as
+   * `step.skipped === true`, never assumed present. `skippedAt` (a
+   * timestamp) was the other option; plain `boolean` was chosen because
+   * nothing in this app reads WHEN a step was skipped separately from
+   * `checkedAt` (already stamped at that same instant) — a second
+   * timestamp would just be `checkedAt` copied under a different name, one
+   * more field to keep in sync for no reader that needs it.
+   *
+   * Un-skip (tapping a skipped step in the checked-steps list) clears both
+   * this flag and `checkedAt` in the same write `toggleStep` already uses
+   * to un-check a completed step — see that function's own comment; there
+   * is deliberately no second "un-skip" code path.
+   */
+  skipped?: boolean;
 }
 
 export type DepartureStatus = 'planned' | 'running' | 'left' | 'done' | 'abandoned';

@@ -127,6 +127,19 @@ interface StepFocusProps {
    * `projectedArrival`'s own comment above gives for why `undefined` is
    * itself information here, not a gap. */
   onAddStep?: () => void;
+  /** Skip increment (0.51.0): "some mornings he does not take a bath" — a
+   * small, quiet escape hatch beside "Done earlier" and "Add a step", same
+   * exclusion from the whole-screen tap zone `onTap` owns and same reason:
+   * a stray tap here must never silently check the step off. Rendered only
+   * when `isCurrentStep` is also true, same guard as `onBackdate`/
+   * `onAddStep` — but unlike `onAddStep` (running-only) or `onBackdate`
+   * (gated on `departure.startedAt` by its own caller), this one is NOT
+   * gated by Runway.tsx on either: `skipStep` carries its own forgivable-
+   * shortcut 'planned' -> 'running' transition (mirroring `toggleStep`'s),
+   * so skipping the very first step of a still-'planned' departure is a
+   * real, honest action with nothing to wait for. The caller owns the
+   * actual write; this component only ever fires the callback. */
+  onSkip?: () => void;
 }
 
 const DIGIT_COLOR: Record<FocusTone['phase'], string> = {
@@ -162,6 +175,7 @@ export function StepFocus({
   onTap,
   onBackdate,
   onAddStep,
+  onSkip,
 }: StepFocusProps) {
   const plannedSeconds = step.plannedMinutes * 60;
 
@@ -474,7 +488,30 @@ export function StepFocus({
               own gap between the two ends - comfortable room to spare,
               not a tight fit. "Add a step" reuses the checklist screen's
               own wording rather than a shortened alternative because the
-              arithmetic says it fits; no truncation needed. */}
+              arithmetic says it fits; no truncation needed.
+
+          Skip increment (0.51.0): a THIRD button joining this same group,
+          re-running the exact width check above rather than assuming a
+          fourth control obviously fits or obviously doesn't - CLAUDE.md's
+          "name tradeoffs honestly" rule applies as much to layout
+          arithmetic as to anything else this codebase does:
+            - "Skip" (4 chars) at the same pessimistic 8px/char: 4*8=32px,
+              +16px padding = 48px.
+            - three buttons now share the group: 2 internal gap-1s (4px
+              each = 8px) instead of 1, plus the same mr-2 (8px) at the
+              row's right edge: 96 ("Add a step") + 120 ("Done earlier") +
+              48 ("Skip") + 8 (two gaps) + 8 (mr-2) = 280px.
+            - total row content: 48 (chevron) + 280 (right group) = 328px,
+              leaving 412-328=84px of spare `justify-between` room - down
+              from 136px with two buttons, but still comfortably positive
+              (roughly two 44px touch targets' worth of slack, not a hair's
+              margin) with NO wrapping and NO truncation needed. Verdict:
+              fits. A longer label was tried and rejected on this same
+              arithmetic - "Skip step" (9 chars, 88px) drops spare room to
+              44px, barely one touch-target width, which reads as cramming
+              rather than a comfortable fit; "Skip" alone is unambiguous
+              here anyway, sitting directly under the step name it applies
+              to, the same way "Done earlier" never restates which step. */}
       <div className="relative z-10 mt-safe-top flex items-center justify-between">
         <button
           type="button"
@@ -490,11 +527,14 @@ export function StepFocus({
         >
           ‹
         </button>
-        {/* Only the CURRENT step gets either of these - see onBackdate's
-            and onAddStep's own doc comments above for why a step that
-            hasn't started can't honestly have finished "earlier" or take
-            over a clock that isn't running. */}
-        {isCurrentStep && (onAddStep || onBackdate) && (
+        {/* Only the CURRENT step gets any of these - see onBackdate's,
+            onAddStep's and onSkip's own doc comments above for why a step
+            that hasn't started can't honestly have finished "earlier" or
+            take over a clock that isn't running (onSkip has no such
+            restriction of its own - see its doc comment - but still only
+            makes sense for the step actually on screen, i.e. the current
+            one, same as the other two). */}
+        {isCurrentStep && (onAddStep || onBackdate || onSkip) && (
           <div className="mr-2 flex shrink-0 items-center gap-1">
             {onAddStep && (
               <button
@@ -520,6 +560,19 @@ export function StepFocus({
                 className="min-h-11 shrink-0 rounded-lg px-2 text-sm font-medium text-slate-500 transition-colors hover:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
               >
                 Done earlier
+              </button>
+            )}
+            {onSkip && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  // Same exclusion as the back chevron above, same reason.
+                  e.stopPropagation();
+                  onSkip();
+                }}
+                className="min-h-11 shrink-0 rounded-lg px-2 text-sm font-medium text-slate-500 transition-colors hover:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+              >
+                Skip
               </button>
             )}
           </div>

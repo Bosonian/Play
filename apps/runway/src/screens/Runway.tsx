@@ -431,7 +431,20 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
         d.startedAt = d.startedAt ?? new Date().toISOString();
       }
       const s = d.steps.find((x) => x.id === step.id);
-      if (s) s.checkedAt = s.checkedAt === null ? new Date().toISOString() : null;
+      if (s) {
+        if (s.checkedAt === null) {
+          s.checkedAt = new Date().toISOString();
+        } else {
+          // Un-check. Skip increment (0.51.0): this is ALSO the un-skip
+          // path (the checked-steps list routes a tap on a skipped row
+          // here rather than to a second function) — clearing `skipped`
+          // unconditionally is a no-op for an ordinary completed step
+          // (already undefined/false) and the correct restore for a
+          // skipped one, so one branch honestly covers both cases.
+          s.checkedAt = null;
+          s.skipped = false;
+        }
+      }
     });
     if (wasPlanned) void logEvent('departure', `Departure started: ${departure.name}.`);
     // m4: checking the LAST remaining step flips planLine from "Leave by ...
@@ -442,6 +455,42 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
     // unchanged planLine still triggers a real SharedPreferences write and
     // provider redraw (see WidgetBridgePlugin's own comment on why poking
     // both providers unconditionally is simpler than diffing first).
+    void refreshWidgets();
+    void refreshDayGauge();
+  };
+
+  // Skip increment (0.51.0): "some mornings he does not take a bath" — the
+  // current step gets marked done-with-a-different-truth rather than
+  // forced through `toggleStep`'s normal check-off. Deliberately stamps
+  // `checkedAt` exactly like a real check-off (see DepartureStep.skipped's
+  // own doc comment for why that's correct, not a shortcut): it's what lets
+  // `currentStepAnchor` move on to the next step and `computeProjection`
+  // drop this step's minutes from the remaining plan, both for free.
+  // `deriveChain` (calibration.ts) is the one place that reads `skipped`
+  // and excludes the step from its own estimate.
+  //
+  // Same 'planned' -> 'running' forgivable-shortcut transition as
+  // toggleStep, same reason: skipping the FIRST step of a still-'planned'
+  // departure is exactly as real a start as checking it would have been.
+  // Side effects mirror toggleStep's exactly (widgets, day gauge, the
+  // planned->running logEvent) — no separate "step skipped" log line, to
+  // stay a faithful match rather than growing a second kind of side effect
+  // this function's own spec didn't ask for.
+  const skipStep = async (step: DepartureStep) => {
+    void hapticImpact('light');
+    const wasPlanned = departure.status === 'planned';
+    await db.departures.where('id').equals(departure.id).modify((d) => {
+      if (d.status === 'planned') {
+        d.status = 'running';
+        d.startedAt = d.startedAt ?? new Date().toISOString();
+      }
+      const s = d.steps.find((x) => x.id === step.id);
+      if (s) {
+        s.checkedAt = new Date().toISOString();
+        s.skipped = true;
+      }
+    });
+    if (wasPlanned) void logEvent('departure', `Departure started: ${departure.name}.`);
     void refreshWidgets();
     void refreshDayGauge();
   };
@@ -1612,22 +1661,47 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
                   handleStepBackdateConfirm's own comment for why that lets
                   it skip toggleStep's planned -> running transition
                   entirely rather than needing to replicate it. */}
-              {departure.startedAt != null && stepAnchorIso && (
-                stepBackdateOpen ? (
-                  <div className="mt-3">
-                    <BackdateDialog
-                      caption="When did this actually finish?"
-                      lowerBound={new Date(stepAnchorIso)}
-                      now={now}
-                      onConfirm={(at) => void handleStepBackdateConfirm(at)}
-                      onCancel={() => setStepBackdateOpen(false)}
-                    />
-                  </div>
-                ) : (
-                  <TextAction className="mt-2" onClick={() => setStepBackdateOpen(true)}>
-                    Done earlier
-                  </TextAction>
-                )
+              {departure.startedAt != null && stepAnchorIso && stepBackdateOpen ? (
+                <div className="mt-3">
+                  <BackdateDialog
+                    caption="When did this actually finish?"
+                    lowerBound={new Date(stepAnchorIso)}
+                    now={now}
+                    onConfirm={(at) => void handleStepBackdateConfirm(at)}
+                    onCancel={() => setStepBackdateOpen(false)}
+                  />
+                </div>
+              ) : (
+                <div className="mt-2 flex items-center gap-1">
+                  {departure.startedAt != null && stepAnchorIso && (
+                    <TextAction onClick={() => setStepBackdateOpen(true)}>Done earlier</TextAction>
+                  )}
+                  {/* Skip increment (0.51.0): "some mornings he does not
+                      take a bath" — a quiet escape hatch, TextAction weight
+                      (never a primary Button — this is the exception path,
+                      not the main move), beside "Done earlier" rather than
+                      a competing block of its own. Unlike "Done earlier",
+                      NOT gated on `departure.startedAt` — `skipStep` (like
+                      `toggleStep`) carries its own forgivable-shortcut
+                      'planned' -> 'running' transition, so skipping the
+                      very first step of a still-'planned' departure is a
+                      real, honest action with nothing to wait for. Hidden
+                      only while the backdate dialog above is open, so the
+                      two escape hatches never compete for attention with an
+                      active dialog.
+
+                      "Skip", not "Skip this step" (review fix). It sits
+                      directly beside "Done earlier", which does not restate
+                      which step it acts on either — both are on the current
+                      step's own card, with that step's name above them, so
+                      the scoping is already carried by the card. StepFocus's
+                      own copy of this control reached the same conclusion
+                      independently and shipped bare "Skip"; two names for
+                      one action, in two places Deepak moves between during
+                      a single morning, is exactly the imprecision the brief
+                      warns about. */}
+                  <TextAction onClick={() => void skipStep(currentStep)}>Skip</TextAction>
+                </div>
               )}
             </div>
           )}
@@ -1766,20 +1840,49 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
 
           {checkedSteps.length > 0 && (
             <div className="flex flex-col gap-1">
-              {checkedSteps.map((step) => (
-                <label
-                  key={step.id}
-                  className="flex min-h-12 items-center gap-3 rounded-lg px-4 py-1 opacity-50 motion-safe:transition-opacity motion-safe:duration-200"
-                >
-                  <input
-                    type="checkbox"
-                    checked={true}
-                    onChange={() => toggleStep(step)}
-                    className="size-6 shrink-0 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
-                  />
-                  <span className="flex-1 text-slate-500 line-through">{step.name || 'Step'}</span>
-                </label>
-              ))}
+              {/* Skip increment (0.51.0): a skipped step (`step.skipped`)
+                  shares this dimmed row but MUST NOT render as a checked
+                  checkbox — "a checked checkbox for a step that never
+                  happened would be a lie" (increment spec, verbatim). It
+                  gets a real <button>, a dashed placeholder in the
+                  checkbox's own slot instead of a ticked box, and its own
+                  copy naming what happened — no euphemism, no crossed-out
+                  name implying it was done. Tapping it calls `toggleStep`,
+                  the SAME un-check path a completed step's checkbox uses
+                  (see that function's own comment): un-skip is un-check
+                  plus clearing `skipped`, one write, not a second one. */}
+              {checkedSteps.map((step) =>
+                step.skipped ? (
+                  <button
+                    key={step.id}
+                    type="button"
+                    onClick={() => void toggleStep(step)}
+                    aria-label={`Restore ${step.name || 'step'} — currently skipped`}
+                    className="flex min-h-12 w-full items-center gap-3 rounded-lg px-4 py-1 text-left opacity-50 motion-safe:transition-opacity motion-safe:duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                  >
+                    <span
+                      aria-hidden
+                      className="flex size-6 shrink-0 items-center justify-center rounded-md border border-dashed border-slate-600 text-xs text-slate-500"
+                    >
+                      –
+                    </span>
+                    <span className="flex-1 text-slate-500">{step.name || 'Step'} · skipped</span>
+                  </button>
+                ) : (
+                  <label
+                    key={step.id}
+                    className="flex min-h-12 items-center gap-3 rounded-lg px-4 py-1 opacity-50 motion-safe:transition-opacity motion-safe:duration-200"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={true}
+                      onChange={() => toggleStep(step)}
+                      className="size-6 shrink-0 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                    />
+                    <span className="flex-1 text-slate-500 line-through">{step.name || 'Step'}</span>
+                  </label>
+                ),
+              )}
             </div>
           )}
         </div>
@@ -1898,6 +2001,25 @@ export function Runway({ departureId, onNavigate }: RunwayProps) {
               }
             : undefined
         }
+        // Skip increment (0.51.0): unlike onAddStep/onBackdate above, this
+        // one does its own write directly rather than closing focus to hand
+        // off to a dialog/panel on the checklist card underneath — there is
+        // no form to fill in and no timestamp to pick, so there is nothing
+        // to hand off TO. Closing focus afterwards is still correct: the
+        // step this overlay was showing just left `uncheckedSteps`, so
+        // staying open would either be looking at a stale countdown for a
+        // step that's no longer current, or (once the live `focusedStep`
+        // lookup effect further up this file reacts) auto-closing anyway -
+        // closing here immediately is the same outcome without a stale
+        // frame in between. No `isCurrentStep`/`focusedStepIsCurrent` guard
+        // needed here beyond what's already implied - StepFocus itself only
+        // renders this button when `isCurrentStep` is true (see its own
+        // doc comment), so this callback is never reachable for anything
+        // but the current step.
+        onSkip={() => {
+          void skipStep(focusedStep);
+          setFocusStepId(null);
+        }}
       />
     )}
     </>
