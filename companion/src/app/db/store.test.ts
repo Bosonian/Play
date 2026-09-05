@@ -424,6 +424,95 @@ describe('store — regimen items', () => {
     v4db.close();
   });
 
+  it('migration: a seeded v4 database keeps every existing table and gains usable v5 observation tables', async () => {
+    class V4Database extends Dexie {
+      patients!: EntityTable<Patient, 'code'>;
+      events!: EntityTable<PatientEvent, 'id'>;
+      patientModels!: EntityTable<PatientModel, 'patient'>;
+      consent!: EntityTable<Consent, 'patient'>;
+      regimenItems!: EntityTable<RegimenItem, 'id'>;
+      activityLog!: EntityTable<ActivityRow, 'id'>;
+      fieldReports!: EntityTable<FieldReport, 'id'>;
+
+      constructor(name: string) {
+        super(name);
+        this.version(1).stores({
+          patients: '&code, createdAt',
+          events: '&id, patient, at, kind, [patient+at]',
+          patientModels: '&patient',
+          consent: '&patient',
+        });
+        this.version(2).stores({ regimenItems: '&id, patient' });
+        this.version(3).stores({
+          activityLog: '&id, at',
+          fieldReports: '&id, status, createdAt',
+        });
+        this.version(4).stores({});
+      }
+    }
+
+    const dbName = `test-companion-migration-v5-${Date.now()}`;
+    const v4db = new V4Database(dbName);
+    const preservedRegimen = regimenItem('preserved-r1', 'P-01');
+    await v4db.patients.put({ code: 'P-01', createdAt: '2026-07-16T00:00:00Z' });
+    await v4db.events.put(dose('preserved-event', '2026-07-16T08:00:00Z'));
+    await v4db.patientModels.put({
+      patient: 'P-01', onThreshold: 0.4, dyskThreshold: 0.9,
+      updatedAt: '2026-07-16T00:00:00Z',
+    });
+    await v4db.consent.put({ patient: 'P-01', agreedAt: '2026-07-16T00:00:00Z', version: '1' });
+    await v4db.regimenItems.put(preservedRegimen);
+    await v4db.activityLog.put({
+      id: 'preserved-activity', at: '2026-07-16T00:00:00Z', category: 'lifecycle', message: 'kept',
+    });
+    await v4db.fieldReports.put({
+      id: 'preserved-report',
+      createdAt: '2026-07-16T00:00:00Z',
+      status: 'pending',
+      description: 'kept',
+      metadata: { appVersion: '0.9.0', screen: 'home', at: '2026-07-16T00:00:00Z' },
+    });
+    v4db.close();
+
+    const v5db = makeDb(dbName);
+    expect(await v5db.patients.get('P-01')).toEqual({
+      code: 'P-01', createdAt: '2026-07-16T00:00:00Z',
+    });
+    expect((await v5db.events.get('preserved-event'))?.id).toBe('preserved-event');
+    expect((await v5db.patientModels.get('P-01'))?.onThreshold).toBe(0.4);
+    expect((await v5db.consent.get('P-01'))?.version).toBe('1');
+    expect(await v5db.regimenItems.get('preserved-r1')).toEqual(preservedRegimen);
+    expect((await v5db.activityLog.get('preserved-activity'))?.message).toBe('kept');
+    expect((await v5db.fieldReports.get('preserved-report'))?.description).toBe('kept');
+
+    await v5db.observationStudies.put({
+      id: 'new-study',
+      patient: 'P-01',
+      protocolVersion: 1,
+      durationDays: 14,
+      startedAt: '2026-09-01T00:00:00.000Z',
+      plannedEndAt: '2026-09-15T00:00:00.000Z',
+      status: 'active',
+      regimenSnapshot: [preservedRegimen],
+    });
+    await v5db.assessments.put({
+      id: 'legacy-feature-record',
+      studyId: 'new-study',
+      patient: 'P-01',
+      protocolVersion: 1,
+      kind: 'finger-tapping',
+      reason: 'pre-dose',
+      startedAt: '2026-09-01T08:00:00.000Z',
+      quality: 'valid',
+      qualityReasons: [],
+      featureSchemaVersion: 1,
+      features: { tapsPerSecond: 3.8 },
+    });
+    expect(await v5db.observationStudies.count()).toBe(1);
+    expect((await v5db.assessments.get('legacy-feature-record'))?.featureSchemaVersion).toBe(1);
+    v5db.close();
+  });
+
   it('fieldReports.status index: where(status).equals(pending) returns exactly the pending rows', async () => {
     const db = freshDb();
     await db.fieldReports.bulkPut([

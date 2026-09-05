@@ -20,6 +20,9 @@ import { Meal } from './Meal';
 import { Dose } from './Dose';
 import { EventDetail } from './EventDetail';
 import { ReportProblem } from '../ReportProblem';
+import { ObservationStatus } from './ObservationStatus';
+import { FingerTapping } from './FingerTapping';
+import type { ObservationStudy } from '../../../domain/observation';
 
 type PatientScreen =
   | { name: 'home' }
@@ -27,7 +30,8 @@ type PatientScreen =
   | { name: 'meal' }
   | { name: 'dose' }
   | { name: 'detail'; eventId: string }
-  | { name: 'report' };
+  | { name: 'report' }
+  | { name: 'tapping'; study: ObservationStudy };
 
 // Patient-mode router. Plain useState switch, no routing library — this app
 // has four screens and no deep-linking need, so a library would be pure
@@ -170,6 +174,10 @@ export function PatientRoot() {
     setScreen({ name: 'home' });
   }
 
+  function startTapping(study: ObservationStudy) {
+    setScreen({ name: 'tapping', study });
+  }
+
   // Renders nothing until the patient record is bootstrapped (single-digit
   // ms — see usePatient.ts). Nothing in this screen needs a spinner.
   if (!patient) return null;
@@ -181,6 +189,9 @@ export function PatientRoot() {
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
+      {screen.name === 'home' && (
+        <ObservationStatus patientCode={patient.code} onStart={(study) => void startTapping(study)} />
+      )}
       {screen.name === 'home' && (
         <Home
           patientCode={patient.code}
@@ -231,6 +242,10 @@ export function PatientRoot() {
       )}
       {screen.name === 'report' && (
         <ReportProblem screen="patient-home" onBack={() => setScreen({ name: 'home' })} />
+      )}
+      {screen.name === 'tapping' && (
+        <FingerTapping study={screen.study}
+          onDone={() => setScreen({ name: 'home' })} onCancel={() => setScreen({ name: 'home' })} />
       )}
     </div>
   );

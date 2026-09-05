@@ -11,6 +11,7 @@ import { RegimenItemForm, type RegimenItemDraft } from './doctor/RegimenItemForm
 import { ActivityLogScreen } from './doctor/ActivityLogScreen';
 import { ReportSettings } from './doctor/ReportSettings';
 import { ReportProblem } from './ReportProblem';
+import { ObservationPlan } from './doctor/ObservationPlan';
 
 type DoctorScreen =
   | { name: 'list' }
@@ -18,7 +19,8 @@ type DoctorScreen =
   | { name: 'edit'; item: RegimenItem }
   | { name: 'activityLog' }
   | { name: 'settings' }
-  | { name: 'report' };
+  | { name: 'report' }
+  | { name: 'observation' };
 
 // Doctor-mode container: authors the patient's prescribed regimen. This
 // increment's writes are all here — RegimenList and RegimenItemForm are pure
@@ -114,6 +116,13 @@ export function DoctorHome() {
     return <ReportProblem screen="doctor-home" onBack={() => setScreen({ name: 'list' })} />;
   }
 
+  if (screen.name === 'observation') {
+    return (
+      <ObservationPlan patientCode={patient.code} regimen={sortRegimenItems(items ?? [])}
+        onBack={() => setScreen({ name: 'list' })} />
+    );
+  }
+
   return (
     <>
       <RegimenList
@@ -149,6 +158,13 @@ export function DoctorHome() {
           className="text-label text-fg-muted underline underline-offset-2"
         >
           Report a problem
+        </button>
+        <button
+          type="button"
+          onClick={() => setScreen({ name: 'observation' })}
+          className="text-label text-fg-muted underline underline-offset-2"
+        >
+          Observation
         </button>
       </div>
     </>

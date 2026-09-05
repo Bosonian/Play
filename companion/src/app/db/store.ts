@@ -16,6 +16,7 @@ import type { Patient, PatientEvent, PatientModel, Consent, ISODateTime } from '
 import type { RegimenItem } from '../../domain/regimen';
 import type { ActivityRow } from '../activity/types';
 import type { FieldReport } from '../report/types';
+import type { AssessmentRecord, ObservationStudy } from '../../domain/observation';
 
 // The pre-version(4) RegimenItem shape (one doseMg for the whole item, times
 // as bare strings) — kept ONLY so the version(4) upgrade below can name what
@@ -40,6 +41,8 @@ export class CompanionDatabase extends Dexie {
   regimenItems!: EntityTable<RegimenItem, 'id'>;
   activityLog!: EntityTable<ActivityRow, 'id'>;
   fieldReports!: EntityTable<FieldReport, 'id'>;
+  observationStudies!: EntityTable<ObservationStudy, 'id'>;
+  assessments!: EntityTable<AssessmentRecord, 'id'>;
 
   constructor(name = 'pd-companion') {
     super(name);
@@ -97,6 +100,11 @@ export class CompanionDatabase extends Dexie {
           delete (row as { doseMg?: number }).doseMg;
         }
       });
+    });
+
+    this.version(5).stores({
+      observationStudies: '&id, patient, status, [patient+status], startedAt',
+      assessments: '&id, studyId, patient, kind, quality, startedAt',
     });
 
     // When a future schema bump opens a new DB version in another tab, let
@@ -213,6 +221,61 @@ export async function putRegimenItem(database: CompanionDatabase, item: RegimenI
 
 export async function deleteRegimenItem(database: CompanionDatabase, id: string): Promise<void> {
   await database.regimenItems.delete(id);
+}
+
+export async function putObservationStudy(database: CompanionDatabase, study: ObservationStudy): Promise<void> {
+  await database.transaction('rw', database.observationStudies, async () => {
+    if (study.status === 'active') {
+      const active = await database.observationStudies
+        .where('[patient+status]').equals([study.patient, 'active']).toArray();
+      await Promise.all(active.filter((row) => row.id !== study.id).map((row) =>
+        database.observationStudies.update(row.id, {
+          status: 'cancelled',
+          completedAt: study.startedAt,
+        }),
+      ));
+    }
+    await database.observationStudies.put(study);
+  });
+}
+
+export async function getActiveObservationStudy(
+  database: CompanionDatabase,
+  patient: string,
+): Promise<ObservationStudy | undefined> {
+  return database.observationStudies.where('[patient+status]').equals([patient, 'active']).first();
+}
+
+export async function finishObservationStudy(
+  database: CompanionDatabase,
+  id: string,
+  status: 'completed' | 'cancelled',
+  completedAt: string,
+): Promise<void> {
+  await database.observationStudies.update(id, { status, completedAt });
+}
+
+export async function putAssessment(database: CompanionDatabase, assessment: AssessmentRecord): Promise<void> {
+  await database.assessments.put(assessment);
+}
+
+export async function putAssessments(
+  database: CompanionDatabase,
+  assessments: AssessmentRecord[],
+): Promise<void> {
+  await database.transaction('rw', database.assessments, async () => {
+    // bulkPut uses each stable assessment id as its idempotency key. Keeping
+    // both hands in one transaction prevents a failed retry from exposing a
+    // half-saved bilateral session.
+    await database.assessments.bulkPut(assessments);
+  });
+}
+
+export async function getAssessmentsForStudy(
+  database: CompanionDatabase,
+  studyId: string,
+): Promise<AssessmentRecord[]> {
+  return database.assessments.where('studyId').equals(studyId).sortBy('startedAt');
 }
 
 // Unsorted — sorting is the domain layer's job (see regimen.ts's
