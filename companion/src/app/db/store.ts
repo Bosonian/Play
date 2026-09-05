@@ -17,6 +17,9 @@ import type { RegimenItem } from '../../domain/regimen';
 import type { ActivityRow } from '../activity/types';
 import type { FieldReport } from '../report/types';
 import type { AssessmentRecord, ObservationStudy } from '../../domain/observation';
+import type { CustomMedication } from '../../domain/medicationLookup';
+import { customMedicationKey } from '../../domain/medicationLookup';
+import { safeUuid } from '../lib/uuid';
 
 // The pre-version(4) RegimenItem shape (one doseMg for the whole item, times
 // as bare strings) — kept ONLY so the version(4) upgrade below can name what
@@ -43,6 +46,7 @@ export class CompanionDatabase extends Dexie {
   fieldReports!: EntityTable<FieldReport, 'id'>;
   observationStudies!: EntityTable<ObservationStudy, 'id'>;
   assessments!: EntityTable<AssessmentRecord, 'id'>;
+  customMedications!: EntityTable<CustomMedication, 'id'>;
 
   constructor(name = 'pd-companion') {
     super(name);
@@ -105,6 +109,10 @@ export class CompanionDatabase extends Dexie {
     this.version(5).stores({
       observationStudies: '&id, patient, status, [patient+status], startedAt',
       assessments: '&id, studyId, patient, kind, quality, startedAt',
+    });
+
+    this.version(6).stores({
+      customMedications: '&id, &normalizedKey, createdAt',
     });
 
     // When a future schema bump opens a new DB version in another tab, let
@@ -217,6 +225,29 @@ export async function putConsent(database: CompanionDatabase, consent: Consent):
 // ---------------------------------------------------------------------------
 export async function putRegimenItem(database: CompanionDatabase, item: RegimenItem): Promise<void> {
   await database.regimenItems.put(item);
+}
+
+export async function putRegimenWithCustomMedication(
+  database: CompanionDatabase,
+  item: RegimenItem,
+  input: { id?: string; name: string; formulation: string; createdAt?: ISODateTime },
+): Promise<CustomMedication> {
+  const name = input.name.trim().replace(/\s+/g, ' ');
+  const formulation = input.formulation.trim().replace(/\s+/g, ' ');
+  const normalizedKey = customMedicationKey(name, formulation);
+  return database.transaction('rw', database.customMedications, database.regimenItems, async () => {
+    const existing = await database.customMedications.where('normalizedKey').equals(normalizedKey).first();
+    const profile: CustomMedication = existing ?? {
+      id: input.id ?? safeUuid(),
+      name,
+      formulation,
+      normalizedKey,
+      createdAt: input.createdAt ?? new Date().toISOString(),
+    };
+    if (!existing) await database.customMedications.add(profile);
+    await database.regimenItems.put({ ...item, customMedicationId: profile.id });
+    return profile;
+  });
 }
 
 export async function deleteRegimenItem(database: CompanionDatabase, id: string): Promise<void> {

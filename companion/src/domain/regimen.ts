@@ -5,9 +5,15 @@
 // in plain node and reusable from both the doctor editor and (later) patient
 // dose-logging defaults.
 
-import { DRUG_CATALOG, type DrugId } from './drugs';
+import {
+  DRUG_CATALOG,
+  isCatalogDrug,
+  medicationName,
+  type DrugId,
+  type MedicationId,
+} from './drugs';
 import type { ISODateTime } from './types';
-import type { LeddDose } from './ledd';
+import { computeLedd, type LeddDose, type LeddResult } from './ledd';
 
 // One prescribed administration: a clock time and the mg given AT that time.
 // PD regimens are clock-based, so `time` is a plain local "HH:MM" string —
@@ -29,7 +35,10 @@ export interface DoseTime {
 export interface RegimenItem {
   id: string; // uuid — stable identity for edit/remove
   patient: string; // patient code (de-identified)
-  drug: DrugId;
+  drug: MedicationId;
+  customName?: string;
+  customFormulation?: string;
+  customMedicationId?: string;
   times: DoseTime[]; // sorted ascending by .time, no duplicate times
   updatedAt: ISODateTime;
   // UI round-trip only (Phase B's grid↔mg conversion) — NEVER read by LEDD
@@ -59,10 +68,16 @@ export function sortDoseTimes(times: DoseTime[]): DoseTime[] {
 // [] = valid. The returned strings ARE the UI copy (single source of truth —
 // RegimenItemForm renders these verbatim rather than re-deriving its own).
 export function validateRegimenItem(
-  item: Pick<RegimenItem, 'times' | 'strengthMg' | 'freeText'>,
+  item: Pick<RegimenItem, 'times' | 'strengthMg' | 'freeText'> &
+    Partial<Pick<RegimenItem, 'drug' | 'customName' | 'customFormulation'>>,
 ): string[] {
   const errors: string[] = [];
   const hasFreeText = (item.freeText ?? '').trim().length > 0;
+
+  if (item.drug === 'custom') {
+    if ((item.customName ?? '').trim().length === 0) errors.push('Enter a medicine name.');
+    if ((item.customFormulation ?? '').trim().length === 0) errors.push('Enter a formulation.');
+  }
 
   if (hasFreeText && item.times.length > 0) {
     // Mutual exclusion wins outright — no point also complaining about time
@@ -109,10 +124,47 @@ export function regimenDailyDoses(items: RegimenItem[]): LeddDose[] {
   const doses: LeddDose[] = [];
   for (const item of items) {
     for (const dt of item.times) {
-      doses.push({ drug: item.drug, doseMg: dt.doseMg });
+      doses.push({
+        drug: item.drug,
+        doseMg: dt.doseMg,
+        ...(item.drug === 'custom'
+          ? {
+              customName: item.customName,
+              customFormulation: item.customFormulation,
+            }
+          : {}),
+      });
     }
   }
   return doses;
+}
+
+export interface RegimenLeddResult extends LeddResult {
+  excludedMedicationNames: string[];
+}
+
+// LEDD arithmetic only sees numeric dose rows, so this regimen-level wrapper
+// also accounts for free-text schedules that regimenDailyDoses deliberately
+// omits. A custom free-text line is deduplicated with custom exclusions.
+export function computeRegimenLedd(items: RegimenItem[]): RegimenLeddResult {
+  const ledd = computeLedd(regimenDailyDoses(items));
+  const names = new Map<string, string>();
+  for (const name of ledd.excludedCustomNames) {
+    names.set(name.toLowerCase(), name);
+  }
+  for (const item of items) {
+    if (item.drug === 'custom' || (item.freeText ?? '').trim().length > 0) {
+      const name = medicationName(item);
+      const key = name.toLowerCase();
+      if (!names.has(key)) names.set(key, name);
+    }
+  }
+  const excludedMedicationNames = [...names.values()];
+  return {
+    ...ledd,
+    isPartial: excludedMedicationNames.length > 0,
+    excludedMedicationNames,
+  };
 }
 
 // By first time ascending, tie-break by catalog generic name. New array —
@@ -132,12 +184,12 @@ export function sortRegimenItems(items: RegimenItem[]): RegimenItem[] {
     // dedicated test below; fixed by handling "no time" as its own case
     // instead of encoding it into the string being compared.)
     if (aFirst === undefined && bFirst === undefined) {
-      return DRUG_CATALOG[a.drug].generic.localeCompare(DRUG_CATALOG[b.drug].generic);
+      return medicationName(a).localeCompare(medicationName(b));
     }
     if (aFirst === undefined) return 1;
     if (bFirst === undefined) return -1;
     if (aFirst !== bFirst) return aFirst.localeCompare(bFirst);
-    return DRUG_CATALOG[a.drug].generic.localeCompare(DRUG_CATALOG[b.drug].generic);
+    return medicationName(a).localeCompare(medicationName(b));
   });
 }
 
@@ -183,12 +235,12 @@ export function regimenWarnings(items: RegimenItem[]): string[] {
   }
 
   for (const item of items) {
-    if (ONCE_DAILY_DRUGS.has(item.drug) && item.times.length > 1) {
-      const generic = DRUG_CATALOG[item.drug].generic;
+    if (isCatalogDrug(item.drug) && ONCE_DAILY_DRUGS.has(item.drug) && item.times.length > 1) {
+      const generic = medicationName(item);
       warnings.push(`${generic} is a once-daily drug; the regimen lists ${item.times.length} times.`);
     }
     if ((item.freeText ?? '').trim().length > 0) {
-      const generic = DRUG_CATALOG[item.drug].generic;
+      const generic = medicationName(item);
       warnings.push(
         `${generic} has a free-text schedule; it is not included in the LEDD total or the patient's dose list.`,
       );

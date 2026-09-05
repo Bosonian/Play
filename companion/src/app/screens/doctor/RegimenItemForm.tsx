@@ -1,5 +1,11 @@
 import { useState } from 'react';
-import { DRUG_CATALOG, type DrugId } from '../../../domain/drugs';
+import { DRUG_CATALOG, isCatalogDrug, type DrugId, type MedicationId } from '../../../domain/drugs';
+import {
+  medicationLookupOptions,
+  normalizeMedicationName,
+  type CustomMedication,
+  type MedicationLookupOption,
+} from '../../../domain/medicationLookup';
 import {
   PRESCRIBABLE_DRUG_IDS,
   COMMON_STRENGTHS_MG,
@@ -29,7 +35,10 @@ import { parseQuantity, formatQuantity } from '../../../domain/quantity';
 // file's job is state plumbing and layout only; it does not reimplement any
 // domain math.
 export interface RegimenItemDraft {
-  drug: DrugId;
+  drug: MedicationId;
+  customName?: string;
+  customFormulation?: string;
+  customMedicationId?: string;
   times: DoseTime[];
   strengthMg?: number;
   freeText?: string;
@@ -39,6 +48,7 @@ interface RegimenItemFormProps {
   initial: RegimenItem | null; // null = add
   onSave: (draft: RegimenItemDraft) => void;
   onCancel: () => void;
+  savedMedications: CustomMedication[];
 }
 
 // Drug-conditional helper caption, load-bearing copy (SPEC RISK #2, carried
@@ -114,12 +124,12 @@ function displayQty(qty: number, tabletMode: boolean): string {
 // standalone function — called once from a useState lazy initializer — so
 // the mode logic is readable in one place instead of scattered across many
 // individual useState(() => ...) calls that would each recompute it.
-function computeInitialFormState(initial: RegimenItem | null) {
+export function computeInitialFormState(initial: RegimenItem | null) {
   const drug = initial?.drug ?? PRESCRIBABLE_DRUG_IDS[0];
-  const isPatchInit = DRUG_CATALOG[drug].formulation === 'transdermal-patch';
+  const isPatchInit = isCatalogDrug(drug) && DRUG_CATALOG[drug].formulation === 'transdermal-patch';
   const hasFreeTextInit = (initial?.freeText ?? '').trim().length > 0;
 
-  let scheduleMode: 'grid' | 'custom' = 'grid';
+  let scheduleMode: 'grid' | 'custom' = drug === 'custom' ? 'custom' : 'grid';
   let gridStrengthInput = '';
   let gridQtyInputs: Record<SlotId, string> = { ...EMPTY_GRID_QTY_INPUTS };
   let gridTimes: Record<SlotId, string> = { ...DEFAULT_GRID_TIMES };
@@ -129,7 +139,16 @@ function computeInitialFormState(initial: RegimenItem | null) {
   let patchStrengthInput = '';
   let patchTime = '08:00';
 
-  if (initial && isPatchInit) {
+  if (initial?.drug === 'custom') {
+    // Custom medicines always use the direct time + mg editor. Passing a
+    // common time such as 08:00 through itemToGrid would discard the source
+    // rows and risk replacing precise values such as 0.088 on edit.
+    scheduleMode = 'custom';
+    customRows =
+      initial.times.length > 0
+        ? initial.times.map((t) => ({ time: t.time, doseInput: String(t.doseMg) }))
+        : [{ time: '', doseInput: '' }];
+  } else if (initial && isPatchInit) {
     patchStrengthInput = initial.times[0] ? String(initial.times[0].doseMg) : '';
     patchTime = initial.times[0]?.time ?? '08:00';
   } else if (initial && !hasFreeTextInit) {
@@ -159,6 +178,10 @@ function computeInitialFormState(initial: RegimenItem | null) {
 
   return {
     drug,
+    medicineQuery: initial ? (isCatalogDrug(drug) ? DRUG_CATALOG[drug].generic : initial.customName ?? '') : '',
+    customName: initial?.customName ?? '',
+    customFormulation: initial?.customFormulation ?? '',
+    customMedicationId: initial?.customMedicationId,
     freeTextMode: hasFreeTextInit,
     freeTextValue: initial?.freeText ?? '',
     scheduleMode,
@@ -192,10 +215,18 @@ type BuildResult =
   | { ok: true; times: DoseTime[]; strengthMg?: number; freeText?: string }
   | { ok: false; error: string };
 
-export function RegimenItemForm({ initial, onSave, onCancel }: RegimenItemFormProps) {
+export function RegimenItemForm({ initial, onSave, onCancel, savedMedications }: RegimenItemFormProps) {
   const [initialState] = useState(() => computeInitialFormState(initial));
 
-  const [drug, setDrug] = useState<DrugId>(initialState.drug);
+  const [drug, setDrug] = useState<MedicationId>(initialState.drug);
+  const [medicineQuery, setMedicineQuery] = useState(initialState.medicineQuery);
+  const [lookupOpen, setLookupOpen] = useState(false);
+  const [medicineConfirmed, setMedicineConfirmed] = useState(initial !== null);
+  const [customName, setCustomName] = useState(initialState.customName);
+  const [customFormulation, setCustomFormulation] = useState(initialState.customFormulation);
+  const [customMedicationId, setCustomMedicationId] = useState<string | undefined>(
+    initialState.customMedicationId,
+  );
   const [freeTextMode, setFreeTextMode] = useState<boolean>(initialState.freeTextMode);
   const [freeTextValue, setFreeTextValue] = useState<string>(initialState.freeTextValue);
   const [scheduleMode, setScheduleMode] = useState<'grid' | 'custom'>(initialState.scheduleMode);
@@ -216,12 +247,13 @@ export function RegimenItemForm({ initial, onSave, onCancel }: RegimenItemFormPr
   const openedAsCustomFallback = initialState.openedAsCustomFallback;
   const strengthDroppedNotice = initialState.strengthDroppedNotice;
 
-  const spec = DRUG_CATALOG[drug];
-  const isPatch = spec.formulation === 'transdermal-patch';
+  const spec = isCatalogDrug(drug) ? DRUG_CATALOG[drug] : null;
+  const isPatch = spec?.formulation === 'transdermal-patch';
+  const lookupOptions = medicationLookupOptions(medicineQuery, savedMedications);
 
-  function handleDrugChange(nextDrug: DrugId) {
-    const wasPatch = DRUG_CATALOG[drug].formulation === 'transdermal-patch';
-    const willBePatch = DRUG_CATALOG[nextDrug].formulation === 'transdermal-patch';
+  function handleDrugChange(nextDrug: MedicationId) {
+    const wasPatch = isCatalogDrug(drug) && DRUG_CATALOG[drug].formulation === 'transdermal-patch';
+    const willBePatch = isCatalogDrug(nextDrug) && DRUG_CATALOG[nextDrug].formulation === 'transdermal-patch';
     setDrug(nextDrug);
     if (wasPatch !== willBePatch) {
       // Crossing the patch/pill boundary changes the whole SHAPE of the
@@ -239,6 +271,37 @@ export function RegimenItemForm({ initial, onSave, onCancel }: RegimenItemFormPr
       setCustomFitNotice(null);
       setFreeTextValue('');
     }
+  }
+
+  function chooseMedication(option: MedicationLookupOption) {
+    handleDrugChange(option.drug);
+    setMedicineQuery(option.name);
+    setLookupOpen(false);
+    setMedicineConfirmed(true);
+    if (option.kind === 'saved') {
+      setCustomName(option.name);
+      setCustomFormulation(option.detail);
+      setCustomMedicationId(option.customMedicationId);
+      setScheduleMode('custom');
+      if (!initial) setCustomRows([{ time: '', doseInput: '' }]);
+    } else {
+      setCustomName('');
+      setCustomFormulation('');
+      setCustomMedicationId(undefined);
+    }
+  }
+
+  function addTypedMedicine() {
+    const name = medicineQuery.trim().replace(/\s+/g, ' ');
+    if (!name) return;
+    handleDrugChange('custom');
+    setLookupOpen(false);
+    setMedicineConfirmed(true);
+    setCustomName(name);
+    setCustomFormulation('');
+    setCustomMedicationId(undefined);
+    setScheduleMode('custom');
+    if (!initial) setCustomRows([{ time: '', doseInput: '' }]);
   }
 
   function updateGridQty(id: SlotId, value: string) {
@@ -388,8 +451,8 @@ export function RegimenItemForm({ initial, onSave, onCancel }: RegimenItemFormPr
   // a misleading preview line.
   const liveBuild = currentBuild();
   let previewLine: string | null = null;
-  if (liveBuild.ok) {
-    const draftItem = { drug, times: liveBuild.times, strengthMg: liveBuild.strengthMg, freeText: liveBuild.freeText };
+  if (medicineConfirmed && liveBuild.ok) {
+    const draftItem = { drug, customName, customFormulation, times: liveBuild.times, strengthMg: liveBuild.strengthMg, freeText: liveBuild.freeText };
     if (validateRegimenItem(draftItem).length === 0) {
       previewLine = sigLine(draftItem);
     }
@@ -398,19 +461,35 @@ export function RegimenItemForm({ initial, onSave, onCancel }: RegimenItemFormPr
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (saving) return;
+    if (!medicineConfirmed) {
+      setErrors(['Choose a medicine from results or add it.']);
+      return;
+    }
 
     const build = currentBuild();
     if (!build.ok) {
       setErrors([build.error]);
       return;
     }
-    const draftItem = { drug, times: build.times, strengthMg: build.strengthMg, freeText: build.freeText };
+    const draftItem = { drug, customName, customFormulation, times: build.times, strengthMg: build.strengthMg, freeText: build.freeText };
     const validationErrors = validateRegimenItem(draftItem);
     setErrors(validationErrors);
     if (validationErrors.length > 0) return;
 
     setSaving(true);
-    onSave({ drug, times: sortDoseTimes(build.times), strengthMg: build.strengthMg, freeText: build.freeText });
+    onSave({
+      drug,
+      ...(drug === 'custom'
+        ? {
+            customName: customName.trim(),
+            customFormulation: customFormulation.trim(),
+            customMedicationId,
+          }
+        : {}),
+      times: sortDoseTimes(build.times),
+      strengthMg: build.strengthMg,
+      freeText: build.freeText,
+    });
   }
 
   return (
@@ -419,22 +498,74 @@ export function RegimenItemForm({ initial, onSave, onCancel }: RegimenItemFormPr
 
       <div className="mt-4">
         <label htmlFor="regimen-drug" className="block text-label text-fg-muted">
-          Drug
+          Medicine
         </label>
-        <select
+        <input
           id="regimen-drug"
-          value={drug}
-          onChange={(e) => handleDrugChange(e.target.value as DrugId)}
+          type="search"
+          value={medicineQuery}
+          onFocus={() => setLookupOpen(true)}
+          onChange={(e) => {
+            setMedicineQuery(e.target.value);
+            setLookupOpen(true);
+            setMedicineConfirmed(false);
+          }}
+          placeholder="Search medicine or brand"
           className="mt-1 w-full rounded-sm border border-line bg-bg px-3 py-2 text-body text-fg"
-        >
-          {PRESCRIBABLE_DRUG_IDS.map((id) => (
-            <option key={id} value={id}>
-              {DRUG_CATALOG[id].generic}
-            </option>
-          ))}
-        </select>
-        <p className="mt-1 text-caption text-fg-muted">Brands: {spec.brands.join(', ')}</p>
+        />
+        {lookupOpen && (
+          <div
+            id="medicine-results"
+            aria-label="Medicine search results"
+            className="mt-2 max-h-52 space-y-1 overflow-y-auto rounded-sm border border-line bg-bg p-1"
+          >
+            {lookupOptions.map((option) => (
+              <button
+                key={option.kind === 'catalog' ? option.drug : option.customMedicationId}
+                type="button"
+                onClick={() => chooseMedication(option)}
+                className="flex w-full items-center justify-between rounded-sm px-3 py-2 text-left hover:bg-surface-soft"
+              >
+                <span>
+                  <span className="block text-body text-fg">{option.name}</span>
+                  <span className="block text-caption text-fg-muted">{option.detail}</span>
+                </span>
+                <span className="text-caption text-fg-muted">
+                  {option.kind === 'catalog' ? 'Built-in' : 'Saved medicine'}
+                </span>
+              </button>
+            ))}
+            {medicineQuery.trim() !== '' && !lookupOptions.some(
+              (option) => normalizeMedicationName(option.name) === normalizeMedicationName(medicineQuery),
+            ) && (
+              <button type="button" onClick={addTypedMedicine} className="w-full rounded-sm px-3 py-2 text-left text-label text-accent">
+                Add “{medicineQuery.trim()}” as other medicine
+              </button>
+            )}
+          </div>
+        )}
+        {spec && <p className="mt-1 text-caption text-fg-muted">Brands: {spec.brands.join(', ')}</p>}
       </div>
+
+      {drug === 'custom' && (
+        <div className="mt-4">
+          <p className="text-body font-medium text-fg">{customName}</p>
+          <label htmlFor="custom-formulation" className="mt-2 block text-label text-fg-muted">
+            Formulation
+          </label>
+          <input
+            id="custom-formulation"
+            type="text"
+            value={customFormulation}
+            onChange={(e) => {
+              setCustomFormulation(e.target.value);
+              setCustomMedicationId(undefined);
+            }}
+            placeholder="e.g. Immediate-release tablet"
+            className="mt-1 w-full rounded-sm border border-line bg-bg px-3 py-2 text-body text-fg"
+          />
+        </div>
+      )}
 
       {isPatch && (
         <div className="mt-4">
@@ -459,7 +590,7 @@ export function RegimenItemForm({ initial, onSave, onCancel }: RegimenItemFormPr
               className="w-24 rounded-sm border border-line bg-bg px-3 py-2 text-body text-fg"
             />
           </div>
-          {doseHelperCaption(drug) && (
+          {isCatalogDrug(drug) && doseHelperCaption(drug) && (
             <p className="mt-1 text-caption text-fg-muted">{doseHelperCaption(drug)}</p>
           )}
 
@@ -479,7 +610,7 @@ export function RegimenItemForm({ initial, onSave, onCancel }: RegimenItemFormPr
         </div>
       )}
 
-      {!isPatch && !freeTextMode && scheduleMode === 'grid' && (
+      {!isPatch && drug !== 'custom' && !freeTextMode && scheduleMode === 'grid' && (
         <div className="mt-4">
           <label htmlFor="regimen-strength" className="block text-label text-fg-muted">
             Strength per tablet (mg)
@@ -597,9 +728,11 @@ export function RegimenItemForm({ initial, onSave, onCancel }: RegimenItemFormPr
             Add time
           </button>
           <div className="mt-2">
-            <button type="button" onClick={tryUseGrid} className={secondaryButtonClass}>
-              Use the grid
-            </button>
+            {drug !== 'custom' && (
+              <button type="button" onClick={tryUseGrid} className={secondaryButtonClass}>
+                Use the grid
+              </button>
+            )}
             {customFitNotice && <p className="mt-1 text-caption text-warn">{customFitNotice}</p>}
           </div>
         </div>

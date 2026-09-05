@@ -8,10 +8,9 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, addEvent, deleteEvent, getRegimenForPatient } from '../../db/store';
 import { usePatient } from '../../patient/usePatient';
 import { buildMotorEvent, buildMealEvent, refineDyskinesia, shiftEventTime, eventLabel, formatTimeHM } from '../../patient/log';
-import { buildDoseEvent, extraDoseChoices, doseLabel } from '../../patient/doses';
+import { buildDoseEvent, extraDoseChoices, doseLabel, type DoseChoice } from '../../patient/doses';
 import { logEvent } from '../../activity/activityLog';
 import type { PrimaryTap, DyskinesiaRefinement } from '../../../domain/motor';
-import type { DrugId } from '../../../domain/drugs';
 import type { MotorEvent, PatientEvent } from '../../../domain/types';
 import type { RegimenItem } from '../../../domain/regimen';
 import { Home, type LastAction } from './Home';
@@ -133,13 +132,21 @@ export function PatientRoot({ onSetupObservation }: { onSetupObservation: () => 
   // the "Log another dose" picker navigates back to Home itself, at the call
   // site below. `scheduledTime` is undefined for the extra-dose path — see
   // the "Log another dose" wiring below, which omits the third argument.
-  async function logDose(drug: DrugId, doseMg: number, scheduledTime?: string) {
+  async function logDose(choice: DoseChoice, scheduledTime?: string) {
     if (!patient) return;
-    const ev = buildDoseEvent(patient.code, drug, doseMg, new Date().toISOString(), scheduledTime);
+    const ev = buildDoseEvent(
+      patient.code,
+      choice.drug,
+      choice.doseMg,
+      new Date().toISOString(),
+      scheduledTime,
+      undefined,
+      choice,
+    );
     await addEvent(db, ev);
     void logEvent(
       'dose',
-      `Logged dose: ${doseLabel(drug, doseMg)}, ${scheduledTime === undefined ? 'unscheduled' : `${scheduledTime} slot`}`,
+      `Logged dose: ${doseLabel(choice, choice.doseMg)}, ${scheduledTime === undefined ? 'unscheduled' : `${scheduledTime} slot`}`,
     );
     setLastAction({ kind: 'logged', event: ev, label: 'Dose logged' });
   }
@@ -202,7 +209,7 @@ export function PatientRoot({ onSetupObservation }: { onSetupObservation: () => 
           onLogState={() => setScreen({ name: 'state' })}
           onLogMeal={() => setScreen({ name: 'meal' })}
           onOpenEvent={(id) => setScreen({ name: 'detail', eventId: id })}
-          onTakeDose={(slot) => withDebounce(() => logDose(slot.drug, slot.doseMg, slot.time))}
+          onTakeDose={(slot) => withDebounce(() => logDose(slot, slot.time))}
           onLogAnotherDose={() => setScreen({ name: 'dose' })}
           onReportProblem={() => setScreen({ name: 'report' })}
         />
@@ -226,7 +233,7 @@ export function PatientRoot({ onSetupObservation }: { onSetupObservation: () => 
           choices={extraDoseChoices(regimenItems ?? [])}
           onLog={(c) =>
             withDebounce(() => {
-              void logDose(c.drug, c.doseMg);
+              void logDose(c);
               setScreen({ name: 'home' });
             })
           }

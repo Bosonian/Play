@@ -10,6 +10,20 @@ Every recommendation must identify its inputs, missing data, confidence,
 applicable clinical constraints, expected benefit, and important risks. The
 doctor remains the decision maker.
 
+## Medication lookup boundary
+
+Medication lookup is offline-first. It combines the curated catalog with
+custom name/formulation profiles saved on this device. Saved profiles contain
+no patient, dose, frequency, or schedule data. Their immutable UUID identifies
+only the medicine profile; regimen item UUIDs identify schedules and dose
+matching.
+
+Custom medicines have no inferred LEDD or PK/PD factor. Any LEDD shown beside
+a regimen containing one is explicitly a partial catalog subtotal. A future
+live provider integration may be evaluated against an authoritative medicines
+source, but no external lookup, scraping, or fuzzy clinical identity merging
+is part of this release.
+
 ## Release sequence
 
 ### 1. Observation foundation — implemented locally

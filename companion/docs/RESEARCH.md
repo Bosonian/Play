@@ -192,6 +192,20 @@ For the Increment 2 (logging) and later engine/dashboard specs:
   doses; safinamide = effect-side gain/duration modifier; rotigotine = additive
   tonic plateau; baclofen = ignored.
 - **LEDD calculator** honoring fractional/fixed/per-mg factors, baclofen excluded.
+
+### Custom medicine data boundary
+
+Medicines absent from the curated catalog are stored as exact local
+name/formulation profiles and remain excluded from LEDD and PK/PD inference.
+Whitespace and case normalize identity reuse, while formulation remains part
+of the key so immediate-release, prolonged-release, salts, and any strength
+written in the name or formulation are not merged. Dose events retain
+name/formulation snapshots plus the regimen item id for stable historical
+labels and schedule matching.
+
+The current lookup is local-only. A live EMA or other authoritative provider
+is deferred until its API, licensing, regional coverage, offline failure
+behavior, and clinical identity mapping can be evaluated.
 - Every **[V]/[C]** number ships as `draft`/"confirm with neurologist," surfaced
   in a content-review affordance (the neurologist is the final check).
 

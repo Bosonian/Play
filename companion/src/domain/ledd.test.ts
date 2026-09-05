@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { computeLedd } from './ledd';
-import type { DoseEvent, DrugId } from './types';
+import type { DoseEvent, MedicationId } from './types';
 
 let seq = 0;
-const dose = (drug: DrugId, doseMg: number, at = '2026-07-16T08:00:00Z'): DoseEvent => ({
+const dose = (drug: MedicationId, doseMg: number, at = '2026-07-16T08:00:00Z'): DoseEvent => ({
   id: `dose-${++seq}`,
   patient: 'P-01',
   at,
@@ -77,5 +77,27 @@ describe('computeLedd', () => {
     expect(result.totalMg).toBe(0);
     expect(result.levodopaBaseMg).toBe(0);
     expect(result.byDrug).toEqual({});
+    expect(result.isPartial).toBe(false);
+    expect(result.excludedCustomNames).toEqual([]);
+  });
+
+  it('custom doses are excluded and their display names are deduplicated', () => {
+    const result = computeLedd([
+      dose('levodopa', 100),
+      {
+        ...dose('custom', 0.088),
+        customName: 'Pramipexole',
+        customFormulation: 'Immediate-release tablet',
+      },
+      {
+        ...dose('custom', 0.18),
+        customName: ' pramipexole ',
+        customFormulation: 'Prolonged-release tablet',
+      },
+    ]);
+    expect(result.totalMg).toBe(100);
+    expect(result.byDrug).toEqual({ levodopa: 100 });
+    expect(result.isPartial).toBe(true);
+    expect(result.excludedCustomNames).toEqual(['Pramipexole']);
   });
 });

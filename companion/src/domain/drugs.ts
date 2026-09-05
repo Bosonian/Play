@@ -15,6 +15,31 @@ export type DrugId =
   | 'opicapone'
   | 'baclofen';
 
+// Custom medicines deliberately sit outside the curated pharmacology
+// catalog. They can be prescribed and logged, but have no inferred PK/PD or
+// LEDD metadata.
+export type MedicationId = DrugId | 'custom';
+
+export function isCatalogDrug(id: MedicationId): id is DrugId {
+  return id !== 'custom';
+}
+
+export interface MedicationIdentity {
+  drug: MedicationId;
+  customName?: string;
+  customFormulation?: string;
+}
+
+export function medicationName(medication: MedicationIdentity): string {
+  if (isCatalogDrug(medication.drug)) return DRUG_CATALOG[medication.drug].generic;
+  return medication.customName?.trim() || 'Other medicine';
+}
+
+export function medicationFormulation(medication: MedicationIdentity): string | undefined {
+  if (isCatalogDrug(medication.drug)) return DRUG_CATALOG[medication.drug].formulation;
+  return medication.customFormulation?.trim() || undefined;
+}
+
 export type DrugClass =
   | 'dopamine-precursor'
   | 'ddci'

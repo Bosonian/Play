@@ -10,7 +10,7 @@
 // and because building the pure logic ahead of the form lets Phase B start
 // directly on the UI instead of also inventing the model math under time
 // pressure.
-import { DRUG_CATALOG } from './drugs';
+import { DRUG_CATALOG, isCatalogDrug, medicationName } from './drugs';
 import type { DoseTime, RegimenItem } from './regimen';
 import { sortDoseTimes } from './regimen';
 import { formatQuantity, roundMg } from './quantity';
@@ -174,15 +174,15 @@ export function applyPreset(grid: GridState, preset: FrequencyPreset): GridState
 // '—' (em dash) spaced between the drug clause and the schedule clause, a
 // plain hyphen (no spaces) between pattern fields.
 export function sigLine(
-  item: Pick<RegimenItem, 'drug' | 'times' | 'strengthMg' | 'freeText'>,
+  item: Pick<RegimenItem, 'drug' | 'times' | 'strengthMg' | 'freeText' | 'customName' | 'customFormulation'>,
 ): string {
-  const generic = DRUG_CATALOG[item.drug].generic;
+  const generic = medicationName(item);
 
   if ((item.freeText ?? '').trim().length > 0) {
     return `${generic} — ${item.freeText}`;
   }
 
-  const isPatch = DRUG_CATALOG[item.drug].formulation === 'transdermal-patch';
+  const isPatch = isCatalogDrug(item.drug) && DRUG_CATALOG[item.drug].formulation === 'transdermal-patch';
   if (isPatch && item.times.length === 1) {
     const [dt] = item.times;
     return `${generic} ${dt.doseMg} mg/24h — Patch, daily ${dt.time}`;

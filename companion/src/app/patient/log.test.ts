@@ -194,4 +194,15 @@ describe('eventLabel', () => {
       'Levodopa/benserazide (dispersible) 125 mg',
     );
   });
+
+  it('keeps a custom event formulation in its historical label', () => {
+    expect(eventLabel({
+      ...base,
+      kind: 'dose',
+      drug: 'custom',
+      customName: 'Pramipexole',
+      customFormulation: 'Immediate-release tablet',
+      doseMg: 0.088,
+    })).toBe('Pramipexole (Immediate-release tablet) 0.088 mg');
+  });
 });

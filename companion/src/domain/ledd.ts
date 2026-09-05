@@ -5,14 +5,15 @@
 // worth — the caller decides what "a day" means, e.g. by pre-filtering
 // DoseEvents to a local-day window before calling this).
 
-import type { DrugId } from './drugs';
-import { DRUG_CATALOG } from './drugs';
-import type { DoseEvent } from './types';
+import type { DrugId, MedicationId } from './drugs';
+import { DRUG_CATALOG, isCatalogDrug, medicationName } from './drugs';
 
 export interface LeddResult {
   totalMg: number;
   levodopaBaseMg: number;
   byDrug: Partial<Record<DrugId, number>>;
+  isPartial: boolean;
+  excludedCustomNames: string[];
 }
 
 // Narrowed input type: computeLedd only ever reads `drug` and `doseMg`, so
@@ -20,7 +21,12 @@ export interface LeddResult {
 // prototypical day's doses, which has no event `id`/`at`) can reuse this
 // function without first fabricating a full DoseEvent. Every DoseEvent
 // already satisfies this shape, so this is a non-breaking, type-only change.
-export type LeddDose = Pick<DoseEvent, 'drug' | 'doseMg'>;
+export interface LeddDose {
+  drug: MedicationId;
+  doseMg: number;
+  customName?: string;
+  customFormulation?: string;
+}
 
 // Compute LEDD from a list of dose events (domain rule, per SPEC RISK #2/#3,
 // orchestrator-approved):
@@ -39,6 +45,7 @@ export function computeLedd(doses: LeddDose[]): LeddResult {
   // denominator `fraction` factors apply to.
   let levodopaBaseMg = 0;
   for (const dose of doses) {
+    if (!isCatalogDrug(dose.drug)) continue;
     const spec = DRUG_CATALOG[dose.drug];
     if (spec.ledFactor.kind === 'reference') {
       levodopaBaseMg += dose.doseMg * spec.ledFactor.value;
@@ -48,8 +55,19 @@ export function computeLedd(doses: LeddDose[]): LeddResult {
   // Step 2: per-drug contributions.
   const byDrug: Partial<Record<DrugId, number>> = {};
   const fixedOrFractionCounted = new Set<DrugId>();
+  const excludedCustomNames: string[] = [];
+  const excludedNameKeys = new Set<string>();
 
   for (const dose of doses) {
+    if (!isCatalogDrug(dose.drug)) {
+      const name = medicationName(dose);
+      const key = name.toLowerCase();
+      if (!excludedNameKeys.has(key)) {
+        excludedNameKeys.add(key);
+        excludedCustomNames.push(name);
+      }
+      continue;
+    }
     const spec = DRUG_CATALOG[dose.drug];
     const f = spec.ledFactor;
     let contribution = 0;
@@ -101,5 +119,11 @@ export function computeLedd(doses: LeddDose[]): LeddResult {
   // mutual-exclusion rule (co-prescribing two COMT inhibitors is not
   // standard practice). That's a clinical-safety check, not an arithmetic
   // one, and belongs in a later engine/validation increment, not here.
-  return { totalMg, levodopaBaseMg, byDrug };
+  return {
+    totalMg,
+    levodopaBaseMg,
+    byDrug,
+    isPartial: excludedCustomNames.length > 0,
+    excludedCustomNames,
+  };
 }

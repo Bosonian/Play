@@ -22,6 +22,7 @@ import {
   getConsent,
   putConsent,
   putRegimenItem,
+  putRegimenWithCustomMedication,
   deleteRegimenItem,
   getRegimenForPatient,
   type CompanionDatabase,
@@ -169,6 +170,35 @@ const regimenItem = (
 });
 
 describe('store — regimen items', () => {
+  it('atomically creates and reuses a normalized custom medicine identity without reusing schedule data', async () => {
+    const db = freshDb();
+    const first = regimenItem('custom-r1', 'P-01', {
+      drug: 'custom',
+      customName: 'Pramipexole',
+      customFormulation: 'Immediate-release tablet',
+      times: [{ time: '08:00', doseMg: 0.088 }],
+    });
+    const profile = await putRegimenWithCustomMedication(db, first, {
+      name: 'Pramipexole',
+      formulation: 'Immediate-release tablet',
+    });
+    const second = regimenItem('custom-r2', 'P-01', {
+      drug: 'custom',
+      customName: ' pramipexole ',
+      customFormulation: ' immediate-release  tablet ',
+      times: [{ time: '20:00', doseMg: 0.18 }],
+    });
+    const reused = await putRegimenWithCustomMedication(db, second, {
+      name: second.customName!,
+      formulation: second.customFormulation!,
+    });
+    expect(reused.id).toBe(profile.id);
+    expect(await db.customMedications.count()).toBe(1);
+    expect((await db.regimenItems.get('custom-r1'))?.times[0].doseMg).toBe(0.088);
+    expect((await db.regimenItems.get('custom-r2'))?.times).toEqual([{ time: '20:00', doseMg: 0.18 }]);
+    db.close();
+  });
+
   it('CRUD round trip: put two items for P-01, one for P-02 -> getRegimenForPatient(P-01) returns exactly the two', async () => {
     const db = freshDb();
     await putRegimenItem(db, regimenItem('r1', 'P-01'));
@@ -511,6 +541,53 @@ describe('store — regimen items', () => {
     expect(await v5db.observationStudies.count()).toBe(1);
     expect((await v5db.assessments.get('legacy-feature-record'))?.featureSchemaVersion).toBe(1);
     v5db.close();
+  });
+
+  it('migration: v5 rows are untouched and the v6 custom medicine library is usable', async () => {
+    class V5Database extends Dexie {
+      regimenItems!: EntityTable<RegimenItem, 'id'>;
+      events!: EntityTable<PatientEvent, 'id'>;
+      constructor(name: string) {
+        super(name);
+        this.version(5).stores({
+          patients: '&code, createdAt',
+          events: '&id, patient, at, kind, [patient+at]',
+          patientModels: '&patient',
+          consent: '&patient',
+          regimenItems: '&id, patient',
+          activityLog: '&id, at',
+          fieldReports: '&id, status, createdAt',
+          observationStudies: '&id, patient, status, [patient+status], startedAt',
+          assessments: '&id, studyId, patient, kind, quality, startedAt',
+        });
+      }
+    }
+    const dbName = `test-companion-migration-v6-${Date.now()}`;
+    const v5 = new V5Database(dbName);
+    const preserved = {
+      ...regimenItem('preserved-v5', 'P-01'),
+      futureUnknownField: 'keep-me',
+    };
+    await v5.regimenItems.put(preserved);
+    await v5.events.put(dose('preserved-v5-event', '2026-09-05T08:00:00Z'));
+    v5.close();
+
+    const v6 = makeDb(dbName);
+    expect(await v6.regimenItems.get('preserved-v5')).toEqual(preserved);
+    expect((await v6.events.get('preserved-v5-event'))?.id).toBe('preserved-v5-event');
+    expect(await v6.customMedications.count()).toBe(0);
+    await putRegimenWithCustomMedication(
+      v6,
+      regimenItem('new-custom', 'P-01', {
+        drug: 'custom',
+        customName: 'Pramipexole',
+        customFormulation: 'IR tablet',
+        times: [{ time: '08:00', doseMg: 0.088 }],
+      }),
+      { name: 'Pramipexole', formulation: 'IR tablet' },
+    );
+    expect(await v6.customMedications.count()).toBe(1);
+    v6.close();
   });
 
   it('fieldReports.status index: where(status).equals(pending) returns exactly the pending rows', async () => {

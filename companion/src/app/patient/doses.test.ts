@@ -53,7 +53,7 @@ describe('expandSchedule', () => {
     const slots = expandSchedule(items);
     expect(slots.map((s) => s.time)).toEqual(['08:00', '12:00', '20:00']);
     for (const s of slots) {
-      expect(s.itemId).toBe('item-1');
+      expect(s.regimenItemId).toBe('item-1');
       expect(s.drug).toBe('levodopa');
       expect(s.doseMg).toBe(100);
     }
@@ -88,8 +88,8 @@ describe('expandSchedule', () => {
     ];
     const slots = expandSchedule(items);
     expect(slots).toEqual([
-      { itemId: 'a', drug: 'levodopa', doseMg: 100, time: '08:00' },
-      { itemId: 'b', drug: 'levodopa', doseMg: 50, time: '20:00' },
+      { regimenItemId: 'a', drug: 'levodopa', doseMg: 100, time: '08:00' },
+      { regimenItemId: 'b', drug: 'levodopa', doseMg: 50, time: '20:00' },
     ]);
   });
 
@@ -105,9 +105,9 @@ describe('expandSchedule', () => {
     ];
     const slots = expandSchedule(items);
     expect(slots).toEqual([
-      { itemId: 'item-1', drug: 'levodopa', doseMg: 100, time: '08:00' },
-      { itemId: 'item-1', drug: 'levodopa', doseMg: 100, time: '12:00' },
-      { itemId: 'item-1', drug: 'levodopa', doseMg: 50, time: '18:00' },
+      { regimenItemId: 'item-1', drug: 'levodopa', doseMg: 100, time: '08:00' },
+      { regimenItemId: 'item-1', drug: 'levodopa', doseMg: 100, time: '12:00' },
+      { regimenItemId: 'item-1', drug: 'levodopa', doseMg: 50, time: '18:00' },
     ]);
   });
 
@@ -136,9 +136,63 @@ describe('buildDoseEvent', () => {
     expect('scheduledTime' in ev).toBe(false);
     expect(ev.id.length).toBeGreaterThan(0);
   });
+
+  it('snapshots custom identity and regimenItemId on the event', () => {
+    const ev = buildDoseEvent(
+      'local-1',
+      'custom',
+      0.088,
+      '2026-07-16T08:12:00.000Z',
+      '08:00',
+      'custom-event',
+      {
+        regimenItemId: 'regimen-prami',
+        customMedicationId: 'medicine-prami',
+        customName: 'Pramipexole',
+        customFormulation: 'Immediate-release tablet',
+      },
+    );
+    expect(ev).toMatchObject({
+      regimenItemId: 'regimen-prami',
+      customMedicationId: 'medicine-prami',
+      customName: 'Pramipexole',
+      customFormulation: 'Immediate-release tablet',
+      doseMg: 0.088,
+    });
+  });
 });
 
 describe('markTakenSlots', () => {
+  it('keeps two custom medicines at the same time separate by regimenItemId', () => {
+    const slots = expandSchedule([
+      item({
+        id: 'prami',
+        drug: 'custom',
+        customName: 'Pramipexole',
+        customFormulation: 'IR tablet',
+        times: [{ time: '08:00', doseMg: 0.088 }],
+      }),
+      item({
+        id: 'vitamin',
+        drug: 'custom',
+        customName: 'Vitamin D',
+        customFormulation: 'Tablet',
+        times: [{ time: '08:00', doseMg: 25 }],
+      }),
+    ]);
+    const ev = doseEvent({
+      drug: 'custom',
+      regimenItemId: 'prami',
+      customName: 'Pramipexole',
+      customFormulation: 'IR tablet',
+      scheduledTime: '08:00',
+      doseMg: 0.088,
+    });
+    const statuses = markTakenSlots(slots, [ev]);
+    expect(statuses.find((s) => s.slot.regimenItemId === 'prami')?.takenAt).toBe(ev.at);
+    expect(statuses.find((s) => s.slot.regimenItemId === 'vitamin')?.takenAt).toBeNull();
+  });
+
   it('no events → every slot takenAt null', () => {
     const slots = expandSchedule([
       item({
@@ -169,6 +223,40 @@ describe('markTakenSlots', () => {
     const [status] = markTakenSlots(slots, [ev]);
     expect(status.takenAt).toBe(ev.at);
     expect(status.eventId).toBe('ev-mismatch');
+  });
+
+  it('same regimenItemId does not match after the catalog medicine changes', () => {
+    const slots = expandSchedule([
+      item({ id: 'same-line', drug: 'baclofen', times: [{ time: '08:00', doseMg: 10 }] }),
+    ]);
+    const ev = doseEvent({
+      regimenItemId: 'same-line',
+      drug: 'levodopa',
+      scheduledTime: '08:00',
+    });
+    expect(markTakenSlots(slots, [ev])[0].takenAt).toBeNull();
+  });
+
+  it('custom regimenItemId also requires matching custom medicine identity', () => {
+    const slots = expandSchedule([
+      item({
+        id: 'same-line',
+        drug: 'custom',
+        customMedicationId: 'new-profile',
+        customName: 'Pramipexole',
+        customFormulation: 'ER tablet',
+        times: [{ time: '08:00', doseMg: 0.26 }],
+      }),
+    ]);
+    const ev = doseEvent({
+      regimenItemId: 'same-line',
+      drug: 'custom',
+      customMedicationId: 'old-profile',
+      customName: 'Pramipexole',
+      customFormulation: 'IR tablet',
+      scheduledTime: '08:00',
+    });
+    expect(markTakenSlots(slots, [ev])[0].takenAt).toBeNull();
   });
 
   it('extra dose (no scheduledTime) ticks nothing', () => {
@@ -251,7 +339,7 @@ describe('groupSlotsByDaypart', () => {
   // that check in every case.
   function status(time: string, overrides: Partial<SlotStatus> = {}): SlotStatus {
     return {
-      slot: { itemId: 'item-1', drug: 'levodopa', doseMg: 100, time },
+      slot: { regimenItemId: 'item-1', drug: 'levodopa', doseMg: 100, time },
       takenAt: null,
       eventId: null,
       ...overrides,
@@ -329,9 +417,9 @@ describe('extraDoseChoices', () => {
     ];
     const choices = extraDoseChoices(items);
     expect(choices).toEqual([
-      { drug: 'levodopa', doseMg: 100 },
-      { drug: 'rotigotine', doseMg: 4 },
-      { drug: 'levodopa', doseMg: 50 },
+      { regimenItemId: 'a', drug: 'levodopa', doseMg: 100 },
+      { regimenItemId: 'c', drug: 'rotigotine', doseMg: 4 },
+      { regimenItemId: 'b', drug: 'levodopa', doseMg: 50 },
     ]);
   });
 
@@ -346,8 +434,8 @@ describe('extraDoseChoices', () => {
       }),
     ];
     expect(extraDoseChoices(items)).toEqual([
-      { drug: 'levodopa', doseMg: 100 },
-      { drug: 'levodopa', doseMg: 50 },
+      { regimenItemId: 'item-1', drug: 'levodopa', doseMg: 100 },
+      { regimenItemId: 'item-1', drug: 'levodopa', doseMg: 50 },
     ]);
   });
 });
@@ -364,5 +452,20 @@ describe('doseLabel + takenVerb', () => {
 
   it('levodopa → takenVerb "Taken"', () => {
     expect(takenVerb('levodopa')).toBe('Taken');
+  });
+
+  it('labels a custom medicine from its event snapshot', () => {
+    expect(doseLabel({
+      drug: 'custom',
+      customName: 'Pramipexole',
+      customFormulation: 'Immediate-release tablet',
+    }, 0.088)).toBe(
+      'Pramipexole (Immediate-release tablet) 0.088 mg',
+    );
+  });
+
+  it('distinguishes custom formulations in labels', () => {
+    expect(doseLabel({ drug: 'custom', customName: 'Pramipexole', customFormulation: 'IR' }, 0.088))
+      .not.toBe(doseLabel({ drug: 'custom', customName: 'Pramipexole', customFormulation: 'ER' }, 0.088));
   });
 });

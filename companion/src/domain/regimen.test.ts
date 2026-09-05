@@ -7,6 +7,7 @@ import {
   regimenDailyDoses,
   sortRegimenItems,
   regimenWarnings,
+  computeRegimenLedd,
   type RegimenItem,
   type DoseTime,
 } from './regimen';
@@ -124,6 +125,28 @@ describe('validateRegimenItem', () => {
   it('valid strengthMg alongside valid times -> []', () => {
     expect(validateRegimenItem({ times: times(100, '08:00'), strengthMg: 100 })).toEqual([]);
   });
+
+  it('requires a name and formulation for a custom medication', () => {
+    expect(
+      validateRegimenItem({
+        drug: 'custom',
+        customName: ' ',
+        customFormulation: '',
+        times: times(0.088, '08:00'),
+      }),
+    ).toEqual(['Enter a medicine name.', 'Enter a formulation.']);
+  });
+
+  it('accepts a fully identified custom medication', () => {
+    expect(
+      validateRegimenItem({
+        drug: 'custom',
+        customName: 'Pramipexole',
+        customFormulation: 'Immediate-release tablet',
+        times: times(0.088, '08:00'),
+      }),
+    ).toEqual([]);
+  });
 });
 
 describe('regimenDailyDoses', () => {
@@ -194,6 +217,18 @@ describe('dailyMg', () => {
   it('freeText-only item -> 0', () => {
     expect(dailyMg({ times: [] })).toBe(0);
   });
+
+  it('preserves a precise sub-milligram dose without grid rounding', () => {
+    const precise = item({
+      drug: 'custom',
+      customName: 'Pramipexole',
+      customFormulation: 'Immediate-release tablet',
+      times: times(0.088, '08:00', '14:00', '20:00'),
+    });
+    expect(precise.times[0].doseMg).toBe(0.088);
+    expect(dailyMg(precise)).toBeCloseTo(0.264, 12);
+    expect(regimenDailyDoses([precise])[0].doseMg).toBe(0.088);
+  });
 });
 
 describe('regimen -> LEDD', () => {
@@ -253,6 +288,39 @@ describe('regimen -> LEDD', () => {
     const items = [item({ drug: 'levodopa', times: [], freeText: 'Irregular taper.' })];
     const result = computeLedd(regimenDailyDoses(items));
     expect(result.totalMg).toBe(0);
+  });
+
+  it('excludes custom medicine and marks a catalog subtotal as partial', () => {
+    const items = [
+      item({ drug: 'levodopa', times: times(100, '08:00') }),
+      item({
+        drug: 'custom',
+        customName: 'Pramipexole',
+        customFormulation: 'Immediate-release tablet',
+        times: times(0.088, '08:00'),
+      }),
+    ];
+    const result = computeLedd(regimenDailyDoses(items));
+    expect(result.totalMg).toBe(100);
+    expect(result.isPartial).toBe(true);
+    expect(result.excludedCustomNames).toEqual(['Pramipexole']);
+  });
+
+  it('marks free-text catalog/custom schedules partial and deduplicates custom names', () => {
+    const result = computeRegimenLedd([
+      item({ drug: 'levodopa', times: times(100, '08:00') }),
+      item({ drug: 'baclofen', times: [], freeText: 'As needed.' }),
+      item({
+        drug: 'custom',
+        customName: 'Pramipexole',
+        customFormulation: 'IR tablet',
+        times: [],
+        freeText: 'As directed.',
+      }),
+    ]);
+    expect(result.totalMg).toBe(100);
+    expect(result.isPartial).toBe(true);
+    expect(result.excludedMedicationNames).toEqual(['Baclofen', 'Pramipexole']);
   });
 });
 

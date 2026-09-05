@@ -1,9 +1,8 @@
-import type { DrugId } from '../../../domain/drugs';
-import { doseLabel } from '../../patient/doses';
+import { doseLabel, type DoseChoice } from '../../patient/doses';
 
 interface DoseProps {
-  choices: Array<{ drug: DrugId; doseMg: number }>;
-  onLog: (choice: { drug: DrugId; doseMg: number }) => void;
+  choices: DoseChoice[];
+  onLog: (choice: DoseChoice) => void;
   onBack: () => void;
 }
 
@@ -43,12 +42,12 @@ export function Dose({ choices, onLog, onBack }: DoseProps) {
         ) : (
           choices.map((choice) => (
             <button
-              key={`${choice.drug}-${choice.doseMg}`}
+              key={`${choice.regimenItemId}-${choice.doseMg}`}
               type="button"
               onClick={() => onLog(choice)}
               className={slabClass}
             >
-              <span className="block text-title font-medium text-fg">{doseLabel(choice.drug, choice.doseMg)}</span>
+              <span className="block text-title font-medium text-fg">{doseLabel(choice, choice.doseMg)}</span>
             </button>
           ))
         )}

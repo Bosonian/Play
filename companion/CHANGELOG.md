@@ -4,6 +4,22 @@ A de-identified, physician-in-the-loop Parkinson's dosing companion. Patients
 log levodopa doses, motor state, and meals; the treating neurologist reviews the
 patterns and adjusts the prescription. The app never prescribes.
 
+## Unreleased — custom medicines and offline lookup
+
+- The regimen editor searches built-in generic/brand names and locally saved
+  custom medicine profiles. An unmatched name requires an explicit
+  “Add … as other medicine” action and a formulation.
+- Custom profiles store identity only (name and formulation). Dose and
+  schedule always start as regimen-specific input and are never copied from
+  the library.
+- Scheduled and extra dose events snapshot the displayed name/formulation and
+  carry the stable regimen item id, so two custom medicines at the same time
+  remain distinct and historical labels survive later edits.
+- Custom medicines are excluded from LEDD. The doctor view labels the
+  remaining catalog calculation as a partial subtotal and names exclusions.
+- IndexedDB v6 adds the custom medicine library additively; v5 clinical rows
+  remain untouched. No external medicine service is queried.
+
 ## 0.10.0 — In-app update banner
 
 The app now tells you when a newer build is available and hands you the

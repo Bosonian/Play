@@ -3,16 +3,19 @@
 // log.ts (see that file's header). Deliberately a SEPARATE module rather than
 // an extension of log.ts, and log.ts imports doseLabel from here (not the
 // other way round) — keeps the dependency graph one-directional, no cycle.
-import type { DrugId } from '../../domain/drugs';
-import { DRUG_CATALOG } from '../../domain/drugs';
+import type { MedicationId, MedicationIdentity } from '../../domain/drugs';
+import { DRUG_CATALOG, isCatalogDrug, medicationName } from '../../domain/drugs';
 import type { RegimenItem } from '../../domain/regimen';
 import type { DoseEvent, PatientEvent, ISODateTime } from '../../domain/types';
 import { safeUuid } from '../lib/uuid';
 import { slotForTime, SLOT_DEFS, type SlotId } from '../../domain/grid';
 
 export interface DoseSlot {
-  itemId: string; // provenance (RegimenItem.id) — NOT part of the match key
-  drug: DrugId;
+  regimenItemId: string;
+  drug: MedicationId;
+  customName?: string;
+  customFormulation?: string;
+  customMedicationId?: string;
   doseMg: number;
   time: string; // scheduled local "HH:MM"
 }
@@ -26,12 +29,24 @@ export function expandSchedule(items: RegimenItem[]): DoseSlot[] {
   const slots: DoseSlot[] = [];
   for (const item of items) {
     for (const dt of item.times) {
-      slots.push({ itemId: item.id, drug: item.drug, doseMg: dt.doseMg, time: dt.time });
+      slots.push({
+        regimenItemId: item.id,
+        drug: item.drug,
+        doseMg: dt.doseMg,
+        time: dt.time,
+        ...(item.drug === 'custom'
+          ? {
+              customName: item.customName,
+              customFormulation: item.customFormulation,
+              customMedicationId: item.customMedicationId,
+            }
+          : {}),
+      });
     }
   }
   return slots.sort((a, b) => {
     if (a.time !== b.time) return a.time.localeCompare(b.time);
-    return DRUG_CATALOG[a.drug].generic.localeCompare(DRUG_CATALOG[b.drug].generic);
+    return medicationName(a).localeCompare(medicationName(b));
   });
 }
 
@@ -78,7 +93,27 @@ export function markTakenSlots(slots: DoseSlot[], todaysEvents: PatientEvent[]):
     for (let i = 0; i < candidates.length; i++) {
       if (consumed.has(i)) continue;
       const ev = candidates[i];
-      if (ev.drug === slot.drug && ev.scheduledTime === slot.time) {
+      const sameMedication =
+        ev.drug === slot.drug &&
+        (ev.drug !== 'custom' ||
+          (ev.customMedicationId !== undefined && slot.customMedicationId !== undefined
+            ? ev.customMedicationId === slot.customMedicationId
+            : ev.customName?.trim().toLowerCase() ===
+                slot.customName?.trim().toLowerCase() &&
+              ev.customFormulation?.trim().toLowerCase() ===
+                slot.customFormulation?.trim().toLowerCase() &&
+              ev.customName !== undefined &&
+              slot.customName !== undefined &&
+              ev.customFormulation !== undefined &&
+              slot.customFormulation !== undefined &&
+              ev.customName.trim() !== '' &&
+              ev.customFormulation.trim() !== ''));
+      const identityMatches =
+        sameMedication &&
+        (ev.regimenItemId !== undefined
+          ? ev.regimenItemId === slot.regimenItemId
+          : isCatalogDrug(ev.drug));
+      if (identityMatches && ev.scheduledTime === slot.time) {
         consumed.add(i);
         return { slot, takenAt: ev.at, eventId: ev.id };
       }
@@ -139,11 +174,17 @@ export function groupSlotsByDaypart(statuses: SlotStatus[]): DaypartGroup[] {
 // "Log another dose" extra-dose path omits it entirely).
 export function buildDoseEvent(
   patientCode: string,
-  drug: DrugId,
+  drug: MedicationId,
   doseMg: number,
   at: ISODateTime,
   scheduledTime?: string,
   id: string = safeUuid(),
+  identity?: {
+    regimenItemId?: string;
+    customName?: string;
+    customFormulation?: string;
+    customMedicationId?: string;
+  },
 ): DoseEvent {
   return {
     id,
@@ -153,6 +194,14 @@ export function buildDoseEvent(
     drug,
     doseMg,
     ...(scheduledTime !== undefined ? { scheduledTime } : {}),
+    ...(identity?.regimenItemId !== undefined ? { regimenItemId: identity.regimenItemId } : {}),
+    ...(drug === 'custom'
+      ? {
+          customName: identity?.customName,
+          customFormulation: identity?.customFormulation,
+          customMedicationId: identity?.customMedicationId,
+        }
+      : {}),
     source: 'self',
   };
 }
@@ -161,29 +210,52 @@ export function buildDoseEvent(
 // (by each pair's first appearance across expandSchedule's ordering),
 // deduped. A drug prescribed at two different strengths (an uneven regimen)
 // keeps both strengths as separate picker rows — they're different doses.
-export function extraDoseChoices(items: RegimenItem[]): Array<{ drug: DrugId; doseMg: number }> {
+export interface DoseChoice extends MedicationIdentity {
+  regimenItemId: string;
+  doseMg: number;
+}
+
+export function extraDoseChoices(items: RegimenItem[]): DoseChoice[] {
   const slots = expandSchedule(items);
   const seen = new Set<string>();
-  const choices: Array<{ drug: DrugId; doseMg: number }> = [];
+  const choices: DoseChoice[] = [];
   for (const slot of slots) {
-    const key = `${slot.drug}|${slot.doseMg}`;
+    const key = `${slot.regimenItemId}|${slot.doseMg}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    choices.push({ drug: slot.drug, doseMg: slot.doseMg });
+    choices.push({
+      regimenItemId: slot.regimenItemId,
+      drug: slot.drug,
+      doseMg: slot.doseMg,
+      ...(slot.drug === 'custom'
+        ? {
+            customName: slot.customName,
+            customFormulation: slot.customFormulation,
+            customMedicationId: slot.customMedicationId,
+          }
+        : {}),
+    });
   }
   return choices;
 }
 
 // "Levodopa 100 mg" — shared by slot rows, the extra-dose picker, and
 // eventLabel's dose branch, so the three can never drift out of sync.
-export function doseLabel(drug: DrugId, doseMg: number): string {
-  return `${DRUG_CATALOG[drug].generic} ${doseMg} mg`;
+export function doseLabel(
+  medication: MedicationIdentity | MedicationId,
+  doseMg: number,
+  customName?: string,
+): string {
+  const identity = typeof medication === 'string' ? { drug: medication, customName } : medication;
+  const formulation =
+    identity.drug === 'custom' ? identity.customFormulation?.trim() : undefined;
+  return `${medicationName(identity)}${formulation ? ` (${formulation})` : ''} ${doseMg} mg`;
 }
 
 // The taken-row verb: a transdermal patch is "Applied", every other
 // formulation is "Taken". Pure lookup on the catalog, not a special case
 // hardcoded to rotigotine's id, so any future patch formulation picks this up
 // automatically.
-export function takenVerb(drug: DrugId): 'Taken' | 'Applied' {
-  return DRUG_CATALOG[drug].formulation === 'transdermal-patch' ? 'Applied' : 'Taken';
+export function takenVerb(drug: MedicationId): 'Taken' | 'Applied' {
+  return isCatalogDrug(drug) && DRUG_CATALOG[drug].formulation === 'transdermal-patch' ? 'Applied' : 'Taken';
 }

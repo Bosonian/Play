@@ -1,7 +1,6 @@
-import { DRUG_CATALOG } from '../../../domain/drugs';
-import { dailyMg, regimenWarnings, regimenDailyDoses, type RegimenItem } from '../../../domain/regimen';
+import { DRUG_CATALOG, isCatalogDrug, medicationName } from '../../../domain/drugs';
+import { dailyMg, regimenWarnings, computeRegimenLedd, type RegimenItem } from '../../../domain/regimen';
 import { sigLine } from '../../../domain/grid';
-import { computeLedd } from '../../../domain/ledd';
 
 interface RegimenListProps {
   patientCode: string;
@@ -27,8 +26,10 @@ export function RegimenList({
   // expands each item into one entry per clock time first, so computeLedd's
   // own once-per-day dedup for fixed/fraction factors (safinamide,
   // entacapone, opicapone) sees the right shape of input.
-  const ledd = computeLedd(regimenDailyDoses(items));
+  const ledd = computeRegimenLedd(items);
   const hasBaclofen = items.some((item) => item.drug === 'baclofen');
+  const excludedNames = ledd.excludedMedicationNames;
+  const isPartialLedd = ledd.isPartial;
 
   return (
     <div className="rounded-md border border-line bg-surface p-4">
@@ -40,12 +41,15 @@ export function RegimenList({
       ) : (
         <div className="mt-4 space-y-2">
           {items.map((item) => {
-            const spec = DRUG_CATALOG[item.drug];
-            const isPatch = spec.formulation === 'transdermal-patch';
+            const name = medicationName(item);
+            const isPatch = isCatalogDrug(item.drug) && DRUG_CATALOG[item.drug].formulation === 'transdermal-patch';
             const isFreeText = (item.freeText ?? '').trim().length > 0;
             return (
               <div key={item.id} className="rounded-sm bg-surface-soft p-3">
-                <p className="text-body font-medium text-fg">{spec.generic}</p>
+                <p className="text-body font-medium text-fg">{name}</p>
+                {item.drug === 'custom' && (
+                  <p className="text-caption text-fg-muted">{item.customFormulation}</p>
+                )}
                 <p className="text-label text-fg-muted">{sigLine(item)}</p>
                 {!isPatch && !isFreeText && (
                   <p className="text-caption text-fg-muted">{dailyMg(item)} mg/day</p>
@@ -77,7 +81,7 @@ export function RegimenList({
 
       {lastRemoved && (
         <div className="mt-4 flex items-center gap-4">
-          <p className="text-label text-fg-muted">Removed {DRUG_CATALOG[lastRemoved.drug].generic}.</p>
+          <p className="text-label text-fg-muted">Removed {medicationName(lastRemoved)}.</p>
           <button
             type="button"
             onClick={onUndoRemove}
@@ -100,13 +104,21 @@ export function RegimenList({
 
       {items.length > 0 && (
         <div className="mt-4">
-          <p className="text-body-lg font-medium text-fg">Total LEDD: {Math.round(ledd.totalMg)} mg/day</p>
+          <p className="text-body-lg font-medium text-fg">
+            {isPartialLedd ? 'Partial LEDD subtotal' : 'Total LEDD'}: {Math.round(ledd.totalMg)} mg/day
+          </p>
           <p className="text-caption text-fg-muted">
             Levodopa-equivalent daily dose, calculated from the regimen with standard conversion
             factors. A comparison number, not a target.
           </p>
           {hasBaclofen && (
             <p className="text-caption text-fg-muted">Baclofen is excluded from the LEDD total.</p>
+          )}
+          {isPartialLedd && (
+            <p className="text-caption text-fg-muted">
+              Excludes medicine{excludedNames.length === 1 ? '' : 's'} without a computable schedule or
+              catalog LEDD factor: {excludedNames.join(', ')}.
+            </p>
           )}
         </div>
       )}

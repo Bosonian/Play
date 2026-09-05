@@ -34,9 +34,9 @@ export interface Patient {
 // PK/PD-engine metadata per drug. Re-exported here so existing call sites
 // don't need to know the catalog moved out of this file.
 // ---------------------------------------------------------------------------
-export type { DrugId } from './drugs';
+export type { DrugId, MedicationId } from './drugs';
 export { DRUG_CATALOG } from './drugs';
-import type { DrugId } from './drugs';
+import type { MedicationId } from './drugs';
 
 // ---------------------------------------------------------------------------
 // Events — the patient's log. A discriminated union on `kind`.
@@ -63,7 +63,10 @@ interface EventBase {
 // A dose taken.
 export interface DoseEvent extends EventBase {
   kind: 'dose';
-  drug: DrugId;
+  drug: MedicationId;
+  customName?: string;
+  customFormulation?: string;
+  customMedicationId?: string;
   // For levodopa products (levodopa, madopar-lt), this is the levodopa
   // component in mg. For every other drug, it's that drug's OWN mg — e.g.
   // rotigotine's `doseMg` is the patch's mg/24h rating, not a levodopa
@@ -77,6 +80,9 @@ export interface DoseEvent extends EventBase {
   // `at`; the at-vs-scheduledTime delta is the adherence signal. Display-side
   // slot matching keys on drug + scheduledTime (see app/patient/doses.ts).
   scheduledTime?: string;
+  // Stable prescription-line identity. New events always carry this for
+  // scheduled and extra doses; optional keeps historical events readable.
+  regimenItemId?: string;
 }
 
 // A motor state the patient reports (event-based diary — logged when it

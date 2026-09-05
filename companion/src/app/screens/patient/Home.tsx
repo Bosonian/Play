@@ -143,7 +143,7 @@ export function Home({
                   <h3 className={`text-label font-medium ${cls.headerText}`}>{group.label}</h3>
                   <div className="mt-3 space-y-8">
                     {group.statuses.map((status) => {
-                      const key = `${status.slot.itemId}-${status.slot.time}`;
+                      const key = `${status.slot.regimenItemId}-${status.slot.time}`;
                       if (status.takenAt === null) {
                         return <PendingDoseCard key={key} slot={status.slot} cls={cls} onTakeDose={onTakeDose} />;
                       }
@@ -275,7 +275,7 @@ function PendingDoseCard({
     >
       <span className="flex items-center gap-4">
         <span className={`h-7 w-7 shrink-0 rounded-full border-2 ${cls.ringBorder}`} aria-hidden="true" />
-        <span className="text-title font-medium text-fg">{doseLabel(slot.drug, slot.doseMg)}</span>
+        <span className="text-title font-medium text-fg">{doseLabel(slot, slot.doseMg)}</span>
       </span>
       <span className="text-body-lg tabular-nums text-fg-muted">{slot.time}</span>
     </button>
@@ -325,7 +325,7 @@ function TakenDoseCard({
           </svg>
         </span>
         <span className="flex flex-col">
-          <span className="text-body-lg text-fg-muted">{doseLabel(slot.drug, slot.doseMg)}</span>
+          <span className="text-body-lg text-fg-muted">{doseLabel(slot, slot.doseMg)}</span>
           <span className="text-body text-fg-muted">
             {takenVerb(slot.drug)} · {formatTimeHM(takenAt)}
           </span>

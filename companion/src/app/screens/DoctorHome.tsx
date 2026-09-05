@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, putRegimenItem, deleteRegimenItem } from '../db/store';
+import { db, putRegimenItem, putRegimenWithCustomMedication, deleteRegimenItem } from '../db/store';
 import { usePatient } from '../patient/usePatient';
 import { safeUuid } from '../lib/uuid';
 import { sortRegimenItems, sortDoseTimes, type RegimenItem } from '../../domain/regimen';
@@ -45,6 +45,7 @@ export function DoctorHome() {
         : Promise.resolve<RegimenItem[]>([]),
     [patient?.code],
   );
+  const savedMedications = useLiveQuery(() => db.customMedications.orderBy('createdAt').toArray(), []);
 
   async function saveItem(draft: RegimenItemDraft) {
     if (!patient) return;
@@ -54,12 +55,23 @@ export function DoctorHome() {
       id: existingId,
       patient: patient.code,
       drug: draft.drug,
+      ...(draft.drug === 'custom'
+        ? { customName: draft.customName, customFormulation: draft.customFormulation }
+        : {}),
       times: sortDoseTimes(draft.times),
       updatedAt: new Date().toISOString(),
       ...(draft.strengthMg !== undefined ? { strengthMg: draft.strengthMg } : {}),
       ...(draft.freeText !== undefined ? { freeText: draft.freeText } : {}),
     };
-    await putRegimenItem(db, item);
+    if (draft.drug === 'custom') {
+      await putRegimenWithCustomMedication(db, item, {
+        id: draft.customMedicationId,
+        name: draft.customName!,
+        formulation: draft.customFormulation!,
+      });
+    } else {
+      await putRegimenItem(db, item);
+    }
     void logEvent('regimen', `${isEdit ? 'Updated' : 'Added'} regimen item: ${sigLine(item)}`);
     setScreen({ name: 'list' });
     setLastRemoved(null);
@@ -88,6 +100,7 @@ export function DoctorHome() {
     return (
       <RegimenItemForm
         initial={null}
+        savedMedications={savedMedications ?? []}
         onSave={(draft) => void saveItem(draft)}
         onCancel={() => setScreen({ name: 'list' })}
       />
@@ -98,6 +111,7 @@ export function DoctorHome() {
     return (
       <RegimenItemForm
         initial={screen.item}
+        savedMedications={savedMedications ?? []}
         onSave={(draft) => void saveItem(draft)}
         onCancel={() => setScreen({ name: 'list' })}
       />
