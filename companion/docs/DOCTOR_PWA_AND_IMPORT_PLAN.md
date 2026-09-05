@@ -1,175 +1,121 @@
-# Doctor PWA and medication-photo import plan
+# Doctor workspace and medicine-photo import
 
-Status: architecture decision for the next product stages. This document does not claim that the current local Doctor mode is safe for multiple patients or that cloud image processing is enabled.
+Status: the single-patient Android app now contains a doctor-reviewed Google Cloud Vision
+medicine-photo import. A multi-patient doctor PWA, cloud patient database, and device sync remain
+future stages.
 
-## Product decision
+## Android implementation (device acceptance pending)
 
-Build a separate responsive doctor workspace as an installable PWA and deploy its web and API layers on Vercel. Keep the Android patient experience bound to one immutable device patient. A doctor may select among many authorized patient records in the web workspace, but that selection must never change which patient the Android device logs for.
+The import is available only after Doctor mode is unlocked. It remains bound to the same
+de-identified patient code as the local regimen.
 
-Use Gemini only to convert a medicine-list image into an untrusted structured draft. The model never prescribes, fills missing directions, chooses an equivalent medicine, or writes to a regimen. The doctor compares every extracted field with the source image and explicitly applies reviewed rows.
+Google Cloud Vision performs text recognition only. Companion's versioned conservative parser
+turns selected OCR lines into an untrusted draft. It does not prescribe, match a medicine
+automatically, repair OCR characters, infer a missing dose or time, interpret schedules such as
+`1-0-1`, promote a printed strength into a dose, convert combination strengths, or replace an
+existing regimen row.
 
-The production preference is Gemini through Vertex AI in a configured European location because Google Cloud documents regional data-location and security controls for supported Generative AI services. A paid Gemini Developer API project can support a prototype only after its data-processing and retention configuration has passed the same review. A paid plan's no-training commitment is useful, but it is not the same as zero retention or EU-only processing.
+The workflow is:
 
-## Target architecture
+1. The doctor enters a Google Cloud project ID and uses the native **Add API key** or
+   **Replace API key** action. The Android bridge stores the key outside web storage. The setup
+   screen shows the Android package and certificate SHA-1 needed for API-key restrictions.
+2. **Test connection** verifies the configured Vision endpoint before a patient photo is used.
+3. Before choosing a photo, the doctor acknowledges that the image will be sent to Google Cloud
+   Vision for EU processing. The screen asks the doctor to exclude names, addresses, barcodes,
+   and unrelated pages.
+4. The doctor chooses an existing JPEG, PNG, or WebP image. Companion decodes it with browser
+   orientation handling, bounds its dimensions, draws it to an offscreen canvas, and re-encodes a
+   metadata-free JPEG used for both preview and upload. In-app camera capture is not enabled because
+   the current Capacitor capture path can leave an external-files temporary image behind.
+5. The native bridge sends the image to Vision `DOCUMENT_TEXT_DETECTION`. A request ID binds the
+   response to the active screen. Cancelled, replaced, late, or mismatched responses are ignored.
+6. The doctor selects OCR lines for one medicine. The parser keeps exact evidence substrings and
+   line IDs. The review shows printed strength as text evidence only.
+7. The doctor explicitly chooses a built-in medicine, a saved custom profile, or **Add as other
+   medicine**. Missing formulation, dose, time, or PRN indication remains blank.
+8. Three separate checks confirm identity, product/formulation, and directions against the photo.
+   A reviewed medicine is staged in memory. The doctor can then select another group of lines.
+9. **Add N reviewed medicines** validates every staged regimen item and applies the receipt,
+   regimen rows, and any new custom profiles in one IndexedDB transaction.
 
-```text
-Patient Android app ── paired, idempotent sync ──┐
-                                                  │
-Doctor browser/PWA ── authenticated session ── Vercel API (fra1)
-                                                  │
-                     ┌────────────────────────────┼──────────────────────────┐
-                     │                            │                          │
-              EU relational database       immutable audit log     Gemini/Vertex adapter
-              tenant + patient scoped      tenant + patient scoped  transient inline image
-                                                                         │
-                                                               structured draft only
-```
+The durable receipt contains the import/request ID, patient code, provider and feature,
+EU-region marker, schema and parser versions, SHA-256 image hash, local doctor actor, application
+time, and confirmed regimen snapshots. It contains no image bytes, preview, raw OCR text, OCR
+polygons, or editable draft. Explicitly reviewed source-derived directions may be
+persisted as prescription instructions; the full OCR response is not persisted.
+Images, OCR responses, selected lines, and drafts are React memory
+only and are dropped on cancel, navigation, or successful apply.
 
-Vercel's `fra1` setting controls Function execution location. It does not by itself guarantee that every processor, log, failover path, or transfer stays in Germany or the EU. The release review must include the current Vercel DPA and subprocessors, the database provider, Google Cloud/Gemini terms, backups, operational logs, support access, and deletion behavior.
+The receipt and regimen inserts are append-only. A retry with the same import payload is
+idempotent. A changed payload using the same import ID, an occupied regimen ID, a patient mismatch,
+an invalid regimen item, or an exact duplicate aborts the entire transaction. Custom medicine
+profiles are reused only by their exact normalized name-plus-formulation key.
 
-## Identity and patient isolation first
+## Provider setup and limits
 
-The current Companion implementation is single-patient:
+Create a Google Cloud project with Cloud Vision enabled and billing configured. Restrict the API
+key to the Cloud Vision API and to the Android package/certificate shown by Companion. Use
+**Remove API key** before transferring or retiring a device. A successful connection test confirms
+credentials and reachability; it does not validate clinical extraction quality.
 
-- `ensureLocalPatient()` selects the first local patient record.
-- Patient and Doctor mode use the same `usePatient()` hook.
-- Activity-log and report paths are not consistently patient-owned.
+Photo import requires the Android build and a network connection. The web build gives a manual-entry
+fallback and never asks for or handles a Vision credential. Companion does not send OCR text to a
+generative model and does not use Gemini, Vertex generative models, Search grounding, the Gemini
+File API, Vercel Blob, or a Companion cloud proxy in this design.
 
-A safe dashboard cannot be a dropdown added to that model. Add these separate identities:
+Vision can omit, split, or misread printed and handwritten text. It can confuse decimal separators,
+release formulations, combination products, units, and adjacent rows. Every field therefore
+requires comparison with the photo. The feature is a transcription aid, not medication
+reconciliation, interaction checking, clinical decision support, or proof that a prescription is
+current.
 
-- `devicePatientId`: immutable binding used by the patient's Android installation.
-- `tenantId`: clinic or practice boundary.
-- `userId`: authenticated doctor or authorized staff member.
-- `doctorSelectedPatientId`: workspace navigation state only.
-- `patientCode`: a clinic-visible, de-identified label; names and direct identifiers remain outside Companion unless a later, explicit policy changes that decision.
+Before processing real patient documents, the deploying organization must confirm its Google Cloud
+contract and regional configuration, lawful basis, controller/processor roles, retention and
+deletion behavior, access controls, incident response, and any required data-protection impact
+assessment. It should validate extraction against representative German and English lists,
+handwriting if accepted locally, decimal comma and point, IR/ER products, patches, PRN directions,
+combination strengths, crossed-out text, and unreadable fields. Dangerous substitutions and
+omissions must be reviewed separately from aggregate OCR accuracy.
 
-Every patient-owned row carries `tenantId` and `patientId`. Authorization occurs on the server for every read and write; a patient ID from the browser is never sufficient authority. All detail reads, writes, exports, reports, drafts, undo records, sync bundles, and audit records verify both ownership fields.
+## Future doctor PWA
 
-Switching patients must key and unmount patient-specific screens. A pending save or extraction remains bound to the patient that started it, and the UI blocks applying it after the selected patient changes until the doctor returns to the original record.
+A remote multi-patient workspace cannot safely reuse the current local patient selection or
+local Doctor-mode passcode. It needs separate tenant, authenticated user, immutable
+device-patient, selected-patient, and de-identified patient-code identities. Every server read,
+write, report, export, sync bundle, and audit event must enforce tenant and patient ownership.
 
-Use production authentication with individual accounts, MFA or passkeys, short-lived sessions, revocation, and role checks. The local Doctor-mode passcode of at least six characters is not web authentication.
+The first PWA stage should be read-only: patient search, last device sync, observation progress,
+latest self-report and tapping timestamp, and links to regimen and observation history. Add
+individual accounts, MFA or passkeys, short-lived sessions, revocation, role checks, no-store
+responses, and cross-tenant authorization tests before remote clinical writes.
 
-## Responsive doctor workspace
+Later stages can add paired idempotent device sync, reviewed regimen writes, reports, and an
+encrypted offline write queue with explicit conflict handling. Patient data and medicine images
+must never enter a general service-worker cache. A pending import or save stays bound to the patient
+that started it and cannot follow a dashboard patient switch.
 
-The first PWA dashboard should show operational facts that are already recorded, without clinical inference:
+## Finger-tapping evidence boundary
 
-- searchable patient code and optional non-identifying label;
-- last successful device sync;
-- active observation period and collection progress;
-- latest self-report and tapping-session timestamp;
-- count of unreviewed imported drafts;
-- direct actions for patient detail, regimen, observation history, and import.
+Companion's protocol v3 is a ten-second, self-paced two-target, single-index-finger
+touchscreen task. Both targets stay visually identical. Either side is a valid first tap;
+subsequent taps alternate. Each hand is tested separately, left then right. Earlier
+color-cued protocol v2 records remain distinguishable by their stored protocol version.
+The patient reports ON, OFF, ON with dyskinesia, or uncertain before the bilateral session.
+This removes the changing visual cue but does not isolate pure bradykinesia or establish
+clinical validity. The cited study used fixed physical target geometry and three trials
+per hand; this app currently uses responsive targets and one trial per hand. Safe descriptive outputs include attempts/successes per
+second, interval regularity, errors, and within-person temporal rate change.
 
-Desktop uses a patient list beside the selected patient detail. Mobile uses the same routes as a stacked list and detail flow with a persistent patient-code header. Both layouts must expose the selected patient code at every write screen.
+Do not present these results as an MDS-UPDRS score, movement-amplitude decrement, diagnosis,
+severity class, objective ON/OFF decision, or proof of treatment effectiveness. Practice trials,
+repeat trials, device and target calibration, test-retest thresholds, asymmetry interpretation,
+and prospective clinical validation are required before treatment decisions rely on the measure.
 
-Avoid severity rankings, red/green treatment judgements, inferred ON/OFF labels, or medication recommendations until their clinical rules and intended use have been separately validated.
+Reference material:
 
-The PWA requires a web manifest, icons, install metadata, an offline shell, and an update strategy. Patient data, regimen drafts, and medicine images must not be placed in a general service-worker cache. Authenticated data requests use `Cache-Control: no-store`. Offline clinical writes need an explicit encrypted queue and conflict design; until then, show read-only cached shell behavior and require a connection to save.
-
-## Medication-photo workflow
-
-1. From an already selected patient, the doctor chooses Camera or Photo library.
-2. The browser shows crop/rotate controls and asks the doctor to exclude names, addresses, barcodes, and unrelated pages where practical.
-3. The client accepts only JPEG, PNG, or WebP, enforces pixel and byte limits, removes image metadata, and sends the normalized image to an authenticated patient-bound endpoint.
-4. The endpoint checks tenant membership, content type, decoded image dimensions, request size, rate limit, and a single-use request ID.
-5. The server sends inline image bytes to the configured Gemini adapter. It does not use Search grounding, the Gemini File API, Vercel Blob, analytics payload capture, request-body logging, or response caching.
-6. Gemini returns JSON constrained by a versioned response schema. The server validates it independently and maps unknown or invalid values to blank fields.
-7. The review screen keeps the source image visible beside editable draft rows. Each row shows its source text/crop and unresolved fields.
-8. The doctor explicitly confirms or excludes every row, then chooses **Apply reviewed medicines**.
-9. One transaction creates or updates the confirmed regimen rows and writes an immutable audit record. Retry uses stable import and row IDs, so it cannot duplicate medicines.
-10. Image bytes are discarded after the response/review session according to the approved retention design. The durable record contains the request ID, image hash, model/schema versions, extracted draft, doctor-confirmed values, actor, patient, timestamps, and transaction result; it does not contain the image by default.
-
-### Extraction schema
-
-Each draft row should support:
-
-- source text and source-region coordinates;
-- medicine/product name;
-- active ingredients for combination products;
-- formulation and release type, such as IR, dispersible, or prolonged release;
-- strength with unit and the ingredient to which it applies;
-- quantity per administration, preserving tablet fractions as source text;
-- scheduled clock times, each with its own dose;
-- PRN indication and source instructions;
-- model-supplied field confidence as a review hint only;
-- validation issues and unresolved fields.
-
-The extractor must not:
-
-- invent a dose, time, indication, maximum, or interval;
-- infer a schedule from a package photo;
-- silently convert salts to active moieties;
-- silently convert mg, drops, patches, tablets, or fractions;
-- merge immediate-release and prolonged-release products;
-- replace an existing regimen row;
-- calculate medication eligibility or recommend treatment.
-
-A medicine name can be matched against the saved catalogue to suggest an identity. The doctor must confirm the match. Ambiguous matches remain custom medicines.
-
-## API boundaries
-
-Suggested endpoints:
-
-- `GET /api/patients`: authorized dashboard summary.
-- `GET /api/patients/:id`: patient detail with ownership check.
-- `POST /api/patients/:id/imports`: create a bound import request.
-- `POST /api/patients/:id/imports/:importId/extract`: transient Gemini extraction.
-- `PUT /api/patients/:id/imports/:importId/draft`: save doctor edits without changing regimen.
-- `POST /api/patients/:id/imports/:importId/apply`: validate confirmations and apply once transactionally.
-- `POST /api/device-sync`: authenticated, paired, idempotent event exchange.
-
-The browser never receives a Gemini credential. Vercel environment secrets are server-only and must never use the `VITE_` prefix.
-
-## Release sequence and gates
-
-### Stage 1: identity and read-only dashboard
-
-- Introduce tenant, user, device-patient, and selected-patient identities.
-- Make every store/API operation explicitly patient-scoped.
-- Move activity/audit data to tenant and patient ownership.
-- Add server authorization and a read-only responsive dashboard.
-- Test direct-ID access, cross-tenant access, exports, reports, delayed queries, and A-to-B patient switching.
-
-### Stage 2: photo to draft
-
-- Add capture/crop UI, the server Gemini adapter, strict schema validation, and the review screen.
-- Keep regimen writes disabled.
-- Evaluate a de-identified fixture set covering German and English lists, handwriting where in scope, decimals using comma and point, tablet fractions, combination drugs, IR/ER distinctions, patches, drops, duplicate rows, crossed-out text, PRN conditions, and unreadable fields.
-- Record per-field precision/recall and dangerous substitution/omission counts. A low aggregate error rate cannot hide a strength, formulation, schedule, or patient-assignment error.
-
-### Stage 3: reviewed apply and patient sync
-
-- Add explicit row confirmations, transactional apply, audit history, idempotent retry, and conflict handling.
-- Test cancel/no-write, partial confirmation rejection, rollback, duplicate retry, edited extracted values, active-study snapshot behavior, and switching patients during extraction or apply.
-- Add device pairing and scoped sync without changing the Android device-patient binding.
-
-### Production gates
-
-Before any real patient image is processed:
-
-- execute provider data-processing agreements and review subprocessors/transfers;
-- document the lawful basis, controller/processor roles, retention/deletion, access, incident response, and a data-protection impact assessment as applicable;
-- choose and verify supported model and regional processing configuration;
-- confirm no body/image capture in Vercel, database, monitoring, error, or AI request logs;
-- complete threat modelling, dependency/security review, backup and deletion tests;
-- pass extraction safety fixtures and cross-patient isolation tests;
-- show the doctor the remote-processing disclosure and retain the required audit evidence.
-
-## Evidence behind the tapping decision
-
-Companion's current test is a ten-second, two-target, single-index-finger touchscreen task. A published validation study used the same broad ten-second alternating-target structure, while a home proof-of-concept tested each hand and found learning and time effects. This supports continued measurement, not equivalence to MDS-UPDRS.
-
-Each hand should be tested alone, and both hands should normally be completed. Keep the current fixed left-then-right order so longitudinal records remain comparable. Record the order and use the same phone, stable surface, hand posture, and instructions. The safe outputs are tapping attempts/successes per second, interval regularity, errors, and temporal rate change within the same person and hand.
-
-Do not present these results as an MDS-UPDRS score, movement-amplitude decrement, diagnosis, severity class, objective ON/OFF decision, or proof of treatment effectiveness. Add practice trials, repeat trials, formal device/target calibration, test-retest thresholds, asymmetry interpretation, and prospective clinical validation before using the measure for treatment decisions.
-
-## Current source notes (checked 2026-09-05)
-
-- MDS-UPDRS item 3.4 tests each hand separately and assesses speed, amplitude, interruptions, and decrement: https://www.movementdisorders.org/MDS-Files1/Resources/PDFs/MDS-UPDRS.pdf
-- Ten-second smartphone alternating-target validation study: https://pmc.ncbi.nlm.nih.gov/articles/PMC4965104/
-- Home smartphone tapping proof-of-concept, including reliability and learning effects: https://pmc.ncbi.nlm.nih.gov/articles/PMC10237522/
-- Gemini Developer API paid-service and zero-data-retention details: https://ai.google.dev/gemini-api/docs/zdr
-- Vertex AI zero-data-retention guidance: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/vertex-ai-zero-data-retention
-- Google Cloud services that can be configured for data location: https://cloud.google.com/terms/data-residency
-- Vercel Function default/available regions: https://vercel.com/docs/regions
-- Vercel data-processing addendum: https://vercel.com/legal/dpa
+- MDS-UPDRS item 3.4: https://www.movementdisorders.org/MDS-Files1/Resources/PDFs/MDS-UPDRS.pdf
+- Ten-second smartphone alternating-target study: https://pmc.ncbi.nlm.nih.gov/articles/PMC4965104/
+- Home smartphone tapping proof of concept: https://pmc.ncbi.nlm.nih.gov/articles/PMC10237522/
+- Cloud Vision data locations: https://cloud.google.com/vision/docs/locations
+- Google Cloud API-key restrictions: https://cloud.google.com/docs/authentication/api-keys

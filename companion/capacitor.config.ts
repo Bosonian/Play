@@ -8,6 +8,11 @@ const config: CapacitorConfig = {
   appId: 'app.dosing.companion',
   appName: 'Companion',
   webDir: 'dist',
+  android: {
+    // OCR calls contain inline photo bytes. Keep Capacitor from logging any
+    // plugin call payload, including in locally distributed debug builds.
+    loggingBehavior: 'none',
+  },
 };
 
 export default config;

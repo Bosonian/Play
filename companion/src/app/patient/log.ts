@@ -3,7 +3,7 @@
 // in vitest's default 'node' environment with no fake-indexeddb shim: the
 // actual DB writes happen one layer up, in usePatient.ts / PatientRoot.tsx.
 import type { MealEvent, MotorEvent, PatientEvent, ISODateTime } from '../../domain/types';
-import { mapPatientTap, type PrimaryTap, type DyskinesiaRefinement } from '../../domain/motor';
+import { mapPatientTap, motorStateLabel, type PrimaryTap, type DyskinesiaRefinement } from '../../domain/motor';
 import { safeUuid } from '../lib/uuid';
 import { doseLabel } from './doses';
 
@@ -121,26 +121,7 @@ export function generateLocalCode(): string {
 // EventDetail's heading so the two screens can never drift out of sync.
 export function eventLabel(ev: PatientEvent): string {
   if (ev.kind === 'motor') {
-    switch (ev.state) {
-      case 'on':
-        return 'ON';
-      case 'off':
-        return 'OFF';
-      case 'on-dyskinesia-unspecified':
-        return 'ON with dyskinesia';
-      case 'on-dyskinesia-troublesome':
-        return 'ON with dyskinesia · troublesome';
-      case 'on-dyskinesia-nontroublesome':
-        return 'ON with dyskinesia · not troublesome';
-      case 'asleep':
-        // Unreachable from the 3-tap patient flow today (see motor.ts) —
-        // included so this switch stays exhaustive as the domain type grows.
-        return 'Asleep';
-      default: {
-        const _exhaustive: never = ev.state;
-        return _exhaustive;
-      }
-    }
+    return motorStateLabel(ev.state);
   }
   if (ev.kind === 'meal') {
     if (ev.protein === 'high') return 'Meal · high protein';

@@ -20,9 +20,12 @@ import {
   type AssessmentRecord,
   type ObservationStudy,
 } from '../../../domain/observation';
-import { db, putAssessments } from '../../db/store';
+import { db, saveTappingCheckIn } from '../../db/store';
 import { safeUuid } from '../../lib/uuid';
 import { logEvent } from '../../activity/activityLog';
+import { StatePicker, type StateSelection } from './StatePicker';
+import { motorStateLabel } from '../../../domain/motor';
+import type { MotorEvent } from '../../../domain/types';
 
 type HandResult = {
   side: HandSide;
@@ -41,6 +44,7 @@ type HandResult = {
 
 type SessionIdentity = {
   sessionId: string;
+  motorEventId: string;
   assessmentIds: Record<HandSide, string>;
 };
 
@@ -53,18 +57,22 @@ const REASONS: Array<{ value: AssessmentReason; label: string }> = [
 
 export function FingerTapping({
   study,
+  reminderContext,
   onDone,
   onCancel,
 }: {
   study: ObservationStudy;
+  reminderContext?: { occurrenceId: string; scheduledAt: string };
   onDone: () => void;
   onCancel: () => void;
 }) {
-  const [reason, setReason] = useState<AssessmentReason | null>(null);
+  const [reason, setReason] = useState<AssessmentReason | null>(
+    reminderContext ? 'scheduled-daily' : null,
+  );
+  const [stateSelection, setStateSelection] = useState<StateSelection | null>(null);
   const [side, setSide] = useState<HandSide | null>(null);
   const [running, setRunning] = useState(false);
   const [remaining, setRemaining] = useState(10);
-  const [expected, setExpected] = useState<TapTarget>('a');
   const [leftResult, setLeftResult] = useState<HandResult | null>(null);
   const [pendingRecords, setPendingRecords] = useState<AssessmentRecord[] | null>(null);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'error'>('idle');
@@ -90,19 +98,24 @@ export function FingerTapping({
   }
 
   function chooseReason(selected: AssessmentReason) {
+    setReason(selected);
+  }
+
+  function chooseState(selected: StateSelection) {
     if (initializedRef.current) return;
     initializedRef.current = true;
     identityRef.current = {
       sessionId: safeUuid(),
+      motorEventId: safeUuid(),
       assessmentIds: { left: safeUuid(), right: safeUuid() },
     };
-    setReason(selected);
+    setStateSelection(selected);
     setSide('left');
   }
 
   function assessmentFor(run: HandResult): AssessmentRecord {
     const identity = identityRef.current;
-    if (!identity || !reason) throw new Error('Tapping session is not initialized');
+    if (!identity || !reason || !stateSelection) throw new Error('Tapping session is not initialized');
     return {
       id: identity.assessmentIds[run.side],
       studyId: study.id,
@@ -110,6 +123,14 @@ export function FingerTapping({
       protocolVersion: OBSERVATION_PROTOCOL_VERSION,
       kind: 'finger-tapping',
       reason,
+      linkedMotorEventId: identity.motorEventId,
+      selfReportedState: stateSelection.state,
+      selfReportedStateAt: stateSelection.reportedAt,
+      checkInProtocolVersion: 1,
+      ...(reminderContext ? {
+        reminderOccurrenceId: reminderContext.occurrenceId,
+        reminderScheduledAt: reminderContext.scheduledAt,
+      } : {}),
       sessionId: identity.sessionId,
       outcome: run.outcome,
       measurementProtocolVersion: TAPPING_PROTOCOL_VERSION,
@@ -136,7 +157,18 @@ export function FingerTapping({
     setPendingRecords(records);
     setSaveState('saving');
     try {
-      await putAssessments(db, records);
+      const identity = identityRef.current;
+      if (!identity || !stateSelection) throw new Error('Tapping session is not initialized');
+      const motorEvent: MotorEvent = {
+        id: identity.motorEventId,
+        patient: study.patient,
+        kind: 'motor',
+        at: stateSelection.reportedAt,
+        state: stateSelection.state,
+        studyId: study.id,
+        assessmentSessionId: identity.sessionId,
+      };
+      await saveTappingCheckIn(db, motorEvent, records);
       void logEvent('motor', `Completed bilateral tapping assessment: ${reason}`);
       onDone();
     } catch {
@@ -240,7 +272,6 @@ export function FingerTapping({
     metadataRef.current = readDisplayMetadata();
     activePointersRef.current.clear();
     runningRef.current = true;
-    setExpected(acquisition.expectedTarget);
     setRemaining(10);
     setSide(hand);
     setRunning(true);
@@ -291,8 +322,6 @@ export function FingerTapping({
     });
     if (captureResult === 'interrupted') {
       finishCurrent('multiple-pointers');
-    } else if (captureResult === 'recorded') {
-      setExpected(acquisition.expectedTarget);
     }
   }
 
@@ -318,6 +347,16 @@ export function FingerTapping({
           ))}
         </div>
       </div>
+    );
+  }
+
+  if (!stateSelection) {
+    return (
+      <StatePicker
+        title="How do you feel right before this test?"
+        onComplete={chooseState}
+        onCancel={onCancel}
+      />
     );
   }
 
@@ -347,6 +386,19 @@ export function FingerTapping({
           {leftResult ? 'Stop and save' : 'Cancel'}
         </button>
         <h1 className="mt-6 text-title font-medium capitalize text-fg">{currentSide} hand</h1>
+        <div className="mt-3 rounded-sm border border-line bg-surface p-3">
+          <p className="text-caption text-fg-muted">State reported before this test</p>
+          <p className="text-body font-medium text-fg">{motorStateLabel(stateSelection.state)}</p>
+          {!leftResult && (
+            <button type="button" className="mt-1 text-label text-fg-muted underline"
+              onClick={() => {
+                initializedRef.current = false;
+                identityRef.current = null;
+                setSide(null);
+                setStateSelection(null);
+              }}>Change</button>
+          )}
+        </div>
         <p className="mt-3 text-body text-fg-muted">
           Rest the phone flat on a stable surface. Keep your other hand relaxed and use only your {currentSide} index
           finger. Tap the two targets alternately as quickly and accurately as you can.
@@ -375,15 +427,15 @@ export function FingerTapping({
         <h1 className="text-title font-medium capitalize text-fg">{side} hand</h1>
         <span className="text-title tabular-nums text-fg">{remaining}</span>
       </div>
-      <p className="mt-2 text-body text-fg-muted">Alternate between the highlighted targets.</p>
+      <p className="mt-2 text-body text-fg-muted">
+        Tap left-right-left-right between the two targets as quickly and accurately as possible until the test ends.
+      </p>
       <div className="mt-6 grid min-h-[360px] touch-none grid-cols-2 gap-6 rounded-md bg-surface-soft p-5"
         onPointerDown={capture} onPointerUp={releasePointer} onPointerCancel={releasePointer}>
         {(['a', 'b'] as TapTarget[]).map((target) => (
           <button key={target} type="button" data-tap-target={target}
-            className={`touch-none rounded-full border-4 ${
-              expected === target ? 'border-accent bg-accent' : 'border-line bg-surface'
-            }`}
-            aria-label={`Tap target ${target}`} />
+            className="touch-none rounded-full border-4 border-accent bg-surface"
+            aria-label={target === 'a' ? 'Left tap target' : 'Right tap target'} />
         ))}
       </div>
     </div>

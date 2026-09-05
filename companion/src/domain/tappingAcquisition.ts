@@ -18,7 +18,7 @@ export interface TappingAcquisition {
   side: HandSide;
   startedAtMs: number;
   deadlineMs: number;
-  expectedTarget: TapTarget;
+  expectedTarget: TapTarget | null;
   samples: TapSample[];
   interruption?: {
     reason: TappingInterruptionReason;
@@ -44,7 +44,7 @@ export function startTappingAcquisition(side: HandSide, startedAtMs: number): Ta
     side,
     startedAtMs,
     deadlineMs: startedAtMs + TAPPING_DURATION_MS,
-    expectedTarget: 'a',
+    expectedTarget: null,
     samples: [],
   };
 }
@@ -68,8 +68,9 @@ export function recordTappingTouch(
     expectedTarget,
     actualTarget: touch.actualTarget,
   });
-  if (touch.actualTarget === expectedTarget) {
-    acquisition.expectedTarget = expectedTarget === 'a' ? 'b' : 'a';
+  if (touch.actualTarget !== 'outside'
+      && (expectedTarget === null || touch.actualTarget === expectedTarget)) {
+    acquisition.expectedTarget = touch.actualTarget === 'a' ? 'b' : 'a';
   }
   return 'recorded';
 }

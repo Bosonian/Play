@@ -1,6 +1,13 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, putRegimenItem, putRegimenWithCustomMedication, deleteRegimenItem } from '../db/store';
+import {
+  applyMedicationImport,
+  db,
+  putRegimenItem,
+  putRegimenWithCustomMedication,
+  deleteRegimenItem,
+  type ApplyMedicationImportInput,
+} from '../db/store';
 import { usePatient } from '../patient/usePatient';
 import { safeUuid } from '../lib/uuid';
 import { sortRegimenItems, sortDoseTimes, type RegimenItem } from '../../domain/regimen';
@@ -12,6 +19,7 @@ import { ActivityLogScreen } from './doctor/ActivityLogScreen';
 import { ReportSettings } from './doctor/ReportSettings';
 import { ReportProblem } from './ReportProblem';
 import { ObservationPlan } from './doctor/ObservationPlan';
+import { MedicinePhotoImport } from './doctor/MedicinePhotoImport';
 
 type DoctorScreen =
   | { name: 'list' }
@@ -20,7 +28,8 @@ type DoctorScreen =
   | { name: 'activityLog' }
   | { name: 'settings' }
   | { name: 'report' }
-  | { name: 'observation' };
+  | { name: 'observation' }
+  | { name: 'medicineImport' };
 
 // Doctor-mode container: authors the patient's prescribed regimen. This
 // increment's writes are all here — RegimenList and RegimenItemForm are pure
@@ -101,6 +110,15 @@ export function DoctorHome({
     setLastRemoved(null);
   }
 
+  async function applyPhotoImport(input: ApplyMedicationImportInput) {
+    if (!patient || input.patient !== patient.code) throw new Error('The medicine import belongs to another patient.');
+    const receipt = await applyMedicationImport(db, input);
+    void logEvent(
+      'regimen',
+      `Added ${receipt.confirmedItems.length} reviewed medicine${receipt.confirmedItems.length === 1 ? '' : 's'} from photo.`,
+    );
+  }
+
   // Renders nothing until the patient record is bootstrapped, same
   // convention as PatientRoot.
   if (!patient) return null;
@@ -149,12 +167,30 @@ export function DoctorHome({
     );
   }
 
+  if (screen.name === 'medicineImport') {
+    return (
+      <MedicinePhotoImport
+        patientCode={patient.code}
+        savedMedications={savedMedications ?? []}
+        onApply={applyPhotoImport}
+        onBack={() => setScreen({ name: 'list' })}
+      />
+    );
+  }
+
   return (
     <>
       <button type="button" onClick={() => setScreen({ name: 'observation' })}
         className="mb-4 min-h-[88px] w-full rounded-md border border-accent bg-surface p-4 text-left">
         <span className="block text-title font-medium text-fg">Finger tapping setup</span>
         <span className="mt-1 block text-body text-fg-muted">Set up or review the 14/28-day observation study.</span>
+      </button>
+      <button type="button" onClick={() => setScreen({ name: 'medicineImport' })}
+        className="mb-4 min-h-[72px] w-full rounded-md border border-line bg-surface p-4 text-left">
+        <span className="block text-body font-medium text-fg">Import medicines from a photo</span>
+        <span className="mt-1 block text-caption text-fg-muted">
+          Android only · every extracted field requires review.
+        </span>
       </button>
       <RegimenList
         patientCode={patient.code}

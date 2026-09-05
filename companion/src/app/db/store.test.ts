@@ -23,6 +23,7 @@ import {
   putConsent,
   putRegimenItem,
   putRegimenWithCustomMedication,
+  applyMedicationImport,
   deleteRegimenItem,
   getRegimenForPatient,
   type CompanionDatabase,
@@ -618,5 +619,260 @@ describe('store — regimen items', () => {
     const pending = await db.fieldReports.where('status').equals('pending').toArray();
     expect(pending.map((r) => r.id)).toEqual(['pending-1']);
     db.close();
+  });
+});
+
+describe('store — medication photo imports', () => {
+  const importInput = (overrides: Partial<Parameters<typeof applyMedicationImport>[1]> = {}) => ({
+    id: 'import-1',
+    patient: 'P-01',
+    provider: 'google-cloud-vision' as const,
+    feature: 'DOCUMENT_TEXT_DETECTION' as const,
+    region: 'eu' as const,
+    schemaVersion: 1,
+    parserVersion: 1,
+    imageSha256: 'a'.repeat(64),
+    actor: 'local-doctor-mode' as const,
+    appliedAt: '2026-09-05T10:00:00Z',
+    confirmedItems: [regimenItem('imported-r1', 'P-01', {
+      drug: 'custom',
+      customName: 'Pramipexol',
+      customFormulation: 'Retardtabletten',
+      customMedicationId: 'custom-prami',
+      times: [{ time: '08:00', doseMg: 0.088 }],
+    })],
+    ...overrides,
+  });
+
+  it('atomically stores a receipt, regimen rows, and reuses exact custom profiles', async () => {
+    const db = freshDb();
+    await db.customMedications.add({
+      id: 'existing-profile',
+      name: 'Pramipexol',
+      formulation: 'Retardtabletten',
+      normalizedKey: 'pramipexol\u001fretardtabletten',
+      createdAt: '2026-09-01T00:00:00Z',
+    });
+    const receipt = await applyMedicationImport(db, importInput());
+    expect(receipt.confirmedItems[0].customMedicationId).toBe('existing-profile');
+    expect((await db.regimenItems.get('imported-r1'))?.times[0].doseMg).toBe(0.088);
+    expect(await db.customMedications.count()).toBe(1);
+    expect(await db.medicationImportReceipts.count()).toBe(1);
+    expect(receipt).not.toHaveProperty('ocrLines');
+    expect(receipt).not.toHaveProperty('image');
+    db.close();
+  });
+
+  it('is idempotent for the same import and rejects a conflicting retry', async () => {
+    const db = freshDb();
+    const original = importInput();
+    const input = {
+      ...original,
+      confirmedItems: [{ ...original.confirmedItems[0], customMedicationId: undefined }],
+    };
+    const first = await applyMedicationImport(db, input);
+    const retry = await applyMedicationImport(db, input);
+    expect(retry).toEqual(first);
+    expect(first.confirmedItems[0].customMedicationId).toBeTruthy();
+    const retryWithResolvedProfile = await applyMedicationImport(db, {
+      ...input,
+      confirmedItems: first.confirmedItems,
+    });
+    expect(retryWithResolvedProfile).toEqual(first);
+    expect(await db.regimenItems.count()).toBe(1);
+    await expect(applyMedicationImport(db, {
+      ...input,
+      imageSha256: 'b'.repeat(64),
+    })).rejects.toThrow('different content');
+    expect(await db.regimenItems.count()).toBe(1);
+    db.close();
+  });
+
+  it('rejects patient mismatch, duplicate clinical rows, and id collisions', async () => {
+    const db = freshDb();
+    await expect(applyMedicationImport(db, importInput({
+      confirmedItems: [regimenItem('wrong-patient', 'P-02')],
+    }))).rejects.toThrow('another patient');
+    const duplicateA = regimenItem('duplicate-a', 'P-01');
+    const duplicateB = { ...duplicateA, id: 'duplicate-b', updatedAt: '2026-09-06T00:00:00Z' };
+    await expect(applyMedicationImport(db, importInput({
+      confirmedItems: [duplicateA, duplicateB],
+    }))).rejects.toThrow('exact duplicate');
+    await putRegimenItem(db, regimenItem('occupied', 'P-01'));
+    await expect(applyMedicationImport(db, importInput({
+      confirmedItems: [regimenItem('occupied', 'P-01')],
+    }))).rejects.toThrow('Regimen id collision');
+    await putRegimenItem(db, regimenItem('existing-exact', 'P-01', { drug: 'entacapone' }));
+    await expect(applyMedicationImport(db, importInput({
+      id: 'import-exact-existing',
+      confirmedItems: [regimenItem('new-id', 'P-01', { drug: 'entacapone' })],
+    }))).rejects.toThrow('duplicates an existing medicine');
+    expect(await db.medicationImportReceipts.count()).toBe(0);
+    db.close();
+  });
+
+  it('rolls back profiles and regimen rows when any insert conflicts', async () => {
+    const db = freshDb();
+    await putRegimenItem(db, regimenItem('occupied-second', 'P-01'));
+    const custom = importInput().confirmedItems[0];
+    await expect(applyMedicationImport(db, importInput({
+      confirmedItems: [custom, regimenItem('occupied-second', 'P-01', { drug: 'baclofen' })],
+    }))).rejects.toThrow('Regimen id collision');
+    expect(await db.regimenItems.get('imported-r1')).toBeUndefined();
+    expect(await db.customMedications.count()).toBe(0);
+    expect(await db.medicationImportReceipts.count()).toBe(0);
+    db.close();
+  });
+
+  it('snapshots an allowlisted payload before awaiting and excludes transient OCR data', async () => {
+    const db = freshDb();
+    const input = importInput() as ReturnType<typeof importInput> & {
+      image?: string;
+      ocrLines?: Array<{ text: string }>;
+    };
+    input.image = 'private-image-bytes';
+    input.ocrLines = [{ text: 'private OCR text' }];
+    const pending = applyMedicationImport(db, input);
+    input.confirmedItems[0].times[0].doseMg = 999;
+    input.confirmedItems[0].customName = 'mutated after apply';
+
+    const receipt = await pending;
+    expect(receipt.confirmedItems[0].times[0].doseMg).toBe(0.088);
+    expect(receipt.confirmedItems[0].customName).toBe('Pramipexol');
+    expect(receipt.payloadFingerprint).not.toContain('private-image-bytes');
+    expect(receipt.payloadFingerprint).not.toContain('private OCR text');
+    expect(JSON.stringify(receipt)).not.toContain('ocrLines');
+    db.close();
+  });
+
+  it('normalizes clinical duplicate comparisons while preserving real differences', async () => {
+    const db = freshDb();
+    const first = regimenItem('normalized-a', 'P-01', {
+      drug: 'custom',
+      customName: 'Pramipexol',
+      customFormulation: 'Retardtabletten',
+      customMedicationId: 'profile-a',
+      strengthMg: 0.26,
+      times: [
+        { time: '20:00', doseMg: 0.18 },
+        { time: '08:00', doseMg: 0.088 },
+      ],
+    });
+    const sameClinical = regimenItem('normalized-b', 'P-01', {
+      drug: 'custom',
+      customName: '  PRAMIPEXOL ',
+      customFormulation: 'retardtabletten  ',
+      customMedicationId: 'profile-b',
+      strengthMg: 0.088,
+      times: [
+        { time: '08:00', doseMg: 0.088 },
+        { time: '20:00', doseMg: 0.18 },
+      ],
+    });
+    await expect(applyMedicationImport(db, importInput({
+      id: 'normalized-duplicate',
+      confirmedItems: [first, sameClinical],
+    }))).rejects.toThrow('exact duplicate');
+
+    const differentDose = {
+      ...sameClinical,
+      id: 'normalized-c',
+      times: [{ time: '08:00', doseMg: 0.18 }, { time: '20:00', doseMg: 0.18 }],
+    };
+    await expect(applyMedicationImport(db, importInput({
+      id: 'normalized-different',
+      confirmedItems: [first, differentDose],
+    }))).resolves.toBeTruthy();
+    db.close();
+  });
+
+  it('rolls back writes when a later custom profile id collides inside the transaction', async () => {
+    const db = freshDb();
+    await db.customMedications.add({
+      id: 'occupied-profile',
+      name: 'Existing medicine',
+      formulation: 'Tabletten',
+      normalizedKey: 'existing medicine\u001ftabletten',
+      createdAt: '2026-09-01T00:00:00Z',
+    });
+    const first = regimenItem('rollback-first', 'P-01', {
+      drug: 'custom',
+      customName: 'First medicine',
+      customFormulation: 'Tabletten',
+      customMedicationId: 'new-profile',
+      times: [{ time: '08:00', doseMg: 1 }],
+    });
+    const second = regimenItem('rollback-second', 'P-01', {
+      drug: 'custom',
+      customName: 'Second medicine',
+      customFormulation: 'Kapseln',
+      customMedicationId: 'occupied-profile',
+      times: [{ time: '09:00', doseMg: 2 }],
+    });
+
+    await expect(applyMedicationImport(db, importInput({
+      id: 'late-collision',
+      confirmedItems: [first, second],
+    }))).rejects.toThrow('Custom medication id collision');
+    expect(await db.regimenItems.count()).toBe(0);
+    expect(await db.customMedications.count()).toBe(1);
+    expect(await db.customMedications.get('new-profile')).toBeUndefined();
+    expect(await db.medicationImportReceipts.count()).toBe(0);
+    db.close();
+  });
+
+  it('rejects unsupported or malformed receipt metadata', async () => {
+    const db = freshDb();
+    await expect(applyMedicationImport(db, importInput({
+      schemaVersion: 2,
+    }))).rejects.toThrow('schema or parser version');
+    await expect(applyMedicationImport(db, importInput({
+      imageSha256: 'not-a-hash',
+    }))).rejects.toThrow('image hash');
+    await expect(applyMedicationImport(db, {
+      ...importInput(),
+      actor: 'doctor' as never,
+    })).rejects.toThrow('actor');
+    expect(await db.medicationImportReceipts.count()).toBe(0);
+    db.close();
+  });
+
+  it('adds v7 receipts without changing v6 regimen or custom rows', async () => {
+    class V6Database extends Dexie {
+      regimenItems!: EntityTable<RegimenItem, 'id'>;
+      customMedications!: EntityTable<import('../../domain/medicationLookup').CustomMedication, 'id'>;
+      constructor(name: string) {
+        super(name);
+        this.version(6).stores({
+          patients: '&code, createdAt',
+          events: '&id, patient, at, kind, [patient+at]',
+          patientModels: '&patient',
+          consent: '&patient',
+          regimenItems: '&id, patient',
+          activityLog: '&id, at',
+          fieldReports: '&id, status, createdAt',
+          observationStudies: '&id, patient, status, [patient+status], startedAt',
+          assessments: '&id, studyId, patient, kind, quality, startedAt',
+          customMedications: '&id, &normalizedKey, createdAt',
+        });
+      }
+    }
+    const dbName = `test-companion-migration-v7-${Date.now()}`;
+    const v6 = new V6Database(dbName);
+    const preserved = regimenItem('v6-regimen', 'P-01');
+    await v6.regimenItems.add(preserved);
+    await v6.customMedications.add({
+      id: 'v6-custom',
+      name: 'Amantadine',
+      formulation: 'Tabletten',
+      normalizedKey: 'amantadine\u001ftabletten',
+      createdAt: '2026-09-01T00:00:00Z',
+    });
+    v6.close();
+    const v7 = makeDb(dbName);
+    expect(await v7.regimenItems.get('v6-regimen')).toEqual(preserved);
+    expect((await v7.customMedications.get('v6-custom'))?.name).toBe('Amantadine');
+    expect(await v7.medicationImportReceipts.count()).toBe(0);
+    v7.close();
   });
 });

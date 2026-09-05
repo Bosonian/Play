@@ -10,6 +10,10 @@ describe('mapPatientTap — 3-tap patient flow → canonical MotorState', () => 
     expect(mapPatientTap('on')).toBe('on');
   });
 
+  it('maps not sure / changing to uncertain', () => {
+    expect(mapPatientTap('uncertain')).toBe('uncertain');
+  });
+
   it('maps on-dyskinesia with no refinement → on-dyskinesia-unspecified', () => {
     expect(mapPatientTap('on-dyskinesia')).toBe('on-dyskinesia-unspecified');
   });
@@ -28,7 +32,7 @@ describe('mapPatientTap — 3-tap patient flow → canonical MotorState', () => 
   });
 
   it('never produces asleep from any combination of primary tap + refinement', () => {
-    const primaries: PrimaryTap[] = ['on', 'off', 'on-dyskinesia'];
+    const primaries: PrimaryTap[] = ['on', 'off', 'on-dyskinesia', 'uncertain'];
     const refinements: (DyskinesiaRefinement | undefined)[] = [
       undefined,
       'troublesome',

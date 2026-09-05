@@ -26,16 +26,16 @@ describe('tapping acquisition', () => {
     expect(finished.result.features.attemptedTapCount).toBe(2);
   });
 
-  it('advances the expected target only after a successful touch', () => {
+  it('accepts either starting target and advances only after a successful touch', () => {
     const acquisition = startTappingAcquisition('right', 1_000);
 
-    recordTappingTouch(acquisition, touch(1_100, 'a'));
+    recordTappingTouch(acquisition, touch(1_100, 'b'));
     recordTappingTouch(acquisition, touch(1_200, 'outside'));
-    recordTappingTouch(acquisition, touch(1_300, 'a'));
-    recordTappingTouch(acquisition, touch(1_400, 'b'));
+    recordTappingTouch(acquisition, touch(1_300, 'b'));
+    recordTappingTouch(acquisition, touch(1_400, 'a'));
 
-    expect(acquisition.samples.map((sample) => sample.expectedTarget)).toEqual(['a', 'b', 'b', 'b']);
-    expect(acquisition.expectedTarget).toBe('a');
+    expect(acquisition.samples.map((sample) => sample.expectedTarget)).toEqual([null, 'a', 'a', 'a']);
+    expect(acquisition.expectedTarget).toBe('b');
     const finished = finishTappingAcquisition(acquisition, 11_000)!;
     expect(finished.result.features.successfulTapCount).toBe(2);
     expect(finished.result.features.alternationErrors).toBe(1);

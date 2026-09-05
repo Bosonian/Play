@@ -36,9 +36,14 @@ patterns and adjusts the prescription. The app never prescribes.
 - Finger-tapping instructions now specify a stable flat phone, one index finger
   at a time, and the fixed left-then-right order. Each saved assessment records
   that order explicitly.
-- The reviewed Gemini photo-import and multi-patient doctor PWA architecture,
-  patient-isolation model, release stages, and provider-data gates are captured
-  in `docs/DOCTOR_PWA_AND_IMPORT_PLAN.md`; cloud processing is not enabled.
+- Optional Android medicine-photo import uses doctor-provided Cloud Vision credentials,
+  EU OCR, source comparison, and an atomic, explicitly reviewed regimen import.
+  Live credentialed device acceptance remains pending.
+- Tapping protocol v3 uses fixed self-paced alternating targets and separate hands.
+  A pre-test state report links to both results; optional doctor-set reminders
+  open the combined check-in. Older tapping records retain their protocol version.
+- Remote multi-patient doctor PWA and patient synchronization remain planned in
+  `docs/DOCTOR_PWA_AND_IMPORT_PLAN.md`.
 
 ## 0.10.0 — In-app update banner
 

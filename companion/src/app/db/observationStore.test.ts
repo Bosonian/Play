@@ -2,6 +2,8 @@ import 'fake-indexeddb/auto';
 
 import { describe, expect, it } from 'vitest';
 import {
+  addEvent,
+  deleteEvent,
   finishObservationStudy,
   getActiveObservationStudy,
   getAssessmentsForStudy,
@@ -9,12 +11,14 @@ import {
   putAssessment,
   putAssessments,
   putObservationStudy,
+  saveTappingCheckIn,
 } from './store';
 import {
   buildObservationStudy,
   OBSERVATION_PROTOCOL_VERSION,
   type AssessmentRecord,
 } from '../../domain/observation';
+import type { MotorEvent } from '../../domain/types';
 
 let counter = 0;
 
@@ -170,6 +174,160 @@ describe('observation persistence', () => {
       .rejects.toThrow('simulated write failure');
     expect(await database.assessments.count()).toBe(0);
     database.assessments.hook('creating').unsubscribe(rejectRight);
+    database.close();
+  });
+
+  it('atomically and idempotently saves the linked state plus both hands', async () => {
+    const database = makeDb(`observation-${++counter}`);
+    const event: MotorEvent = {
+      id: 'state-1', patient: 'P-01', kind: 'motor',
+      at: '2026-09-03T10:00:00.000Z', state: 'uncertain',
+      studyId: 's1', assessmentSessionId: 'session-3',
+    };
+    const hand = (side: 'left' | 'right', outcome: 'unable' | 'interrupted'): AssessmentRecord => ({
+      id: `session-3-${side}`, studyId: 's1', patient: 'P-01',
+      protocolVersion: OBSERVATION_PROTOCOL_VERSION,
+      kind: 'finger-tapping', reason: 'scheduled-daily',
+      startedAt: event.at, completedAt: event.at, sessionId: 'session-3',
+      outcome, measurementProtocolVersion: 3,
+      quality: 'invalid', qualityReasons: [outcome],
+      linkedMotorEventId: event.id, selfReportedState: event.state,
+      selfReportedStateAt: event.at, checkInProtocolVersion: 1,
+      metadata: { side },
+    });
+    const records = [hand('left', 'unable'), hand('right', 'interrupted')];
+    await saveTappingCheckIn(database, event, records);
+    await saveTappingCheckIn(database, event, records);
+    expect(await database.events.get(event.id)).toEqual(event);
+    expect(await database.assessments.count()).toBe(2);
+    await expect(saveTappingCheckIn(database, { ...event, state: 'off' }, records))
+      .rejects.toThrow('inconsistent');
+    database.close();
+  });
+
+  it('requires both hands to carry the same optional reminder context', async () => {
+    const database = makeDb(`observation-${++counter}`);
+    const event: MotorEvent = {
+      id: 'reminder-state', patient: 'P-01', kind: 'motor',
+      at: '2026-09-03T12:00:00.000Z', state: 'on',
+      studyId: 's1', assessmentSessionId: 'reminder-session',
+    };
+    const hand = (side: 'left' | 'right'): AssessmentRecord => ({
+      id: `reminder-session-${side}`, studyId: 's1', patient: 'P-01',
+      protocolVersion: OBSERVATION_PROTOCOL_VERSION,
+      kind: 'finger-tapping', reason: 'scheduled-daily',
+      startedAt: event.at, sessionId: 'reminder-session', outcome: 'completed',
+      quality: 'valid', qualityReasons: [], metadata: { side },
+      linkedMotorEventId: event.id, selfReportedState: event.state,
+      selfReportedStateAt: event.at, checkInProtocolVersion: 1,
+      reminderOccurrenceId: 'occurrence-12',
+      reminderScheduledAt: '2026-09-03T12:00:00.000Z',
+    });
+    const records = [hand('left'), hand('right')];
+
+    await expect(saveTappingCheckIn(database, event, [
+      records[0],
+      { ...records[1], reminderScheduledAt: '2026-09-03T12:05:00.000Z' },
+    ])).rejects.toThrow('same reminder occurrence and scheduled time');
+    expect(await database.events.count()).toBe(0);
+    expect(await database.assessments.count()).toBe(0);
+    database.close();
+  });
+
+  it('deduplicates a reminder occurrence across sessions while preserving exact retries', async () => {
+    const database = makeDb(`observation-${++counter}`);
+    const event: MotorEvent = {
+      id: 'occurrence-state-1', patient: 'P-01', kind: 'motor',
+      at: '2026-09-03T13:00:00.000Z', state: 'uncertain',
+      studyId: 's1', assessmentSessionId: 'occurrence-session-1',
+    };
+    const hands = (sessionId: string, linkedMotorEventId: string): AssessmentRecord[] =>
+      (['left', 'right'] as const).map((side) => ({
+        id: `${sessionId}-${side}`, studyId: 's1', patient: 'P-01',
+        protocolVersion: OBSERVATION_PROTOCOL_VERSION,
+        kind: 'finger-tapping', reason: 'scheduled-daily',
+        startedAt: event.at, sessionId, outcome: 'completed',
+        quality: 'valid', qualityReasons: [], metadata: { side },
+        linkedMotorEventId, selfReportedState: event.state,
+        selfReportedStateAt: event.at, checkInProtocolVersion: 1,
+        reminderOccurrenceId: 'one-native-occurrence',
+        reminderScheduledAt: '2026-09-03T13:00:00.000Z',
+      }));
+    const firstRecords = hands('occurrence-session-1', event.id);
+
+    await saveTappingCheckIn(database, event, firstRecords);
+    await saveTappingCheckIn(database, event, firstRecords);
+
+    const secondEvent: MotorEvent = {
+      ...event, id: 'occurrence-state-2', assessmentSessionId: 'occurrence-session-2',
+    };
+    await expect(saveTappingCheckIn(
+      database,
+      secondEvent,
+      hands('occurrence-session-2', secondEvent.id),
+    )).rejects.toThrow('already has a different tapping session');
+    expect(await database.events.toArray()).toEqual([event]);
+    expect(await database.assessments.count()).toBe(2);
+    database.close();
+  });
+
+  it('keeps an assessment-linked state immutable outside the atomic tapping save', async () => {
+    const database = makeDb(`observation-${++counter}`);
+    const event: MotorEvent = {
+      id: 'protected-state', patient: 'P-01', kind: 'motor',
+      at: '2026-09-03T14:00:00.000Z', state: 'off',
+      studyId: 's1', assessmentSessionId: 'protected-session',
+    };
+    const records: AssessmentRecord[] = (['left', 'right'] as const).map((side) => ({
+      id: `protected-session-${side}`, studyId: 's1', patient: 'P-01',
+      protocolVersion: OBSERVATION_PROTOCOL_VERSION,
+      kind: 'finger-tapping', reason: 'symptom-triggered',
+      startedAt: event.at, sessionId: 'protected-session', outcome: 'unable',
+      quality: 'invalid', qualityReasons: ['unable-to-complete'], metadata: { side },
+      linkedMotorEventId: event.id, selfReportedState: event.state,
+      selfReportedStateAt: event.at, checkInProtocolVersion: 1,
+    }));
+    await saveTappingCheckIn(database, event, records);
+
+    await addEvent(database, event);
+    await expect(addEvent(database, { ...event, at: '2026-09-03T14:05:00.000Z' }))
+      .rejects.toThrow('can only be saved with their tapping session');
+    await expect(deleteEvent(database, event.id))
+      .rejects.toThrow('cannot be deleted separately');
+    expect(await database.events.get(event.id)).toEqual(event);
+    expect(await database.assessments.count()).toBe(2);
+
+    await expect(addEvent(database, {
+      ...event, id: 'orphan-linked-state', assessmentSessionId: 'orphan-session',
+    })).rejects.toThrow('can only be saved with their tapping session');
+    expect(await database.events.get('orphan-linked-state')).toBeUndefined();
+    database.close();
+  });
+
+  it('rolls back the state event when the second hand insert fails', async () => {
+    const database = makeDb(`observation-${++counter}`);
+    const event: MotorEvent = {
+      id: 'rollback-state', patient: 'P-01', kind: 'motor',
+      at: '2026-09-03T11:00:00.000Z', state: 'on',
+      studyId: 's1', assessmentSessionId: 'rollback-session',
+    };
+    const record = (side: 'left' | 'right'): AssessmentRecord => ({
+      id: `rollback-${side}`, studyId: 's1', patient: 'P-01',
+      protocolVersion: 1, kind: 'finger-tapping', reason: 'pre-dose',
+      startedAt: event.at, sessionId: 'rollback-session', outcome: 'completed',
+      quality: 'valid', qualityReasons: [], metadata: { side },
+      linkedMotorEventId: event.id, selfReportedState: event.state,
+      selfReportedStateAt: event.at, checkInProtocolVersion: 1,
+    });
+    const fail = (_key: unknown, value: AssessmentRecord) => {
+      if (value.id === 'rollback-right') throw new Error('right failed');
+    };
+    database.assessments.hook('creating').subscribe(fail);
+    await expect(saveTappingCheckIn(database, event, [record('left'), record('right')]))
+      .rejects.toThrow('right failed');
+    expect(await database.events.get(event.id)).toBeUndefined();
+    expect(await database.assessments.count()).toBe(0);
+    database.assessments.hook('creating').unsubscribe(fail);
     database.close();
   });
 });

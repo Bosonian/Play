@@ -172,6 +172,7 @@ describe('eventLabel', () => {
       ['on-dyskinesia-unspecified', 'ON with dyskinesia'],
       ['on-dyskinesia-troublesome', 'ON with dyskinesia · troublesome'],
       ['on-dyskinesia-nontroublesome', 'ON with dyskinesia · not troublesome'],
+      ['uncertain', 'Not sure / changing'],
       ['asleep', 'Asleep'],
     ];
     for (const [state, label] of cases) {

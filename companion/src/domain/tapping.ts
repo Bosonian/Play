@@ -1,4 +1,6 @@
-export const TAPPING_PROTOCOL_VERSION = 2;
+// v3 is self-paced fixed-target alternation. v2 used a changing visual cue,
+// which added reaction/choice latency to the primary motor measurement.
+export const TAPPING_PROTOCOL_VERSION = 3;
 export const TAPPING_FEATURE_VERSION = 2;
 export const TAPPING_DURATION_MS = 10_000;
 export type HandSide = 'left' | 'right';
@@ -8,7 +10,9 @@ export interface TapSample {
   atMs: number;
   x: number;
   y: number;
-  expectedTarget: TapTarget;
+  // null on the first in-target touch in protocol v3 because either fixed
+  // target is a valid self-paced starting side.
+  expectedTarget: TapTarget | null;
   actualTarget: TapTarget | 'outside';
 }
 
@@ -35,8 +39,9 @@ export interface TappingResult {
 const round = (n: number) => Math.round(n * 1000) / 1000;
 
 // Poor motor performance is an observation, not a technical exclusion.
-// Reconstruct alternation from accepted touches, not UI render timing.
-// Outside/repeated touches do not advance the expected target.
+// Reconstruct alternation from accepted touches, not UI render timing. The
+// patient may start on either fixed target; outside/repeated touches do not
+// advance the accepted sequence.
 export function analyseTapping(side: HandSide, samples: TapSample[], durationMs: number,
   technicalReasons: string[] = []): TappingResult {
   const reasons = new Set(technicalReasons);
@@ -53,16 +58,16 @@ export function analyseTapping(side: HandSide, samples: TapSample[], durationMs:
     && Number.isFinite(s.y) && s.atMs >= 0 && s.atMs < duration
     && ['a', 'b', 'outside'].includes(s.actualTarget));
   if (usable.some((s, i) => i > 0 && s.atMs <= usable[i - 1].atMs)) reasons.add('invalid-timestamps');
-  let expected: TapTarget = 'a';
+  let expected: TapTarget | null = null;
   let outsideTargetCount = 0;
   let alternationErrors = 0;
   const accepted: TapSample[] = [];
   for (const sample of usable) {
     if (sample.actualTarget === 'outside') outsideTargetCount++;
-    else if (sample.actualTarget !== expected) alternationErrors++;
+    else if (expected !== null && sample.actualTarget !== expected) alternationErrors++;
     else {
       accepted.push(sample);
-      expected = expected === 'a' ? 'b' : 'a';
+      expected = sample.actualTarget === 'a' ? 'b' : 'a';
     }
   }
   const intervals = accepted.slice(1).map((s, i) => s.atMs - accepted[i].atMs).filter((n) => n > 0);

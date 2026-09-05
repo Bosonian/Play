@@ -13,6 +13,7 @@ export function EventDetail({ event, onChangeTime, onDelete, onBack }: EventDeta
   // Compute the clamp with the same pure helper the actual shift uses,
   // rather than re-deriving "is this already at `now`" here — one rule,
   // one place (per SPEC: "don't duplicate the rule").
+  const linkedTappingState = event.kind === 'motor' && Boolean(event.assessmentSessionId);
   const plusFiveClamped = shiftEventTime(event, 5, nowISO).at === event.at;
 
   const dateLine = new Intl.DateTimeFormat('en-GB', {
@@ -33,11 +34,17 @@ export function EventDetail({ event, onChangeTime, onDelete, onBack }: EventDeta
       <h1 className="text-label text-fg-muted">Entry</h1>
       <p className="text-title text-fg">{eventLabel(event)}</p>
 
+      {linkedTappingState && (
+        <p className="mt-6 rounded-sm border border-line bg-surface p-3 text-body text-fg-muted">
+          Recorded with a tapping test. Its time and entry are kept with the linked hand assessments.
+        </p>
+      )}
       <h2 className="mt-8 text-label text-fg-muted">Time</h2>
       <div className="mt-2 flex items-center gap-8">
         <button
           type="button"
           aria-label="5 minutes earlier"
+          disabled={linkedTappingState}
           onClick={() => onChangeTime(-5)}
           className="min-h-[76px] min-w-[76px] rounded-md border border-line bg-surface text-title text-fg"
         >
@@ -47,7 +54,7 @@ export function EventDetail({ event, onChangeTime, onDelete, onBack }: EventDeta
         <button
           type="button"
           aria-label="5 minutes later"
-          disabled={plusFiveClamped}
+          disabled={linkedTappingState || plusFiveClamped}
           onClick={() => onChangeTime(5)}
           className="min-h-[76px] min-w-[76px] rounded-md border border-line bg-surface text-title text-fg disabled:opacity-60"
         >
@@ -57,13 +64,15 @@ export function EventDetail({ event, onChangeTime, onDelete, onBack }: EventDeta
       <p className="mt-2 text-body text-fg-muted">{dateLine}</p>
       <p className="mt-1 text-caption text-fg-muted">Changes in steps of 5 minutes.</p>
 
-      <button
-        type="button"
-        onClick={onDelete}
-        className="mt-8 min-h-[76px] w-full rounded-md border border-line text-body-lg text-warn"
-      >
-        Delete this entry
-      </button>
+      {!linkedTappingState && (
+        <button
+          type="button"
+          onClick={onDelete}
+          className="mt-8 min-h-[76px] w-full rounded-md border border-line text-body-lg text-warn"
+        >
+          Delete this entry
+        </button>
+      )}
     </div>
   );
 }

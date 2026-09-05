@@ -48,11 +48,12 @@ state bypasses the gate.
 
 ## Doctor workspace and medication-photo import
 
-The proposed responsive Vercel doctor PWA, multi-patient ownership model, and
-Gemini photo-to-reviewed-draft workflow are specified in
-[the doctor PWA and import plan](DOCTOR_PWA_AND_IMPORT_PLAN.md). They require
-tenant authentication, patient-scoped data access, provider retention review,
-and cross-patient isolation tests before real patient data is processed.
+The Android implementation uses optional doctor-provided Google Cloud Vision
+credentials for EU text recognition, followed by explicit medicine and directions
+review. See [the doctor PWA and import plan](DOCTOR_PWA_AND_IMPORT_PLAN.md).
+Credentialed device acceptance remains pending. The responsive Vercel doctor PWA,
+multi-patient ownership, remote authentication and patient synchronization remain
+future stages.
 
 ## Release sequence
 
@@ -97,7 +98,12 @@ Exit gate: a simulated 14/28-day study produces a complete, inspectable timeline
 
 ### 4. Finger tapping
 
-- Bilateral ten-second alternating-target test.
+- Bilateral ten-second self-paced alternating-target test (measurement protocol v3).
+- Both targets remain fixed and visually identical; either target may be tapped first.
+- One index finger per hand, with separate left and right records.
+- Pre-test ON/OFF/dyskinesia/uncertain state links atomically to both hand records.
+- Doctor-configured reminders combine state logging with the bilateral test.
+- Historical color-cued protocol v2 results retain their recorded protocol version.
 - Capture touch time, position, target and tested side.
 - Derive rate, interval variability, errors, decrement and asymmetry.
 - Add practice trials and device/screen metadata.

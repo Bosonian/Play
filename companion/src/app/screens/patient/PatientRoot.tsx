@@ -5,13 +5,12 @@ import { useLiveQuery } from 'dexie-react-hooks';
 // observability hook — built on Dexie's internal change tracking, not any
 // extra browser API — so it works anywhere Dexie itself works, needs no
 // hand-rolled "refetch after every write" bookkeeping, and adds ~1kB.
-import { db, addEvent, deleteEvent, getRegimenForPatient } from '../../db/store';
+import { db, addEvent, deleteEvent, getRegimenForPatient, getActiveObservationStudy, getAssessmentsForStudy } from '../../db/store';
 import { usePatient } from '../../patient/usePatient';
 import { buildMotorEvent, buildMealEvent, refineDyskinesia, shiftEventTime, eventLabel, formatTimeHM } from '../../patient/log';
 import { buildDoseEvent, buildPrnDoseEvent, extraDoseChoices, doseLabel, type DoseChoice, type PrnDoseChoice } from '../../patient/doses';
 import { logEvent } from '../../activity/activityLog';
-import type { PrimaryTap, DyskinesiaRefinement } from '../../../domain/motor';
-import type { MotorEvent, PatientEvent } from '../../../domain/types';
+import type { PatientEvent } from '../../../domain/types';
 import type { RegimenItem } from '../../../domain/regimen';
 import { Home, type LastAction } from './Home';
 import { State } from './State';
@@ -22,6 +21,10 @@ import { ReportProblem } from '../ReportProblem';
 import { ObservationStatus } from './ObservationStatus';
 import { FingerTapping } from './FingerTapping';
 import type { ObservationStudy } from '../../../domain/observation';
+import type { StateSelection } from './StatePicker';
+import { validateObservationReminderOpen, type ObservationReminderOpen } from '../../../domain/observationReminders';
+import { observationRemindersNative } from '../../observationReminders/native';
+import { reconcileObservationRemindersForPatient } from '../../observationReminders/reconcile';
 
 type PatientScreen =
   | { name: 'home' }
@@ -30,7 +33,7 @@ type PatientScreen =
   | { name: 'dose' }
   | { name: 'detail'; eventId: string }
   | { name: 'report' }
-  | { name: 'tapping'; study: ObservationStudy };
+  | { name: 'tapping'; study: ObservationStudy; reminderContext?: ObservationReminderOpen };
 
 // Patient-mode router. Plain useState switch, no routing library — this app
 // has four screens and no deep-linking need, so a library would be pure
@@ -44,11 +47,16 @@ export function PatientRoot({ onSetupObservation }: { onSetupObservation: () => 
   // That trivially satisfies "at least 8 seconds" with zero timer code —
   // it's visible indefinitely, not just for a minimum duration.
   const [lastAction, setLastAction] = useState<LastAction>(null);
+  const [reminderNotice, setReminderNotice] = useState<string | null>(null);
+  const screenRef = useRef(screen);
+  const reminderCheckRef = useRef(false);
+  const reminderCheckQueuedRef = useRef(false);
+  const reminderCheckCallbackRef = useRef<(() => void) | null>(null);
+  useEffect(() => { screenRef.current = screen; }, [screen]);
   // Holds the motor event most recently logged from the State screen, so
   // that a follow-up refine() call knows which event to mutate. Only ever
   // set right before entering the 'refine' phase; State.tsx owns the
   // pick/refine sub-state itself, this just remembers the target event.
-  const lastMotorEventRef = useRef<MotorEvent | null>(null);
 
   // Debounce for tremor double-strikes (RESEARCH §1: "Debounce logging
   // buttons ~400-500ms so a tremor double-strike is one entry"). A plain
@@ -64,6 +72,73 @@ export function PatientRoot({ onSetupObservation }: { onSetupObservation: () => 
     () => (patient ? getRegimenForPatient(db, patient.code) : Promise.resolve<RegimenItem[]>([])),
     [patient?.code],
   );
+
+  useEffect(() => {
+    if (!patient) return;
+    let cancelled = false;
+    async function checkReminders() {
+      if (reminderCheckRef.current) {
+        reminderCheckQueuedRef.current = true;
+        return;
+      }
+      reminderCheckRef.current = true;
+      try {
+        if (!observationRemindersNative.isAvailable()) return;
+        const { pending } = await observationRemindersNative.getPendingOpen();
+        if (pending && !cancelled) {
+          const study = await getActiveObservationStudy(db, patient!.code);
+          const assessments = study ? await getAssessmentsForStudy(db, study.id) : [];
+          const completed = new Set(assessments.flatMap((record) =>
+            record.reminderOccurrenceId ? [record.reminderOccurrenceId] : []));
+          if (cancelled) return;
+          const context: ObservationReminderOpen = {
+            occurrenceId: pending.occurrenceId, studyId: pending.studyId,
+            revision: pending.revision, scheduledAt: pending.scheduledAt,
+          };
+          const validation = validateObservationReminderOpen(context, study, completed, new Date().toISOString());
+          if (validation.valid) {
+            if (screenRef.current.name !== 'home' || !study) return;
+            if (cancelled) return;
+            setReminderNotice(null);
+            const claimed: PatientScreen = { name: 'tapping', study, reminderContext: context };
+            screenRef.current = claimed;
+            setScreen(claimed);
+            await observationRemindersNative.acknowledgeOpen(pending.occurrenceId);
+            return;
+          }
+          if (cancelled) return;
+          setReminderNotice(validation.reason);
+          await observationRemindersNative.acknowledgeOpen(pending.occurrenceId);
+        }
+        if (cancelled) return;
+        await reconcileObservationRemindersForPatient(db, patient!.code);
+      } catch {
+        if (!cancelled) setReminderNotice('Android reminders could not be synchronized. The diary remains available.');
+      } finally {
+        reminderCheckRef.current = false;
+        if (reminderCheckQueuedRef.current) {
+          reminderCheckQueuedRef.current = false;
+          queueMicrotask(() => reminderCheckCallbackRef.current?.());
+        }
+      }
+    }
+    reminderCheckCallbackRef.current = () => void checkReminders();
+    void checkReminders();
+    let removeNativeListener: (() => Promise<void>) | undefined;
+    if (observationRemindersNative.isAvailable()) {
+      void observationRemindersNative.onReminderOpen(() => void checkReminders()).then((handle) => {
+        if (cancelled) void handle.remove();
+        else removeNativeListener = () => handle.remove();
+      });
+    }
+    const onVisible = () => { if (document.visibilityState === 'visible') void checkReminders(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
+      if (removeNativeListener) void removeNativeListener();
+    };
+  }, [patient?.code, screen.name]);
 
   const busyRef = useRef(false);
   function withDebounce(fn: () => void | Promise<void>) {
@@ -86,34 +161,13 @@ export function PatientRoot({ onSetupObservation }: { onSetupObservation: () => 
   // handlers are the choke point where intent is actually known. This also
   // keeps store.ts thin and keeps logEvent free of any React dependency
   // (see activityLog.ts's module header — it must never import React).
-  async function logMotor(primary: PrimaryTap) {
+  async function logMotor(selection: StateSelection) {
     if (!patient) return;
-    const ev = buildMotorEvent(patient.code, primary, new Date().toISOString());
+    let ev = buildMotorEvent(patient.code, selection.primary, selection.reportedAt);
+    if (selection.refinement) ev = refineDyskinesia(ev, selection.refinement);
     await addEvent(db, ev);
     void logEvent('motor', `Logged motor state: ${eventLabel(ev)}`);
     setLastAction({ kind: 'logged', event: ev, label: 'State logged' });
-    if (primary === 'on-dyskinesia') {
-      // Stay on State (it shows the refine sub-screen); remember the event
-      // so refine()/onDone() below know what to act on.
-      lastMotorEventRef.current = ev;
-    } else {
-      setScreen({ name: 'home' });
-    }
-  }
-
-  async function refine(refinement: DyskinesiaRefinement) {
-    const target = lastMotorEventRef.current;
-    if (!target) {
-      setScreen({ name: 'home' });
-      return;
-    }
-    const refined = refineDyskinesia(target, refinement);
-    await addEvent(db, refined); // put = overwrite, same id as the unspecified event
-    void logEvent('motor', `Refined motor state: ${eventLabel(refined)}`);
-    // Keep lastAction in sync with the refined event (same id either way) so
-    // a subsequent Undo deletes the refined version, not the unspecified one.
-    setLastAction({ kind: 'logged', event: refined, label: 'State logged' });
-    lastMotorEventRef.current = null;
     setScreen({ name: 'home' });
   }
 
@@ -205,6 +259,8 @@ export function PatientRoot({ onSetupObservation }: { onSetupObservation: () => 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
       {screen.name === 'home' && (
+        <>
+          {reminderNotice && <p role="status" className="m-4 rounded-sm border border-line p-3 text-body text-warn">{reminderNotice}</p>}
         <Home
           patientCode={patient.code}
           lastAction={lastAction}
@@ -222,15 +278,11 @@ export function PatientRoot({ onSetupObservation }: { onSetupObservation: () => 
           onLogAnotherDose={() => setScreen({ name: 'dose' })}
           onReportProblem={() => setScreen({ name: 'report' })}
         />
+        </>
       )}
       {screen.name === 'state' && (
         <State
-          onLog={(primary) => withDebounce(() => logMotor(primary))}
-          onRefine={(r) => withDebounce(() => refine(r))}
-          onDone={() => {
-            lastMotorEventRef.current = null;
-            setScreen({ name: 'home' });
-          }}
+          onLog={(selection) => withDebounce(() => logMotor(selection))}
           onBack={() => setScreen({ name: 'home' })}
         />
       )}
@@ -261,7 +313,7 @@ export function PatientRoot({ onSetupObservation }: { onSetupObservation: () => 
         <ReportProblem screen="patient-home" onBack={() => setScreen({ name: 'home' })} />
       )}
       {screen.name === 'tapping' && (
-        <FingerTapping study={screen.study}
+        <FingerTapping study={screen.study} reminderContext={screen.reminderContext}
           onDone={() => setScreen({ name: 'home' })} onCancel={() => setScreen({ name: 'home' })} />
       )}
     </div>

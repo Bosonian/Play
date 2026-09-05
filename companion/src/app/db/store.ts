@@ -12,13 +12,19 @@
 // reasoned about without a browser or a fake-indexeddb shim.
 
 import Dexie, { type EntityTable } from 'dexie';
-import type { Patient, PatientEvent, PatientModel, Consent, ISODateTime } from '../../domain/types';
+import type { Patient, PatientEvent, PatientModel, Consent, ISODateTime, MotorEvent } from '../../domain/types';
 import type { RegimenItem } from '../../domain/regimen';
 import type { ActivityRow } from '../activity/types';
 import type { FieldReport } from '../report/types';
 import type { AssessmentRecord, ObservationStudy } from '../../domain/observation';
 import type { CustomMedication } from '../../domain/medicationLookup';
 import { customMedicationKey } from '../../domain/medicationLookup';
+import {
+  MEDICINE_IMPORT_PARSER_VERSION,
+  MEDICINE_IMPORT_SCHEMA_VERSION,
+  type MedicationImportReceipt,
+} from '../../domain/medicineImport';
+import { validateRegimenItem } from '../../domain/regimen';
 import { safeUuid } from '../lib/uuid';
 
 // The pre-version(4) RegimenItem shape (one doseMg for the whole item, times
@@ -47,6 +53,7 @@ export class CompanionDatabase extends Dexie {
   observationStudies!: EntityTable<ObservationStudy, 'id'>;
   assessments!: EntityTable<AssessmentRecord, 'id'>;
   customMedications!: EntityTable<CustomMedication, 'id'>;
+  medicationImportReceipts!: EntityTable<MedicationImportReceipt, 'id'>;
 
   constructor(name = 'pd-companion') {
     super(name);
@@ -115,6 +122,10 @@ export class CompanionDatabase extends Dexie {
       customMedications: '&id, &normalizedKey, createdAt',
     });
 
+    this.version(7).stores({
+      medicationImportReceipts: '&id, patient, appliedAt, imageSha256',
+    });
+
     // When a future schema bump opens a new DB version in another tab, let
     // the old connection (this one) close so the upgrade isn't blocked
     // forever — otherwise the new tab hangs on open() and shows a blank
@@ -157,7 +168,16 @@ export async function getPatient(
 // Events
 // ---------------------------------------------------------------------------
 export async function addEvent(database: CompanionDatabase, event: PatientEvent): Promise<void> {
-  await database.events.put(event);
+  await database.transaction('rw', database.events, async () => {
+    const existing = await database.events.get(event.id);
+    const incomingLinked = event.kind === 'motor' && Boolean(event.assessmentSessionId);
+    const existingLinked = existing?.kind === 'motor' && Boolean(existing.assessmentSessionId);
+    if (incomingLinked || existingLinked) {
+      if (existing && stableSerialize(existing) === stableSerialize(event)) return;
+      throw new Error('Assessment-linked motor events can only be saved with their tapping session.');
+    }
+    await database.events.put(event);
+  });
 }
 
 // Bulk-add events, idempotent by id (bulkPut overwrites on a matching primary
@@ -169,7 +189,13 @@ export async function addEvents(database: CompanionDatabase, events: PatientEven
 }
 
 export async function deleteEvent(database: CompanionDatabase, id: string): Promise<void> {
-  await database.events.delete(id);
+  await database.transaction('rw', database.events, async () => {
+    const existing = await database.events.get(id);
+    if (existing?.kind === 'motor' && existing.assessmentSessionId) {
+      throw new Error('Assessment-linked motor events cannot be deleted separately.');
+    }
+    await database.events.delete(id);
+  });
 }
 
 // Events for one patient within an inclusive [startISO, endISO] window. Uses
@@ -250,6 +276,223 @@ export async function putRegimenWithCustomMedication(
   });
 }
 
+export interface ApplyMedicationImportInput {
+  id: string;
+  patient: string;
+  provider: 'google-cloud-vision';
+  feature: 'DOCUMENT_TEXT_DETECTION';
+  region: 'eu';
+  schemaVersion: number;
+  parserVersion: number;
+  imageSha256: string;
+  actor: 'local-doctor-mode';
+  appliedAt: ISODateTime;
+  confirmedItems: RegimenItem[];
+}
+
+function stableSerialize(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableSerialize(record[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
+}
+
+function copyImportedItem(item: RegimenItem): RegimenItem {
+  const copy: RegimenItem = {
+    id: item.id,
+    patient: item.patient,
+    drug: item.drug,
+    times: item.times.map(({ time, doseMg }) => ({ time, doseMg })),
+    updatedAt: item.updatedAt,
+    ...(item.drug === 'custom'
+      ? {
+          customName: item.customName,
+          customFormulation: item.customFormulation,
+          ...(item.customMedicationId ? { customMedicationId: item.customMedicationId } : {}),
+        }
+      : {}),
+    ...(item.strengthMg !== undefined ? { strengthMg: item.strengthMg } : {}),
+    ...(item.freeText !== undefined ? { freeText: item.freeText } : {}),
+    ...(item.prn ? { prn: { doseMg: item.prn.doseMg, indication: item.prn.indication, ...(item.prn.instructions !== undefined ? { instructions: item.prn.instructions } : {}) } } : {}),
+  };
+  return copy;
+}
+
+function normalizedClinicalText(value: string | undefined): string | undefined {
+  const normalized = value?.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+  return normalized || undefined;
+}
+
+function importedClinicalKey(item: RegimenItem): string {
+  const identity = item.drug === 'custom'
+    ? `custom:${customMedicationKey(item.customName!, item.customFormulation!)}`
+    : `catalog:${item.drug}`;
+  return stableSerialize({
+    identity,
+    times: item.times
+      .map((time) => ({ time: time.time, doseMg: time.doseMg }))
+      .sort((a, b) => a.time.localeCompare(b.time) || a.doseMg - b.doseMg),
+    freeText: normalizedClinicalText(item.freeText),
+    prn: item.prn
+      ? {
+          doseMg: item.prn.doseMg,
+          indication: normalizedClinicalText(item.prn.indication),
+          instructions: normalizedClinicalText(item.prn.instructions),
+        }
+      : undefined,
+  });
+}
+
+function importFingerprint(input: ApplyMedicationImportInput): string {
+  return stableSerialize({
+    id: input.id,
+    patient: input.patient,
+    provider: input.provider,
+    feature: input.feature,
+    region: input.region,
+    schemaVersion: input.schemaVersion,
+    parserVersion: input.parserVersion,
+    imageSha256: input.imageSha256,
+    actor: input.actor,
+    appliedAt: input.appliedAt,
+    confirmedItems: input.confirmedItems.map((item) => {
+      const { customMedicationId: _customId, ...confirmed } = item;
+      return confirmed;
+    }),
+  });
+}
+
+function snapshotMedicationImport(input: ApplyMedicationImportInput): ApplyMedicationImportInput {
+  return {
+    id: input.id,
+    patient: input.patient,
+    provider: input.provider,
+    feature: input.feature,
+    region: input.region,
+    schemaVersion: input.schemaVersion,
+    parserVersion: input.parserVersion,
+    imageSha256: input.imageSha256,
+    actor: input.actor,
+    appliedAt: input.appliedAt,
+    confirmedItems: input.confirmedItems.map(copyImportedItem),
+  };
+}
+
+function validateMedicationImportMetadata(input: ApplyMedicationImportInput): void {
+  if (!input.id.trim()) throw new Error('Medication import id is required.');
+  if (!input.patient.trim()) throw new Error('Medication import patient is required.');
+  if (input.provider !== 'google-cloud-vision'
+      || input.feature !== 'DOCUMENT_TEXT_DETECTION'
+      || input.region !== 'eu') {
+    throw new Error('Unsupported medication import provider configuration.');
+  }
+  if (input.schemaVersion !== MEDICINE_IMPORT_SCHEMA_VERSION
+      || input.parserVersion !== MEDICINE_IMPORT_PARSER_VERSION) {
+    throw new Error('Unsupported medication import schema or parser version.');
+  }
+  if (!/^[a-f0-9]{64}$/i.test(input.imageSha256)) {
+    throw new Error('Medication import image hash is invalid.');
+  }
+  if (input.actor !== 'local-doctor-mode') throw new Error('Medication import actor is invalid.');
+  if (!input.appliedAt || Number.isNaN(Date.parse(input.appliedAt))) {
+    throw new Error('Medication import timestamp is invalid.');
+  }
+}
+
+export async function applyMedicationImport(
+  database: CompanionDatabase,
+  input: ApplyMedicationImportInput,
+): Promise<MedicationImportReceipt> {
+  // Capture an allowlisted deep snapshot before the first await. Validation,
+  // the idempotency fingerprint, and every write must describe exactly the
+  // same values even if a UI caller mutates its draft while this runs.
+  const snapshot = snapshotMedicationImport(input);
+  validateMedicationImportMetadata(snapshot);
+  if (snapshot.confirmedItems.length === 0) throw new Error('Import has no confirmed medicines.');
+  const ids = new Set<string>();
+  const exactItems = new Set<string>();
+  for (const item of snapshot.confirmedItems) {
+    if (item.patient !== snapshot.patient) throw new Error('Imported regimen item belongs to another patient.');
+    const errors = validateRegimenItem(item);
+    if (errors.length > 0) throw new Error(`Invalid imported regimen item: ${errors.join(' ')}`);
+    if (ids.has(item.id)) throw new Error(`Duplicate imported regimen id: ${item.id}`);
+    ids.add(item.id);
+    const exactKey = importedClinicalKey(item);
+    if (exactItems.has(exactKey)) throw new Error('Import contains an exact duplicate medicine.');
+    exactItems.add(exactKey);
+  }
+
+  const fingerprint = importFingerprint(snapshot);
+  return database.transaction(
+    'rw',
+    database.medicationImportReceipts,
+    database.regimenItems,
+    database.customMedications,
+    async () => {
+      const previous = await database.medicationImportReceipts.get(snapshot.id);
+      if (previous) {
+        if (previous.payloadFingerprint !== fingerprint) {
+          throw new Error(`Medication import ${snapshot.id} already exists with different content.`);
+        }
+        return previous;
+      }
+      for (const item of snapshot.confirmedItems) {
+        if (await database.regimenItems.get(item.id)) throw new Error(`Regimen id collision: ${item.id}`);
+      }
+      const existingClinicalKeys = new Set(
+        (await database.regimenItems.where('patient').equals(snapshot.patient).toArray())
+          .map(importedClinicalKey),
+      );
+      for (const item of snapshot.confirmedItems) {
+        if (existingClinicalKeys.has(importedClinicalKey(item))) {
+          throw new Error('Import duplicates an existing medicine.');
+        }
+      }
+
+      const storedItems: RegimenItem[] = [];
+      for (const source of snapshot.confirmedItems) {
+        let item = copyImportedItem(source);
+        if (item.drug === 'custom') {
+          const name = item.customName!.trim().replace(/\s+/g, ' ');
+          const formulation = item.customFormulation!.trim().replace(/\s+/g, ' ');
+          const normalizedKey = customMedicationKey(name, formulation);
+          let profile = await database.customMedications.where('normalizedKey').equals(normalizedKey).first();
+          if (!profile) {
+            const profileId = item.customMedicationId ?? safeUuid();
+            if (await database.customMedications.get(profileId)) {
+              throw new Error(`Custom medication id collision: ${profileId}`);
+            }
+            profile = { id: profileId, name, formulation, normalizedKey, createdAt: snapshot.appliedAt };
+            await database.customMedications.add(profile);
+          }
+          item = { ...item, customMedicationId: profile.id };
+        }
+        await database.regimenItems.add(item);
+        storedItems.push(item);
+      }
+
+      const receipt: MedicationImportReceipt = {
+        id: snapshot.id,
+        patient: snapshot.patient,
+        provider: snapshot.provider,
+        feature: snapshot.feature,
+        region: snapshot.region,
+        schemaVersion: snapshot.schemaVersion,
+        parserVersion: snapshot.parserVersion,
+        imageSha256: snapshot.imageSha256,
+        actor: snapshot.actor,
+        appliedAt: snapshot.appliedAt,
+        payloadFingerprint: fingerprint,
+        confirmedItems: storedItems.map(copyImportedItem),
+      };
+      await database.medicationImportReceipts.add(receipt);
+      return receipt;
+    },
+  );
+}
+
 export async function deleteRegimenItem(database: CompanionDatabase, id: string): Promise<void> {
   await database.regimenItems.delete(id);
 }
@@ -299,6 +542,68 @@ export async function putAssessments(
     // both hands in one transaction prevents a failed retry from exposing a
     // half-saved bilateral session.
     await database.assessments.bulkPut(assessments);
+  });
+}
+
+export async function saveTappingCheckIn(
+  database: CompanionDatabase,
+  motorEventInput: MotorEvent,
+  assessmentInputs: AssessmentRecord[],
+): Promise<void> {
+  const motorEvent: MotorEvent = { ...motorEventInput };
+  const assessments = assessmentInputs.map((record) => ({
+    ...record,
+    qualityReasons: [...record.qualityReasons],
+    ...(record.metadata ? { metadata: { ...record.metadata } } : {}),
+    ...(record.features ? { features: { ...record.features } } : {}),
+  }));
+  if (assessments.length !== 2) throw new Error('A tapping check-in requires both hand records.');
+  if (!motorEvent.studyId || !motorEvent.assessmentSessionId) {
+    throw new Error('The motor event must be linked to a study and assessment session.');
+  }
+  const sides = new Set(assessments.map((record) => record.metadata?.side));
+  if (!sides.has('left') || !sides.has('right') || sides.size !== 2) {
+    throw new Error('A tapping check-in requires one left and one right hand record.');
+  }
+  const [first, second] = assessments;
+  if (first.reminderOccurrenceId !== second.reminderOccurrenceId
+    || first.reminderScheduledAt !== second.reminderScheduledAt) {
+    throw new Error('Both tapping hand records must have the same reminder occurrence and scheduled time.');
+  }
+  for (const record of assessments) {
+    if (record.patient !== motorEvent.patient
+      || record.studyId !== motorEvent.studyId
+      || record.sessionId !== motorEvent.assessmentSessionId
+      || record.linkedMotorEventId !== motorEvent.id
+      || record.selfReportedState !== motorEvent.state
+      || record.selfReportedStateAt !== motorEvent.at) {
+      throw new Error('Tapping check-in links are inconsistent.');
+    }
+  }
+  await database.transaction('rw', database.events, database.assessments, async () => {
+    const occurrenceId = first.reminderOccurrenceId;
+    if (occurrenceId) {
+      const recordedOccurrence = await database.assessments
+        .filter((record) => record.reminderOccurrenceId === occurrenceId)
+        .toArray();
+      const incomingIds = new Set(assessments.map((record) => record.id));
+      if (recordedOccurrence.some((record) =>
+        record.sessionId !== motorEvent.assessmentSessionId || !incomingIds.has(record.id))) {
+        throw new Error('This reminder occurrence already has a different tapping session.');
+      }
+    }
+    const existingEvent = await database.events.get(motorEvent.id);
+    const existingAssessments = await Promise.all(assessments.map((record) => database.assessments.get(record.id)));
+    if (existingEvent || existingAssessments.some(Boolean)) {
+      const identical = existingEvent
+        && stableSerialize(existingEvent) === stableSerialize(motorEvent)
+        && existingAssessments.every((record, index) =>
+          record && stableSerialize(record) === stableSerialize(assessments[index]));
+      if (identical) return;
+      throw new Error('Tapping check-in ids already exist with different content.');
+    }
+    await database.events.add(motorEvent);
+    await database.assessments.bulkAdd(assessments);
   });
 }
 

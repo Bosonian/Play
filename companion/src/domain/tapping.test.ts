@@ -14,7 +14,7 @@ function tap(atMs: number, actualTarget: TapSample['actualTarget']): TapSample {
 }
 
 describe('analyseTapping', () => {
-  it('derives v2 attempt, success, timing and temporal-rate features', () => {
+  it('derives attempt, success, timing and temporal-rate features for fixed targets', () => {
     const samples = [
       tap(100, 'a'),
       tap(500, 'outside'),
@@ -48,6 +48,16 @@ describe('analyseTapping', () => {
     });
   });
 
+  it('accepts either target as the self-paced starting side', () => {
+    const result = analyseTapping('left', [
+      tap(100, 'b'),
+      tap(200, 'a'),
+      tap(300, 'b'),
+    ], 10_000);
+    expect(result.features.successfulTapCount).toBe(3);
+    expect(result.features.alternationErrors).toBe(0);
+  });
+
   it('does not advance the accepted target after outside or repeated touches', () => {
     const result = analyseTapping('left', [
       tap(100, 'outside'),
@@ -58,10 +68,10 @@ describe('analyseTapping', () => {
     ], 10_000);
 
     expect(result.features.attemptedTapCount).toBe(5);
-    expect(result.features.successfulTapCount).toBe(2);
-    expect(result.features.alternationErrors).toBe(2);
+    expect(result.features.successfulTapCount).toBe(3);
+    expect(result.features.alternationErrors).toBe(1);
     expect(result.features.outsideTargetCount).toBe(1);
-    expect(result.features.medianSuccessfulIntervalMs).toBe(200);
+    expect(result.features.medianSuccessfulIntervalMs).toBe(150);
   });
 
   it('requires an exact ten-second acquisition', () => {
@@ -79,16 +89,16 @@ describe('analyseTapping', () => {
 
     expect(result.quality).toBe('valid');
     expect(result.features.attemptedTapCount).toBe(3);
-    expect(result.features.successfulTapCount).toBe(0);
+    expect(result.features.successfulTapCount).toBe(1);
     expect(result.features.attemptedTapsPerSecond).toBe(0.3);
-    expect(result.features.successfulTapsPerSecond).toBe(0);
-    expect(result.features.alternationErrors).toBe(2);
+    expect(result.features.successfulTapsPerSecond).toBe(0.1);
+    expect(result.features.alternationErrors).toBe(1);
     expect(result.features.outsideTargetCount).toBe(1);
-    expect(result.features.firstThirdSuccessfulRate).toBe(0);
+    expect(result.features.firstThirdSuccessfulRate).toBe(0.3);
     expect(result.features.lastThirdSuccessfulRate).toBe(0);
     expect(result.features.medianSuccessfulIntervalMs).toBeNull();
     expect(result.features.successfulIntervalCv).toBeNull();
-    expect(result.features.rateChangePercent).toBeNull();
+    expect(result.features.rateChangePercent).toBe(-100);
   });
 
   it('reports a median but no variability from a single successful interval', () => {

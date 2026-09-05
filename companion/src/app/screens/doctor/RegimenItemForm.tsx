@@ -58,7 +58,7 @@ interface RegimenItemFormProps {
 // easy for a doctor to get backwards on autopilot, so the caption states the
 // conversion explicitly. Also doubles as the patch-mode caption (rotigotine
 // is the only patch drug, so isPatch implies this branch).
-function doseHelperCaption(drug: DrugId): string | null {
+export function doseHelperCaption(drug: DrugId): string | null {
   switch (drug) {
     case 'levodopa':
       return 'Enter the levodopa component only. Madopar 125 = 100 mg levodopa. The benserazide or carbidopa component is not entered separately.';

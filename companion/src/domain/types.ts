@@ -88,16 +88,16 @@ export interface DoseEvent extends EventBase {
   prnInstructions?: string;
 }
 
-// A motor state the patient reports (event-based diary — logged when it
-// happens, per the adherence decision). The validated 5-state Hauser model
-// (plus the 'on-dyskinesia-unspecified' fallback and canonical 'asleep') now
-// lives in ./motor.ts, along with the 3-tap → MotorState mapping.
+// A motor state the patient reports (event-based diary). These categories
+// overlap with a Hauser diary but this app flow is not a validated diary.
 export type { MotorState } from './motor';
 import type { MotorState } from './motor';
 export interface MotorEvent extends EventBase {
   kind: 'motor';
   state: MotorState;
   note?: string;
+  studyId?: string;
+  assessmentSessionId?: string;
 }
 
 // A meal — protein load matters for levodopa absorption, so we capture a

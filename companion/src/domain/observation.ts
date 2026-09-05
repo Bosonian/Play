@@ -1,5 +1,6 @@
-import type { MotorState } from './motor';
+import { motorStateLabel, type MotorState } from './motor';
 import type { RegimenItem } from './regimen';
+import type { ObservationReminderPlanV1 } from './observationReminders';
 
 export const OBSERVATION_PROTOCOL_VERSION = 1 as const;
 export type ObservationDurationDays = 14 | 28;
@@ -17,6 +18,7 @@ export interface ObservationStudy {
   completedAt?: string;
   clinicalQuestion?: string;
   timeZone?: string;
+  reminderPlan?: ObservationReminderPlanV1;
 }
 
 export type AssessmentKind =
@@ -45,6 +47,11 @@ export interface AssessmentRecord {
   completedAt?: string;
   linkedDoseEventId?: string;
   selfReportedState?: MotorState;
+  selfReportedStateAt?: string;
+  linkedMotorEventId?: string;
+  checkInProtocolVersion?: number;
+  reminderOccurrenceId?: string;
+  reminderScheduledAt?: string;
   // Optional for records created before the revised tapping protocol.
   sessionId?: string;
   outcome?: 'completed' | 'interrupted' | 'unable' | 'protocol-not-followed';
@@ -54,6 +61,10 @@ export interface AssessmentRecord {
   qualityReasons: string[];
   featureSchemaVersion?: number;
   features?: Record<string, number | string | boolean | null>;
+}
+
+export function assessmentStateLabel(record: Pick<AssessmentRecord, 'selfReportedState'>): string {
+  return record.selfReportedState ? motorStateLabel(record.selfReportedState) : 'State not recorded';
 }
 
 const DAY_MS = 86_400_000;
@@ -72,6 +83,7 @@ export function buildObservationStudy(input: {
   regimen: RegimenItem[];
   clinicalQuestion?: string;
   timeZone?: string;
+  reminderPlan?: ObservationReminderPlanV1;
 }): ObservationStudy {
   return {
     id: input.id,
@@ -83,6 +95,14 @@ export function buildObservationStudy(input: {
     status: 'active',
     clinicalQuestion: input.clinicalQuestion?.trim() || undefined,
     timeZone: input.timeZone,
+    ...(input.reminderPlan ? {
+      reminderPlan: {
+        ...input.reminderPlan,
+        ...(input.reminderPlan.customTimes
+          ? { customTimes: [...input.reminderPlan.customTimes] }
+          : {}),
+      },
+    } : {}),
     regimenSnapshot: input.regimen.map((item) => ({
       ...item,
       times: item.times.map((time) => ({ ...time })),
