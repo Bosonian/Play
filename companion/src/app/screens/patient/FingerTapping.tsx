@@ -117,7 +117,12 @@ export function FingerTapping({
       completedAt: run.completedAt,
       quality: run.result?.quality ?? 'invalid',
       qualityReasons: run.result?.qualityReasons ?? run.qualityReasons ?? ['unable-to-complete'],
-      metadata: { side: run.side, ...run.metadata },
+      metadata: {
+        side: run.side,
+        handOrder: run.side === 'left' ? 1 : 2,
+        startHand: 'left',
+        ...run.metadata,
+      },
       ...(run.result ? {
         featureSchemaVersion: TAPPING_FEATURE_VERSION,
         features: { ...run.result.features },
@@ -343,8 +348,12 @@ export function FingerTapping({
         </button>
         <h1 className="mt-6 text-title font-medium capitalize text-fg">{currentSide} hand</h1>
         <p className="mt-3 text-body text-fg-muted">
-          Use only your {currentSide} index finger. Tap the two targets alternately as quickly and accurately as you can.
+          Rest the phone flat on a stable surface. Keep your other hand relaxed and use only your {currentSide} index
+          finger. Tap the two targets alternately as quickly and accurately as you can.
         </p>
+        {currentSide === 'left' && (
+          <p className="mt-3 text-body text-fg-muted">You will test the left hand first, then the right hand.</p>
+        )}
         {leftResult?.outcome === 'interrupted' && currentSide === 'right' && (
           <p className="mt-3 text-body text-warn">The left-hand test was interrupted. Its partial record will be saved.</p>
         )}

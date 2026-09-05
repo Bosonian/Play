@@ -46,6 +46,14 @@ opens the 14/28-day finger-tapping setup directly. Cancelling or returning to
 patient mode clears the intent and re-locks access; no deep link or persisted
 state bypasses the gate.
 
+## Doctor workspace and medication-photo import
+
+The proposed responsive Vercel doctor PWA, multi-patient ownership model, and
+Gemini photo-to-reviewed-draft workflow are specified in
+[the doctor PWA and import plan](DOCTOR_PWA_AND_IMPORT_PLAN.md). They require
+tenant authentication, patient-scoped data access, provider retention review,
+and cross-patient isolation tests before real patient data is processed.
+
 ## Release sequence
 
 ### 1. Observation foundation — implemented locally

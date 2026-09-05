@@ -1,8 +1,19 @@
+import type { ReactNode } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../../db/store';
 import { getEventsInRange } from '../../db/store';
 import { eventLabel, formatTimeHM, todayRangeISO } from '../../patient/log';
-import { expandSchedule, markTakenSlots, groupSlotsByDaypart, doseLabel, takenVerb, prnDoseChoices, type DoseSlot, type PrnDoseChoice } from '../../patient/doses';
+import {
+  expandSchedule,
+  markTakenSlots,
+  groupSlotsByDaypart,
+  doseLabel,
+  takenVerb,
+  prnDoseChoices,
+  type DoseSlot,
+  type PrnDoseChoice,
+  type SlotStatus,
+} from '../../patient/doses';
 import type { PatientEvent } from '../../../domain/types';
 import type { RegimenItem } from '../../../domain/regimen';
 import type { SlotId } from '../../../domain/grid';
@@ -55,6 +66,7 @@ interface HomeProps {
   patientCode: string;
   lastAction: LastAction;
   regimenItems: RegimenItem[] | undefined;
+  observationStatus: ReactNode;
   onUndo: () => void;
   onLogState: () => void;
   onLogMeal: () => void;
@@ -79,6 +91,7 @@ export function Home({
   patientCode,
   lastAction,
   regimenItems,
+  observationStatus,
   onUndo,
   onLogState,
   onLogMeal,
@@ -133,89 +146,17 @@ export function Home({
         </div>
       )}
 
-      {slotStatuses !== undefined && (
-        <div className="mt-12">
-          <h2 className="text-label text-fg-muted">{"Today's doses"}</h2>
-          {slotStatuses.length === 0 ? (
-            <p className="mt-4 text-body text-fg-muted">
-              {prnChoices && prnChoices.length > 0 ? 'No scheduled medicines.' : 'No medications set up yet.'}
-            </p>
-          ) : (
-            groupSlotsByDaypart(slotStatuses).map((group, i) => {
-              const cls = DAYPART_CLASSES[group.slotId];
-              return (
-                <div key={group.slotId} className={i === 0 ? 'mt-4' : 'mt-10'}>
-                  <h3 className={`text-label font-medium ${cls.headerText}`}>{group.label}</h3>
-                  <div className="mt-3 space-y-8">
-                    {group.statuses.map((status) => {
-                      const key = `${status.slot.regimenItemId}-${status.slot.time}`;
-                      if (status.takenAt === null) {
-                        return <PendingDoseCard key={key} slot={status.slot} cls={cls} onTakeDose={onTakeDose} />;
-                      }
-                      // Narrow eventId explicitly rather than !-asserting it
-                      // from takenAt (SPEC RISK): markTakenSlots always sets
-                      // both together, but an assertion here would silently
-                      // paper over a future violation of that invariant
-                      // instead of surfacing it. If eventId is ever null
-                      // despite takenAt being set, fall back to the pending
-                      // render rather than wiring a tap target to a
-                      // non-existent event id.
-                      if (status.eventId === null) {
-                        return <PendingDoseCard key={key} slot={status.slot} cls={cls} onTakeDose={onTakeDose} />;
-                      }
-                      return (
-                        <TakenDoseCard
-                          key={key}
-                          slot={status.slot}
-                          cls={cls}
-                          takenAt={status.takenAt}
-                          eventId={status.eventId}
-                          onOpenEvent={onOpenEvent}
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-      )}
-
-      {prnChoices !== undefined && prnChoices.length > 0 && (
-        <AsNeededMedicineList choices={prnChoices} onLog={onTakePrnDose} />
-      )}
-
-      {slotStatuses !== undefined && slotStatuses.length > 0 && (
-        <button
-          type="button"
-          onClick={onLogAnotherDose}
-          className="mt-8 self-start text-label text-fg-muted underline underline-offset-2"
-        >
-          Log another dose
-        </button>
-      )}
-
-      {/* Heroes stay below ~4×88px of dose cards on a 4-slot regimen — the
-          honest tradeoff: RESEARCH's ≥8mm tap-target gaps forbid compressing
-          the checklist any further, so a heavy regimen pushes "How I feel
-          now" further down the page than ideal. Accepted, not fixed here. */}
-      <div className="mt-12 space-y-12">
-        <button
-          type="button"
-          onClick={onLogState}
-          className="min-h-[120px] w-full rounded-md bg-accent text-title font-medium text-white"
-        >
-          How I feel now
-        </button>
-        <button
-          type="button"
-          onClick={onLogMeal}
-          className="min-h-[120px] w-full rounded-md border border-line bg-surface text-title font-medium text-fg"
-        >
-          Log a meal
-        </button>
-      </div>
+      <HomePrimarySections
+        slotStatuses={slotStatuses}
+        prnChoices={prnChoices}
+        observationStatus={observationStatus}
+        onLogState={onLogState}
+        onLogMeal={onLogMeal}
+        onOpenEvent={onOpenEvent}
+        onTakeDose={onTakeDose}
+        onTakePrnDose={onTakePrnDose}
+        onLogAnotherDose={onLogAnotherDose}
+      />
 
       {todayEvents !== undefined && slotStatuses !== undefined && (
         <>
@@ -259,6 +200,105 @@ export function Home({
         Report a problem
       </button>
     </div>
+  );
+}
+
+export function HomePrimarySections({
+  slotStatuses,
+  prnChoices,
+  observationStatus,
+  onLogState,
+  onLogMeal,
+  onOpenEvent,
+  onTakeDose,
+  onTakePrnDose,
+  onLogAnotherDose,
+}: {
+  slotStatuses: SlotStatus[] | undefined;
+  prnChoices: PrnDoseChoice[] | undefined;
+  observationStatus: ReactNode;
+  onLogState: () => void;
+  onLogMeal: () => void;
+  onOpenEvent: (id: string) => void;
+  onTakeDose: (slot: DoseSlot) => void;
+  onTakePrnDose: (choice: PrnDoseChoice) => void;
+  onLogAnotherDose: () => void;
+}) {
+  return (
+    <>
+      {/* Motor state is the primary patient action, so it stays immediately
+          after the date/undo context and before a long medication list. */}
+      <button
+        type="button"
+        onClick={onLogState}
+        className="mt-6 min-h-[120px] w-full rounded-md bg-accent text-title font-medium text-white"
+      >
+        How I feel now
+      </button>
+
+      {observationStatus}
+
+      {slotStatuses !== undefined && (
+        <section className="mt-8">
+          <h2 className="text-label text-fg-muted">{"Today's doses"}</h2>
+          {slotStatuses.length === 0 ? (
+            <p className="mt-3 text-body text-fg-muted">
+              {prnChoices && prnChoices.length > 0 ? 'No scheduled medicines.' : 'No medications set up yet.'}
+            </p>
+          ) : (
+            groupSlotsByDaypart(slotStatuses).map((group, i) => {
+              const cls = DAYPART_CLASSES[group.slotId];
+              return (
+                <div key={group.slotId}
+                  className={`${i === 0 ? 'mt-3' : 'mt-4'} rounded-md border border-line bg-surface p-3`}>
+                  <h3 className={`px-1 text-label font-medium ${cls.headerText}`}>{group.label}</h3>
+                  <div className="mt-2 space-y-2">
+                    {group.statuses.map((status) => {
+                      const key = `${status.slot.regimenItemId}-${status.slot.time}`;
+                      if (status.takenAt === null || status.eventId === null) {
+                        return <PendingDoseCard key={key} slot={status.slot} cls={cls} onTakeDose={onTakeDose} />;
+                      }
+                      return (
+                        <TakenDoseCard
+                          key={key}
+                          slot={status.slot}
+                          cls={cls}
+                          takenAt={status.takenAt}
+                          eventId={status.eventId}
+                          onOpenEvent={onOpenEvent}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </section>
+      )}
+
+      {prnChoices !== undefined && prnChoices.length > 0 && (
+        <AsNeededMedicineList choices={prnChoices} onLog={onTakePrnDose} />
+      )}
+
+      {slotStatuses !== undefined && slotStatuses.length > 0 && (
+        <button
+          type="button"
+          onClick={onLogAnotherDose}
+          className="mt-6 self-start text-label text-fg-muted underline underline-offset-2"
+        >
+          Log another dose
+        </button>
+      )}
+
+      <button
+        type="button"
+        onClick={onLogMeal}
+        className="mt-8 min-h-[120px] w-full rounded-md border border-line bg-surface text-title font-medium text-fg"
+      >
+        Log a meal
+      </button>
+    </>
   );
 }
 
@@ -308,17 +348,20 @@ function PendingDoseCard({
   cls: DaypartCardClasses;
   onTakeDose: (slot: DoseSlot) => void;
 }) {
+  const label = doseLabel(slot, slot.doseMg);
+  const actionLabel = `Log ${label} scheduled for ${slot.time} as taken`;
   return (
     <button
       type="button"
       onClick={() => onTakeDose(slot)}
-      className={`flex min-h-[88px] w-full items-center justify-between rounded-md px-4 text-left ${cls.bg}`}
+      aria-label={actionLabel}
+      className={`flex min-h-[76px] w-full items-center gap-3 rounded-md px-4 text-left ${cls.bg}`}
     >
-      <span className="flex items-center gap-4">
+      <span className="flex min-w-0 flex-1 items-center gap-4">
         <span className={`h-7 w-7 shrink-0 rounded-full border-2 ${cls.ringBorder}`} aria-hidden="true" />
-        <span className="text-title font-medium text-fg">{doseLabel(slot, slot.doseMg)}</span>
+        <span className="min-w-0 break-words text-title font-medium text-fg">{label}</span>
       </span>
-      <span className="text-body-lg tabular-nums text-fg-muted">{slot.time}</span>
+      <span className="shrink-0 text-body-lg tabular-nums text-fg-muted">{slot.time}</span>
     </button>
   );
 }
@@ -340,13 +383,16 @@ function TakenDoseCard({
   eventId: string;
   onOpenEvent: (id: string) => void;
 }) {
+  const label = doseLabel(slot, slot.doseMg);
+  const actionLabel = `Open ${label}, ${takenVerb(slot.drug)} at ${formatTimeHM(takenAt)}, scheduled for ${slot.time}`;
   return (
     <button
       type="button"
       onClick={() => onOpenEvent(eventId)}
-      className={`flex min-h-[76px] w-full items-center justify-between rounded-md px-4 text-left ${cls.bg}`}
+      aria-label={actionLabel}
+      className={`flex min-h-[76px] w-full items-center gap-3 rounded-md px-4 text-left ${cls.bg}`}
     >
-      <span className="flex items-center gap-4">
+      <span className="flex min-w-0 flex-1 items-center gap-4">
         <span
           className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${cls.ringFill}`}
           aria-hidden="true"
@@ -365,14 +411,14 @@ function TakenDoseCard({
             <path d="M3 8.5l3.2 3.2L13 4.8" />
           </svg>
         </span>
-        <span className="flex flex-col">
-          <span className="text-body-lg text-fg-muted">{doseLabel(slot, slot.doseMg)}</span>
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="min-w-0 break-words text-body-lg text-fg-muted">{label}</span>
           <span className="text-body text-fg-muted">
             {takenVerb(slot.drug)} · {formatTimeHM(takenAt)}
           </span>
         </span>
       </span>
-      <span className="text-body-lg tabular-nums text-fg-muted">{slot.time}</span>
+      <span className="shrink-0 text-body-lg tabular-nums text-fg-muted">{slot.time}</span>
     </button>
   );
 }

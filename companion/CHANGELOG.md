@@ -29,6 +29,16 @@ patterns and adjusts the prescription. The app never prescribes.
 - Finger-tapping setup is now a prominent doctor action. The patient setup
   prompt routes through the doctor passcode directly to the 14/28-day setup,
   and returning to patient mode always re-locks doctor access.
+- Patient Home now places **How I feel now** before tapping status and the
+  medicine list. Scheduled medicines stay individually tappable but use
+  compact, bordered day-part groups; long names wrap and scheduled times remain
+  visible. Meal logging follows scheduled and as-needed medicines.
+- Finger-tapping instructions now specify a stable flat phone, one index finger
+  at a time, and the fixed left-then-right order. Each saved assessment records
+  that order explicitly.
+- The reviewed Gemini photo-import and multi-patient doctor PWA architecture,
+  patient-isolation model, release stages, and provider-data gates are captured
+  in `docs/DOCTOR_PWA_AND_IMPORT_PLAN.md`; cloud processing is not enabled.
 
 ## 0.10.0 — In-app update banner
 

@@ -205,14 +205,14 @@ export function PatientRoot({ onSetupObservation }: { onSetupObservation: () => 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
       {screen.name === 'home' && (
-        <ObservationStatus patientCode={patient.code} onStart={(study) => void startTapping(study)}
-          onSetupObservation={onSetupObservation} />
-      )}
-      {screen.name === 'home' && (
         <Home
           patientCode={patient.code}
           lastAction={lastAction}
           regimenItems={regimenItems}
+          observationStatus={(
+            <ObservationStatus patientCode={patient.code} onStart={(study) => void startTapping(study)}
+              onSetupObservation={onSetupObservation} />
+          )}
           onUndo={() => withDebounce(undo)}
           onLogState={() => setScreen({ name: 'state' })}
           onLogMeal={() => setScreen({ name: 'meal' })}
