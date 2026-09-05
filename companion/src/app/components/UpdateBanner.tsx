@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { checkForUpdate, type UpdateInfo } from '../lib/updates';
-import { APP_BUILD } from '../lib/version';
+import { getAndroidAppIdentity } from '../lib/appUpdateIdentity';
 
 // Mounted once at the app root (see App.tsx) so the update check runs
 // exactly once per app open, in both patient and doctor mode. Dismissal is
@@ -17,8 +17,10 @@ export function UpdateBanner() {
     // checkForUpdate never throws (see updates.ts) — offline or a malformed
     // response both resolve to null, so there's nothing to catch here.
     let cancelled = false;
-    void checkForUpdate(APP_BUILD).then((u) => {
-      if (!cancelled) setInfo(u);
+    void getAndroidAppIdentity().then((identity) =>
+      identity ? checkForUpdate(identity) : null,
+    ).then((update) => {
+      if (!cancelled) setInfo(update);
     });
     return () => {
       cancelled = true;
@@ -31,7 +33,7 @@ export function UpdateBanner() {
     <div className="flex items-center justify-between gap-4 rounded-md bg-surface-soft px-4 py-3">
       <div>
         <p className="text-label text-fg">Update available</p>
-        {info.version && <p className="text-caption text-fg-muted">Version {info.version}</p>}
+        <p className="text-caption text-fg-muted">Version {info.versionName}</p>
       </div>
       <div className="flex items-center gap-4">
         {/* An anchor with target="_blank", not window.open — this is what hands

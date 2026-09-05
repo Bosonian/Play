@@ -1,3 +1,10 @@
+# 0.16.1 — compatible Android updates
+
+- Select updates using the installed Android version and signing certificate.
+- Preserve local and GitHub signing identities in separate compatible APKs.
+- Publish both channels from the maintained branch with verified immutable assets.
+- Existing local installations get a direct first-upgrade link; no uninstall is needed.
+
 # Companion — changelog
 
 A de-identified, physician-in-the-loop Parkinson's dosing companion. Patients

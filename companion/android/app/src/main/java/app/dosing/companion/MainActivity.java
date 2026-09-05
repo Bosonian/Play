@@ -10,6 +10,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(MedicineOcrPlugin.class);
+        registerPlugin(AppUpdateIdentityPlugin.class);
         registerPlugin(ObservationRemindersPlugin.class);
         ObservationReminderManager.captureOpenIntent(this, getIntent());
         super.onCreate(savedInstanceState);

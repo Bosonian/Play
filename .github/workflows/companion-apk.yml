@@ -2,29 +2,33 @@ name: Companion release APK
 
 on:
   push:
-    branches: [claude/pd-dosing-companion]
+    branches: [codex/observation-review]
     paths:
       - 'companion/**'
       - '.github/workflows/companion-apk.yml'
   workflow_dispatch:
 
-# contents: write is needed so the build can publish the APK as a Release
-# asset (a public, direct-download link), not just a login-gated artifact zip.
 permissions:
   contents: write
 
 concurrency:
-  group: companion-apk-${{ github.ref }}
-  cancel-in-progress: true
+  group: companion-release
+  cancel-in-progress: false
+
+env:
+  RELEASE_SIGNER_SHA256: f8ae5a2403c53b65fdf2ab471da67706bc58cfcb87cba3c9c04750ba15604c43
+  LEGACY_SIGNER_SHA256: c3b8e9dcc82357158ba815dbf6d5c6c021a1008c5c32337bc01cf9b93af85930
 
 jobs:
-  build:
+  build-and-publish:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: companion
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -37,70 +41,101 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      - name: Require the legacy bootstrap signing key
+        env:
+          LEGACY_KEYSTORE_BASE64: ${{ secrets.COMPANION_LEGACY_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$LEGACY_KEYSTORE_BASE64" ]; then
+            echo "::error::COMPANION_LEGACY_KEYSTORE_BASE64 is required"
+            exit 1
+          fi
+          umask 077
+          printf '%s' "$LEGACY_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/companion-legacy.keystore"
+          test -s "$RUNNER_TEMP/companion-legacy.keystore"
+
+      - name: Allocate the next serialized APK version code
+        id: version_code
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          code="$(python3 scripts/release/companion_release.py next-code --repo "$GITHUB_REPOSITORY" --floor 19)"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Read app version
+        id: app_version
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          printf 'name=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+      - name: Test release tooling
+        run: python3 -m unittest scripts/release/test_companion_release.py
       - run: npm ci
       - run: npm test
-      # Bake the CI build number into the web bundle so the running app knows
-      # its own build and can tell whether the published release is newer
-      # (the in-app "Update available" check). Same number as the APK
-      # versionCode and the "build N" stamp in the release body below.
-      - run: npm run build
+      - run: npm run typecheck
+      - name: Build web bundle
+        run: npm run build
         env:
-          VITE_APP_BUILD: ${{ github.run_number }}
+          VITE_APP_BUILD: ${{ steps.version_code.outputs.code }}
       - run: npx cap sync android
 
-      # App version (cosmetic versionName) from package.json; versionCode is the
-      # workflow run number, which strictly increases across builds so Android
-      # always sees a newer version and will update in place.
-      - name: Read app version
-        id: ver
-        run: echo "name=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
-
-      # Signed RELEASE build (non-debuggable), signed with the committed stable
-      # key so every build shares one cryptographic identity. -P properties feed
-      # versionCode/versionName; the signing config's own defaults pick up the
-      # committed keystore, so no secrets are required.
-      - name: Assemble signed release APK
+      - name: Test, lint, and assemble committed-release-key APK
         working-directory: companion/android
-        run: >-
-          ./gradlew assembleRelease --no-daemon
-          -PcompanionVersionCode=${{ github.run_number }}
-          -PcompanionVersionName=${{ steps.ver.outputs.name }}
+        run: |
+          set -euo pipefail
+          ./gradlew testReleaseUnitTest lintRelease assembleRelease --no-daemon \
+            -PcompanionVersionCode=${{ steps.version_code.outputs.code }} \
+            -PcompanionVersionName=${{ steps.app_version.outputs.name }}
+          mkdir -p ../release-out
+          cp app/build/outputs/apk/release/app-release.apk ../release-out/companion.apk
 
-      # Give the asset a clean, stable filename for the download link.
-      - name: Stage APK as companion.apk
-        run: cp android/app/build/outputs/apk/release/app-release.apk companion.apk
+      - name: Assemble legacy-key nondebuggable APK
+        working-directory: companion/android
+        run: |
+          set -euo pipefail
+          ./gradlew clean assembleRelease --no-daemon \
+            -PcompanionVersionCode=${{ steps.version_code.outputs.code }} \
+            -PcompanionVersionName=${{ steps.app_version.outputs.name }} \
+            -PcompanionStoreFile="$RUNNER_TEMP/companion-legacy.keystore" \
+            -PcompanionStorePassword=android \
+            -PcompanionKeyAlias=androiddebugkey \
+            -PcompanionKeyPassword=android
+          cp app/build/outputs/apk/release/app-release.apk ../release-out/companion-legacy.apk
+
+      - name: Verify both APK identities, versions, release mode, and signers
+        run: |
+          set -euo pipefail
+          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
+          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          python3 scripts/release/companion_release.py inspect \
+            --apk release-out/companion.apk --aapt "$AAPT" --apksigner "$APKSIGNER" \
+            --code "${{ steps.version_code.outputs.code }}" --version "${{ steps.app_version.outputs.name }}" \
+            --cert "$RELEASE_SIGNER_SHA256" --asset-name companion.apk
+          python3 scripts/release/companion_release.py inspect \
+            --apk release-out/companion-legacy.apk --aapt "$AAPT" --apksigner "$APKSIGNER" \
+            --code "${{ steps.version_code.outputs.code }}" --version "${{ steps.app_version.outputs.name }}" \
+            --cert "$LEGACY_SIGNER_SHA256" --asset-name companion-legacy.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: companion-release-apk
-          path: companion/companion.apk
+          name: companion-build-${{ steps.version_code.outputs.code }}
+          path: |
+            companion/release-out/companion.apk
+            companion/release-out/companion-legacy.apk
           if-no-files-found: error
 
-      # Publish as a Release asset on a moving tag → stable, public,
-      # direct-download URL (no GitHub login, no zip):
-      #   https://github.com/Bosonian/Play/releases/download/companion-latest/companion.apk
-      # The tag is force-updated to the built commit on every run, so the link
-      # always serves the newest build.
-      - name: Publish APK to the companion-latest release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: companion-latest
-          name: Companion (latest APK)
-          prerelease: true
-          body: |
-            Latest signed release APK of the Parkinson's dosing companion,
-            rebuilt on every push to `claude/pd-dosing-companion`. Version
-            ${{ steps.ver.outputs.name }} (build ${{ github.run_number }}).
-
-            Direct download: **companion.apk** below. On Android: open this on
-            the phone, download it, and allow "install unknown apps" for your
-            browser if prompted. If Play Protect warns about an unknown
-            developer, tap **Install anyway** (not OK).
-
-            Signed with a stable key, so later builds update in place. If you
-            still have an *older, differently-signed* build installed, uninstall
-            it once before installing this one.
-
-            Built from commit ${{ github.sha }}.
-          files: companion/companion.apk
-          target_commitish: ${{ github.sha }}
+      - name: Publish immutable release, verify it, then update latest last
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
+          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          python3 scripts/release/companion_release.py publish \
+            --repo "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" \
+            --code "${{ steps.version_code.outputs.code }}" --version "${{ steps.app_version.outputs.name }}" \
+            --release-apk release-out/companion.apk --legacy-apk release-out/companion-legacy.apk \
+            --release-cert "$RELEASE_SIGNER_SHA256" --legacy-cert "$LEGACY_SIGNER_SHA256" \
+            --aapt "$AAPT" --apksigner "$APKSIGNER"
