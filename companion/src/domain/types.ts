@@ -83,6 +83,9 @@ export interface DoseEvent extends EventBase {
   // Stable prescription-line identity. New events always carry this for
   // scheduled and extra doses; optional keeps historical events readable.
   regimenItemId?: string;
+  use?: 'prn';
+  prnIndication?: string;
+  prnInstructions?: string;
 }
 
 // A motor state the patient reports (event-based diary — logged when it

@@ -44,6 +44,7 @@ export function RegimenList({
             const name = medicationName(item);
             const isPatch = isCatalogDrug(item.drug) && DRUG_CATALOG[item.drug].formulation === 'transdermal-patch';
             const isFreeText = (item.freeText ?? '').trim().length > 0;
+            const isPrn = item.prn !== undefined;
             return (
               <div key={item.id} className="rounded-sm bg-surface-soft p-3">
                 <p className="text-body font-medium text-fg">{name}</p>
@@ -51,11 +52,14 @@ export function RegimenList({
                   <p className="text-caption text-fg-muted">{item.customFormulation}</p>
                 )}
                 <p className="text-label text-fg-muted">{sigLine(item)}</p>
-                {!isPatch && !isFreeText && (
+                {!isPatch && !isFreeText && !isPrn && (
                   <p className="text-caption text-fg-muted">{dailyMg(item)} mg/day</p>
                 )}
                 {isFreeText && (
                   <p className="text-caption text-fg-muted">Not in LEDD or the patient's dose list.</p>
+                )}
+                {isPrn && (
+                  <p className="text-caption text-fg-muted">When-needed dose; excluded from baseline LEDD.</p>
                 )}
                 <div className="mt-2 flex items-center gap-4">
                   <button

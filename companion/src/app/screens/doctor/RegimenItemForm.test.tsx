@@ -35,4 +35,24 @@ describe('custom regimen edit initialization', () => {
     expect(html).toContain('value="08:00"');
     expect(html).toContain('value="0.088"');
   });
+
+  it('reopens an exact when-needed prescription without scheduled defaults', () => {
+    const initial: RegimenItem = {
+      id: 'prn-r1',
+      patient: 'P-01',
+      drug: 'madopar-lt',
+      times: [],
+      prn: {
+        doseMg: 0.088,
+        indication: 'OFF symptoms',
+        instructions: 'At least two hours apart.',
+      },
+      updatedAt: '2026-09-05T00:00:00Z',
+    };
+    const state = computeInitialFormState(initial);
+    expect(state.regimenMode).toBe('prn');
+    expect(state.prnDoseInput).toBe('0.088');
+    expect(state.prnIndication).toBe('OFF symptoms');
+    expect(state.prnInstructions).toBe('At least two hours apart.');
+  });
 });

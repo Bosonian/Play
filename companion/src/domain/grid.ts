@@ -174,9 +174,14 @@ export function applyPreset(grid: GridState, preset: FrequencyPreset): GridState
 // '—' (em dash) spaced between the drug clause and the schedule clause, a
 // plain hyphen (no spaces) between pattern fields.
 export function sigLine(
-  item: Pick<RegimenItem, 'drug' | 'times' | 'strengthMg' | 'freeText' | 'customName' | 'customFormulation'>,
+  item: Pick<RegimenItem, 'drug' | 'times' | 'strengthMg' | 'freeText' | 'prn' | 'customName' | 'customFormulation'>,
 ): string {
   const generic = medicationName(item);
+
+  if (item.prn) {
+    const instructions = item.prn.instructions ? ` · ${item.prn.instructions}` : '';
+    return `${generic} ${item.prn.doseMg} mg — As needed: ${item.prn.indication}${instructions}`;
+  }
 
   if ((item.freeText ?? '').trim().length > 0) {
     return `${generic} — ${item.freeText}`;

@@ -2,7 +2,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../../db/store';
 import { getEventsInRange } from '../../db/store';
 import { eventLabel, formatTimeHM, todayRangeISO } from '../../patient/log';
-import { expandSchedule, markTakenSlots, groupSlotsByDaypart, doseLabel, takenVerb, type DoseSlot } from '../../patient/doses';
+import { expandSchedule, markTakenSlots, groupSlotsByDaypart, doseLabel, takenVerb, prnDoseChoices, type DoseSlot, type PrnDoseChoice } from '../../patient/doses';
 import type { PatientEvent } from '../../../domain/types';
 import type { RegimenItem } from '../../../domain/regimen';
 import type { SlotId } from '../../../domain/grid';
@@ -60,6 +60,7 @@ interface HomeProps {
   onLogMeal: () => void;
   onOpenEvent: (id: string) => void;
   onTakeDose: (slot: DoseSlot) => void;
+  onTakePrnDose: (choice: PrnDoseChoice) => void;
   onLogAnotherDose: () => void;
   onReportProblem: () => void;
 }
@@ -83,6 +84,7 @@ export function Home({
   onLogMeal,
   onOpenEvent,
   onTakeDose,
+  onTakePrnDose,
   onLogAnotherDose,
   onReportProblem,
 }: HomeProps) {
@@ -108,6 +110,7 @@ export function Home({
   // still loading.
   const slotStatuses =
     regimenItems && events ? markTakenSlots(expandSchedule(regimenItems), events) : undefined;
+  const prnChoices = regimenItems ? prnDoseChoices(regimenItems) : undefined;
 
   return (
     <div className="flex flex-col">
@@ -134,7 +137,9 @@ export function Home({
         <div className="mt-12">
           <h2 className="text-label text-fg-muted">{"Today's doses"}</h2>
           {slotStatuses.length === 0 ? (
-            <p className="mt-4 text-body text-fg-muted">No medications set up yet.</p>
+            <p className="mt-4 text-body text-fg-muted">
+              {prnChoices && prnChoices.length > 0 ? 'No scheduled medicines.' : 'No medications set up yet.'}
+            </p>
           ) : (
             groupSlotsByDaypart(slotStatuses).map((group, i) => {
               const cls = DAYPART_CLASSES[group.slotId];
@@ -175,6 +180,10 @@ export function Home({
             })
           )}
         </div>
+      )}
+
+      {prnChoices !== undefined && prnChoices.length > 0 && (
+        <AsNeededMedicineList choices={prnChoices} onLog={onTakePrnDose} />
       )}
 
       {slotStatuses !== undefined && slotStatuses.length > 0 && (
@@ -250,6 +259,38 @@ export function Home({
         Report a problem
       </button>
     </div>
+  );
+}
+
+export function AsNeededMedicineList({
+  choices,
+  onLog,
+}: {
+  choices: PrnDoseChoice[];
+  onLog: (choice: PrnDoseChoice) => void;
+}) {
+  return (
+    <section className="mt-12">
+      <h2 className="text-label text-fg-muted">As-needed medicines</h2>
+      <p className="mt-2 text-body text-fg-muted">
+        Log a dose after taking it. Follow the prescriber's instructions; Companion does not calculate when another dose is due.
+      </p>
+      <div className="mt-3 space-y-4">
+        {choices.map((choice) => (
+          <div key={choice.regimenItemId} className="rounded-md border border-line bg-surface p-4">
+            <p className="text-body-lg font-medium text-fg">{doseLabel(choice, choice.doseMg)}</p>
+            <p className="mt-1 text-body text-fg">When needed: {choice.indication}</p>
+            {choice.instructions && (
+              <p className="mt-1 text-caption text-fg-muted">{choice.instructions}</p>
+            )}
+            <button type="button" onClick={() => onLog(choice)}
+              className="mt-4 min-h-[52px] w-full rounded-md bg-accent px-4 text-body-lg font-medium text-white">
+              Log dose taken
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 

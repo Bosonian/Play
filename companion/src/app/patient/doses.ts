@@ -206,6 +206,49 @@ export function buildDoseEvent(
   };
 }
 
+export interface PrnDoseChoice extends MedicationIdentity {
+  regimenItemId: string;
+  doseMg: number;
+  indication: string;
+  instructions?: string;
+  customMedicationId?: string;
+}
+
+export function prnDoseChoices(items: RegimenItem[]): PrnDoseChoice[] {
+  return items.flatMap((item) =>
+    item.prn
+      ? [{
+          regimenItemId: item.id,
+          drug: item.drug,
+          doseMg: item.prn.doseMg,
+          indication: item.prn.indication,
+          ...(item.prn.instructions ? { instructions: item.prn.instructions } : {}),
+          ...(item.drug === 'custom'
+            ? {
+                customName: item.customName,
+                customFormulation: item.customFormulation,
+                customMedicationId: item.customMedicationId,
+              }
+            : {}),
+        }]
+      : [],
+  );
+}
+
+export function buildPrnDoseEvent(
+  patientCode: string,
+  choice: PrnDoseChoice,
+  at: ISODateTime,
+  id: string = safeUuid(),
+): DoseEvent {
+  return {
+    ...buildDoseEvent(patientCode, choice.drug, choice.doseMg, at, undefined, id, choice),
+    use: 'prn',
+    prnIndication: choice.indication,
+    ...(choice.instructions ? { prnInstructions: choice.instructions } : {}),
+  };
+}
+
 // Distinct (drug, doseMg) pairs for the extra-dose picker, in schedule order
 // (by each pair's first appearance across expandSchedule's ordering),
 // deduped. A drug prescribed at two different strengths (an uneven regimen)

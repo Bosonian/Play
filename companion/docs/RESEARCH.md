@@ -206,6 +206,20 @@ labels and schedule matching.
 The current lookup is local-only. A live EMA or other authoritative provider
 is deferred until its API, licensing, regional coverage, offline failure
 behavior, and clinical identity mapping can be evaluated.
+
+### When-needed dose interpretation
+
+PRN/“when needed” prescriptions are permissions rather than expected daily
+exposure. They therefore remain outside the regimen baseline LEDD and never
+generate adherence slots. A logged PRN event records the medicine, exact dose,
+prescribed indication, optional prescriber instructions, and regimen identity.
+The indication is context for why the dose was allowed; the log does not claim
+that the symptom or condition was present.
+The [CQC PRN care-plan guidance](https://www.cqc.org.uk/guidance-regulation/adult-social-care/medicines-information-adult-social-care-services/when-required-medicines-adult-social-care)
+lists the condition, maximum daily amount, and minimum interval as information
+to capture. Companion uses that as a completeness reference, not as German
+regulation: limits remain verbatim prescriber instructions and the app does not
+calculate eligibility for another dose.
 - Every **[V]/[C]** number ships as `draft`/"confirm with neurologist," surfaced
   in a content-review affordance (the neurologist is the final check).
 

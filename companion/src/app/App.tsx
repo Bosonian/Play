@@ -5,9 +5,11 @@ import { DoctorHome } from './screens/DoctorHome';
 import { UpdateBanner } from './components/UpdateBanner';
 
 type Mode = 'patient' | 'doctor';
+type DoctorEntryIntent = 'home' | 'observation';
 
 export function App() {
   const [mode, setMode] = useState<Mode>('patient');
+  const [doctorEntryIntent, setDoctorEntryIntent] = useState<DoctorEntryIntent>('home');
 
   // doctorUnlocked is React state only — it is NEVER written to storage.
   // Neither this nor `mode` above is persisted, so a reload always starts
@@ -30,6 +32,7 @@ export function App() {
             onClick={() => {
               setMode('patient');
               setDoctorUnlocked(false);
+              setDoctorEntryIntent('home');
             }}
             className={`px-3 py-1.5 text-label ${
               mode === 'patient' ? 'bg-accent text-white' : 'text-fg-muted'
@@ -40,7 +43,10 @@ export function App() {
           <button
             type="button"
             aria-pressed={mode === 'doctor'}
-            onClick={() => setMode('doctor')}
+            onClick={() => {
+              setDoctorEntryIntent('home');
+              setMode('doctor');
+            }}
             className={`px-3 py-1.5 text-label ${
               mode === 'doctor' ? 'bg-accent text-white' : 'text-fg-muted'
             }`}
@@ -53,14 +59,25 @@ export function App() {
       <main className="flex-1 p-4">
         {mode === 'patient' && (
           <PatientRoot onSetupObservation={() => {
+            setDoctorEntryIntent('observation');
             setDoctorUnlocked(false);
             setMode('doctor');
           }} />
         )}
         {mode === 'doctor' && !doctorUnlocked && (
-          <DoctorGate onUnlock={() => setDoctorUnlocked(true)} onBack={() => setMode('patient')} />
+          <DoctorGate onUnlock={() => setDoctorUnlocked(true)} onBack={() => {
+            setDoctorEntryIntent('home');
+            setDoctorUnlocked(false);
+            setMode('patient');
+          }} />
         )}
-        {mode === 'doctor' && doctorUnlocked && <DoctorHome />}
+        {mode === 'doctor' && doctorUnlocked && (
+          <DoctorHome initialScreen={doctorEntryIntent} onOpenPatient={() => {
+            setDoctorEntryIntent('home');
+            setDoctorUnlocked(false);
+            setMode('patient');
+          }} />
+        )}
       </main>
     </div>
   );

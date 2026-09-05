@@ -10,10 +10,14 @@ export function ObservationPlan({
   patientCode,
   regimen,
   onBack,
+  onAddMedication,
+  onOpenPatient,
 }: {
   patientCode: string;
-  regimen: RegimenItem[];
+  regimen: RegimenItem[] | undefined;
   onBack: () => void;
+  onAddMedication: () => void;
+  onOpenPatient: () => void;
 }) {
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -24,7 +28,7 @@ export function ObservationPlan({
   );
 
   async function start(durationDays: ObservationDurationDays) {
-    if (busyRef.current) return;
+    if (busyRef.current || !regimen) return;
     busyRef.current = true;
     setBusy(true);
     setError(null);
@@ -64,22 +68,27 @@ export function ObservationPlan({
     }
   }
 
-  if (active === undefined) return null;
+  // Do not mistake the first unresolved regimen query for an empty regimen.
+  // An already-active study can render from its frozen snapshot, while the
+  // setup controls wait until both live queries have resolved.
+  if (active === undefined || (active === null && regimen === undefined)) return null;
 
   const progress = active ? observationProgress(active) : null;
+  const availableRegimen = regimen ?? [];
   return (
     <div className="flex flex-col">
       <button type="button" onClick={onBack}
         className="self-start text-label text-fg-muted underline underline-offset-2">Back</button>
-      <h1 className="mt-6 text-title font-medium text-fg">Observation period and finger tapping</h1>
+      <h1 className="mt-6 text-title font-medium text-fg">Finger tapping setup</h1>
       <p className="mt-2 text-body text-fg-muted">
-        Start an observation period to collect dose, symptom and finger-tapping data for the next consultation.
+        Choose a 14- or 28-day study to collect dose, symptom and finger-tapping data for the next consultation.
       </p>
       {error && <p className="mt-4 text-body text-warn" role="alert">{error}</p>}
 
       {active && progress ? (
         <div className="mt-6 rounded-md border border-line bg-surface p-4">
           <p className="text-label text-fg-muted">Active study</p>
+          <p className="mt-2 text-body-lg font-medium text-fg">Finger tapping is ready</p>
           <p className="mt-2 text-title text-fg">
             Day {progress.dayNumber} of {progress.durationDays}
           </p>
@@ -99,22 +108,30 @@ export function ObservationPlan({
             <button type="button" disabled={busy} onClick={() => void finish('cancelled')}
               className="text-label text-warn underline underline-offset-2 disabled:opacity-40">Cancel</button>
           </div>
+          <button type="button" onClick={onOpenPatient}
+            className="mt-4 min-h-[52px] w-full rounded-md border border-line bg-bg text-body-lg text-fg">
+            Open patient mode
+          </button>
         </div>
       ) : (
         <div className="mt-6 space-y-4">
           <p className="text-body text-fg">
             Starting freezes a copy of the current regimen so later analysis uses the correct baseline.
           </p>
-          {regimen.length === 0 && (
-            <p className="rounded-md border border-line p-4 text-body text-warn">
-              Add the prescribed regimen before starting collection.
-            </p>
+          {availableRegimen.length === 0 && (
+            <div className="rounded-md border border-line p-4">
+              <p className="text-body text-warn">Add the prescribed regimen before starting collection.</p>
+              <button type="button" onClick={onAddMedication}
+                className="mt-3 rounded-md bg-accent px-4 py-2 text-label text-white">
+                Add prescribed medication
+              </button>
+            </div>
           )}
-          <button type="button" disabled={regimen.length === 0 || busy} onClick={() => void start(14)}
+          <button type="button" disabled={availableRegimen.length === 0 || busy} onClick={() => void start(14)}
             className="min-h-[76px] w-full rounded-md bg-accent text-title text-white disabled:opacity-40">
             Start 14-day study
           </button>
-          <button type="button" disabled={regimen.length === 0 || busy} onClick={() => void start(28)}
+          <button type="button" disabled={availableRegimen.length === 0 || busy} onClick={() => void start(28)}
             className="min-h-[76px] w-full rounded-md border border-line bg-surface text-title text-fg disabled:opacity-40">
             Start 28-day study
           </button>

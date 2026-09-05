@@ -7,6 +7,8 @@ import {
   markTakenSlots,
   buildDoseEvent,
   extraDoseChoices,
+  prnDoseChoices,
+  buildPrnDoseEvent,
   doseLabel,
   takenVerb,
   groupSlotsByDaypart,
@@ -402,6 +404,39 @@ describe('groupSlotsByDaypart', () => {
 });
 
 describe('extraDoseChoices', () => {
+  it('keeps when-needed items out of general extra choices and exposes them separately', () => {
+    const prn = item({
+      id: 'prn-line',
+      times: [],
+      prn: { doseMg: 0.088, indication: 'OFF symptoms', instructions: 'Wait two hours.' },
+    });
+    expect(extraDoseChoices([prn])).toEqual([]);
+    expect(prnDoseChoices([prn])).toEqual([{
+      regimenItemId: 'prn-line',
+      drug: 'levodopa',
+      doseMg: 0.088,
+      indication: 'OFF symptoms',
+      instructions: 'Wait two hours.',
+    }]);
+  });
+
+  it('builds an unscheduled PRN event with prescribed-context snapshots', () => {
+    const choice = prnDoseChoices([item({
+      id: 'prn-line',
+      times: [],
+      prn: { doseMg: 0.088, indication: 'OFF symptoms', instructions: 'Wait two hours.' },
+    })])[0];
+    const ev = buildPrnDoseEvent('P-01', choice, '2026-09-05T08:00:00Z', 'prn-event');
+    expect(ev).toMatchObject({
+      id: 'prn-event',
+      use: 'prn',
+      regimenItemId: 'prn-line',
+      doseMg: 0.088,
+      prnIndication: 'OFF symptoms',
+      prnInstructions: 'Wait two hours.',
+    });
+    expect(ev.scheduledTime).toBeUndefined();
+  });
   it('dedupes identical (drug, doseMg) across items; preserves schedule order; keeps distinct doseMg separate', () => {
     const items = [
       item({

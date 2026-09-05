@@ -50,6 +50,13 @@ export interface RegimenItem {
   // validateRegimenItem. A freeText-only line contributes 0 to LEDD and 0
   // slots to the patient's dose list (see regimenDailyDoses / doses.ts).
   freeText?: string;
+  // Prescriber-authored permission for a dose taken only when needed.
+  // Separate from scheduled times: it never creates a pending dose slot.
+  prn?: {
+    doseMg: number;
+    indication: string;
+    instructions?: string;
+  };
 }
 
 // Matches "HH:MM" in 24h, zero-padded form only — rejects "24:00" (hour must
@@ -68,18 +75,29 @@ export function sortDoseTimes(times: DoseTime[]): DoseTime[] {
 // [] = valid. The returned strings ARE the UI copy (single source of truth —
 // RegimenItemForm renders these verbatim rather than re-deriving its own).
 export function validateRegimenItem(
-  item: Pick<RegimenItem, 'times' | 'strengthMg' | 'freeText'> &
+  item: Pick<RegimenItem, 'times' | 'strengthMg' | 'freeText' | 'prn'> &
     Partial<Pick<RegimenItem, 'drug' | 'customName' | 'customFormulation'>>,
 ): string[] {
   const errors: string[] = [];
   const hasFreeText = (item.freeText ?? '').trim().length > 0;
+  const hasPrn = item.prn !== undefined;
 
   if (item.drug === 'custom') {
     if ((item.customName ?? '').trim().length === 0) errors.push('Enter a medicine name.');
     if ((item.customFormulation ?? '').trim().length === 0) errors.push('Enter a formulation.');
   }
 
-  if (hasFreeText && item.times.length > 0) {
+  if (hasPrn) {
+    if (item.times.length > 0 || hasFreeText || item.strengthMg !== undefined) {
+      errors.push('Use scheduled doses, free text, or when needed, not more than one.');
+    }
+    if (!Number.isFinite(item.prn!.doseMg) || item.prn!.doseMg <= 0) {
+      errors.push('Enter a when-needed dose greater than 0.');
+    }
+    if (item.prn!.indication.trim().length === 0) {
+      errors.push('Enter when this medicine may be taken.');
+    }
+  } else if (hasFreeText && item.times.length > 0) {
     // Mutual exclusion wins outright — no point also complaining about time
     // formatting on a line that's about to be rejected anyway.
     errors.push('Use either the schedule grid or free text, not both.');
@@ -99,7 +117,7 @@ export function validateRegimenItem(
     }
   }
 
-  if (item.strengthMg !== undefined && (!Number.isFinite(item.strengthMg) || item.strengthMg <= 0)) {
+  if (!hasPrn && item.strengthMg !== undefined && (!Number.isFinite(item.strengthMg) || item.strengthMg <= 0)) {
     errors.push('Enter a strength greater than 0.');
   }
 
@@ -153,7 +171,7 @@ export function computeRegimenLedd(items: RegimenItem[]): RegimenLeddResult {
     names.set(name.toLowerCase(), name);
   }
   for (const item of items) {
-    if (item.drug === 'custom' || (item.freeText ?? '').trim().length > 0) {
+    if (item.drug === 'custom' || item.prn !== undefined || (item.freeText ?? '').trim().length > 0) {
       const name = medicationName(item);
       const key = name.toLowerCase();
       if (!names.has(key)) names.set(key, name);

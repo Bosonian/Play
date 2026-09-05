@@ -19,6 +19,16 @@ patterns and adjusts the prescription. The app never prescribes.
   remaining catalog calculation as a partial subtotal and names exclusions.
 - IndexedDB v6 adds the custom medicine library additively; v5 clinical rows
   remain untouched. No external medicine service is queried.
+- Prescribers can define a separate “When needed” regimen with an exact dose,
+  indication, and optional spacing/maximum/duration instructions. It creates
+  no pending schedule slots; patients log it from a dedicated as-needed
+  section and the event retains the prescribed context.
+- Baseline regimen LEDD treats when-needed doses as excluded and labels the
+  catalog result as partial. A dose actually logged from a catalog medicine
+  still contributes normally to event-based LEDD.
+- Finger-tapping setup is now a prominent doctor action. The patient setup
+  prompt routes through the doctor passcode directly to the 14/28-day setup,
+  and returning to patient mode always re-locks doctor access.
 
 ## 0.10.0 — In-app update banner
 

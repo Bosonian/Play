@@ -24,6 +24,28 @@ live provider integration may be evaluated against an authoritative medicines
 source, but no external lookup, scraping, or fuzzy clinical identity merging
 is part of this release.
 
+## When-needed prescriptions
+
+A when-needed prescription is a prescriber-authored instruction, represented
+separately from scheduled and free-text regimens. It requires a positive dose
+and a stated indication; optional instructions can state spacing, maximum
+amount, or duration. The software supplies no defaults and does not decide
+whether the condition is met or whether another dose is due.
+
+When-needed items never appear as pending, overdue, or completed schedule
+slots. Patient logging snapshots the prescribed indication and instructions
+without asserting that the patient experienced the indication. Baseline LEDD
+excludes these uncertain future doses; actual logged catalog doses remain
+eligible for ordinary LEDD calculation.
+
+## Finger-tapping setup entry
+
+Patient setup requests store only an in-memory navigation intent, re-lock
+doctor mode, and pass through the existing passcode gate. Successful unlock
+opens the 14/28-day finger-tapping setup directly. Cancelling or returning to
+patient mode clears the intent and re-locks access; no deep link or persisted
+state bypasses the gate.
+
 ## Release sequence
 
 ### 1. Observation foundation — implemented locally

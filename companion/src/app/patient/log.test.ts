@@ -205,4 +205,15 @@ describe('eventLabel', () => {
       doseMg: 0.088,
     })).toBe('Pramipexole (Immediate-release tablet) 0.088 mg');
   });
+
+  it('labels a PRN event with prescribed indication without claiming a symptom', () => {
+    expect(eventLabel({
+      ...base,
+      kind: 'dose',
+      drug: 'levodopa',
+      doseMg: 50,
+      use: 'prn',
+      prnIndication: 'OFF symptoms',
+    })).toBe('Levodopa 50 mg · As needed — OFF symptoms');
+  });
 });

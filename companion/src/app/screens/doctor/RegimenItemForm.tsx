@@ -42,6 +42,7 @@ export interface RegimenItemDraft {
   times: DoseTime[];
   strengthMg?: number;
   freeText?: string;
+  prn?: RegimenItem['prn'];
 }
 
 interface RegimenItemFormProps {
@@ -184,6 +185,10 @@ export function computeInitialFormState(initial: RegimenItem | null) {
     customMedicationId: initial?.customMedicationId,
     freeTextMode: hasFreeTextInit,
     freeTextValue: initial?.freeText ?? '',
+    regimenMode: initial?.prn ? 'prn' as const : 'scheduled' as const,
+    prnDoseInput: initial?.prn ? String(initial.prn.doseMg) : '',
+    prnIndication: initial?.prn?.indication ?? '',
+    prnInstructions: initial?.prn?.instructions ?? '',
     scheduleMode,
     gridStrengthInput,
     gridQtyInputs,
@@ -212,7 +217,7 @@ function parseMgQuantity(input: string): number | null {
 }
 
 type BuildResult =
-  | { ok: true; times: DoseTime[]; strengthMg?: number; freeText?: string }
+  | { ok: true; times: DoseTime[]; strengthMg?: number; freeText?: string; prn?: RegimenItem['prn'] }
   | { ok: false; error: string };
 
 export function RegimenItemForm({ initial, onSave, onCancel, savedMedications }: RegimenItemFormProps) {
@@ -229,6 +234,10 @@ export function RegimenItemForm({ initial, onSave, onCancel, savedMedications }:
   );
   const [freeTextMode, setFreeTextMode] = useState<boolean>(initialState.freeTextMode);
   const [freeTextValue, setFreeTextValue] = useState<string>(initialState.freeTextValue);
+  const [regimenMode, setRegimenMode] = useState<'scheduled' | 'prn'>(initialState.regimenMode);
+  const [prnDoseInput, setPrnDoseInput] = useState(initialState.prnDoseInput);
+  const [prnIndication, setPrnIndication] = useState(initialState.prnIndication);
+  const [prnInstructions, setPrnInstructions] = useState(initialState.prnInstructions);
   const [scheduleMode, setScheduleMode] = useState<'grid' | 'custom'>(initialState.scheduleMode);
   const [gridStrengthInput, setGridStrengthInput] = useState<string>(initialState.gridStrengthInput);
   const [gridQtyInputs, setGridQtyInputs] = useState<Record<SlotId, string>>(initialState.gridQtyInputs);
@@ -273,7 +282,19 @@ export function RegimenItemForm({ initial, onSave, onCancel, savedMedications }:
     }
   }
 
+  function clearPrnFields() {
+    setPrnDoseInput('');
+    setPrnIndication('');
+    setPrnInstructions('');
+  }
+
   function chooseMedication(option: MedicationLookupOption) {
+    const sameMedicine = option.kind === 'catalog'
+      ? drug === option.drug
+      : drug === 'custom' && customMedicationId === option.customMedicationId;
+    // A dose belongs to the selected medicine. Never carry a PRN dose and
+    // indication silently onto a different product chosen from search.
+    if (!sameMedicine) clearPrnFields();
     handleDrugChange(option.drug);
     setMedicineQuery(option.name);
     setLookupOpen(false);
@@ -294,6 +315,7 @@ export function RegimenItemForm({ initial, onSave, onCancel, savedMedications }:
   function addTypedMedicine() {
     const name = medicineQuery.trim().replace(/\s+/g, ' ');
     if (!name) return;
+    clearPrnFields();
     handleDrugChange('custom');
     setLookupOpen(false);
     setMedicineConfirmed(true);
@@ -440,6 +462,17 @@ export function RegimenItemForm({ initial, onSave, onCancel, savedMedications }:
   }
 
   function currentBuild(): BuildResult {
+    if (regimenMode === 'prn') {
+      return {
+        ok: true,
+        times: [],
+        prn: {
+          doseMg: Number(prnDoseInput.trim().replace(',', '.')),
+          indication: prnIndication.trim(),
+          ...(prnInstructions.trim() ? { instructions: prnInstructions.trim() } : {}),
+        },
+      };
+    }
     if (isPatch) return buildPatchDraft();
     if (freeTextMode) return buildFreeTextDraft();
     return scheduleMode === 'grid' ? buildGridDraft() : buildCustomDraft();
@@ -452,7 +485,7 @@ export function RegimenItemForm({ initial, onSave, onCancel, savedMedications }:
   const liveBuild = currentBuild();
   let previewLine: string | null = null;
   if (medicineConfirmed && liveBuild.ok) {
-    const draftItem = { drug, customName, customFormulation, times: liveBuild.times, strengthMg: liveBuild.strengthMg, freeText: liveBuild.freeText };
+    const draftItem = { drug, customName, customFormulation, times: liveBuild.times, strengthMg: liveBuild.strengthMg, freeText: liveBuild.freeText, prn: liveBuild.prn };
     if (validateRegimenItem(draftItem).length === 0) {
       previewLine = sigLine(draftItem);
     }
@@ -471,7 +504,7 @@ export function RegimenItemForm({ initial, onSave, onCancel, savedMedications }:
       setErrors([build.error]);
       return;
     }
-    const draftItem = { drug, customName, customFormulation, times: build.times, strengthMg: build.strengthMg, freeText: build.freeText };
+    const draftItem = { drug, customName, customFormulation, times: build.times, strengthMg: build.strengthMg, freeText: build.freeText, prn: build.prn };
     const validationErrors = validateRegimenItem(draftItem);
     setErrors(validationErrors);
     if (validationErrors.length > 0) return;
@@ -489,6 +522,7 @@ export function RegimenItemForm({ initial, onSave, onCancel, savedMedications }:
       times: sortDoseTimes(build.times),
       strengthMg: build.strengthMg,
       freeText: build.freeText,
+      prn: build.prn,
     });
   }
 
@@ -558,6 +592,7 @@ export function RegimenItemForm({ initial, onSave, onCancel, savedMedications }:
             type="text"
             value={customFormulation}
             onChange={(e) => {
+              if (e.target.value !== customFormulation) clearPrnFields();
               setCustomFormulation(e.target.value);
               setCustomMedicationId(undefined);
             }}
@@ -567,7 +602,36 @@ export function RegimenItemForm({ initial, onSave, onCancel, savedMedications }:
         </div>
       )}
 
-      {isPatch && (
+      <div className="mt-4 flex gap-2" aria-label="Prescription type">
+        <Chip label="Scheduled" active={regimenMode === 'scheduled'} onClick={() => setRegimenMode('scheduled')} />
+        <Chip label="When needed" active={regimenMode === 'prn'} onClick={() => setRegimenMode('prn')} />
+      </div>
+
+      {regimenMode === 'prn' && (
+        <div className="mt-4 space-y-3">
+          <label className="block text-label text-fg-muted">
+            Dose per use (mg)
+            <input type="text" inputMode="decimal" value={prnDoseInput}
+              onChange={(e) => setPrnDoseInput(e.target.value)}
+              className="mt-1 block w-full rounded-sm border border-line bg-bg px-3 py-2 text-body text-fg" />
+          </label>
+          {isCatalogDrug(drug) && doseHelperCaption(drug) && (
+            <p className="text-caption text-fg-muted">{doseHelperCaption(drug)}</p>
+          )}
+          <label className="block text-label text-fg-muted">
+            Condition for taking it
+            <input type="text" value={prnIndication} onChange={(e) => setPrnIndication(e.target.value)}
+              className="mt-1 block w-full rounded-sm border border-line bg-bg px-3 py-2 text-body text-fg" />
+          </label>
+          <label className="block text-label text-fg-muted">
+            Prescriber instructions — spacing, maximum amount, duration
+            <textarea value={prnInstructions} onChange={(e) => setPrnInstructions(e.target.value)}
+              rows={2} className="mt-1 block w-full rounded-sm border border-line bg-bg px-3 py-2 text-body text-fg" />
+          </label>
+        </div>
+      )}
+
+      {regimenMode === 'scheduled' && isPatch && (
         <div className="mt-4">
           <label htmlFor="regimen-patch-strength" className="block text-label text-fg-muted">
             Dose (mg/24h)
@@ -610,7 +674,7 @@ export function RegimenItemForm({ initial, onSave, onCancel, savedMedications }:
         </div>
       )}
 
-      {!isPatch && drug !== 'custom' && !freeTextMode && scheduleMode === 'grid' && (
+      {regimenMode === 'scheduled' && !isPatch && drug !== 'custom' && !freeTextMode && scheduleMode === 'grid' && (
         <div className="mt-4">
           <label htmlFor="regimen-strength" className="block text-label text-fg-muted">
             Strength per tablet (mg)
@@ -690,7 +754,7 @@ export function RegimenItemForm({ initial, onSave, onCancel, savedMedications }:
         </div>
       )}
 
-      {!isPatch && !freeTextMode && scheduleMode === 'custom' && (
+      {regimenMode === 'scheduled' && !isPatch && !freeTextMode && scheduleMode === 'custom' && (
         <div className="mt-4">
           {openedAsCustomFallback && (
             <p className="text-label text-warn">
@@ -738,7 +802,7 @@ export function RegimenItemForm({ initial, onSave, onCancel, savedMedications }:
         </div>
       )}
 
-      {!isPatch && freeTextMode && (
+      {regimenMode === 'scheduled' && !isPatch && freeTextMode && (
         <div className="mt-4">
           <label htmlFor="regimen-freetext" className="block text-label text-fg-muted">
             Schedule as free text
@@ -756,7 +820,7 @@ export function RegimenItemForm({ initial, onSave, onCancel, savedMedications }:
         </div>
       )}
 
-      {!isPatch && (
+      {regimenMode === 'scheduled' && !isPatch && (
         <button
           type="button"
           onClick={() => setFreeTextMode((prev) => !prev)}

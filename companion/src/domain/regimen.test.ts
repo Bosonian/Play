@@ -55,6 +55,25 @@ describe('sortDoseTimes', () => {
 });
 
 describe('validateRegimenItem', () => {
+  it('validates when-needed shape and preserves sub-milligram precision', () => {
+    expect(validateRegimenItem({
+      times: [],
+      prn: { doseMg: 0.088, indication: 'OFF symptoms', instructions: 'At least 2 hours apart.' },
+    })).toEqual([]);
+  });
+
+  it('rejects invalid or mixed when-needed schedules', () => {
+    expect(validateRegimenItem({
+      times: times(100, '08:00'),
+      strengthMg: 100,
+      freeText: 'also daily',
+      prn: { doseMg: 0, indication: ' ' },
+    })).toEqual([
+      'Use scheduled doses, free text, or when needed, not more than one.',
+      'Enter a when-needed dose greater than 0.',
+      'Enter when this medicine may be taken.',
+    ]);
+  });
   it('valid item -> []', () => {
     expect(validateRegimenItem({ times: times(100, '08:00', '12:00') })).toEqual([]);
   });
@@ -321,6 +340,19 @@ describe('regimen -> LEDD', () => {
     expect(result.totalMg).toBe(100);
     expect(result.isPartial).toBe(true);
     expect(result.excludedMedicationNames).toEqual(['Baclofen', 'Pramipexole']);
+  });
+
+  it('excludes PRN from regimen baseline while actual logged doses remain computable', () => {
+    const prnItem = item({
+      drug: 'levodopa',
+      times: [],
+      prn: { doseMg: 50, indication: 'OFF symptoms' },
+    });
+    const baseline = computeRegimenLedd([prnItem]);
+    expect(baseline.totalMg).toBe(0);
+    expect(baseline.isPartial).toBe(true);
+    expect(baseline.excludedMedicationNames).toEqual(['Levodopa']);
+    expect(computeLedd([{ drug: 'levodopa', doseMg: 50 }]).totalMg).toBe(50);
   });
 });
 

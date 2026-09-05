@@ -154,5 +154,8 @@ export function eventLabel(ev: PatientEvent): string {
   // rows and the extra-dose picker via doseLabel (doses.ts), so the timeline,
   // Event Detail, and Today's-doses section never show three different
   // strings for the same event.
-  return doseLabel(ev, ev.doseMg);
+  const medicine = doseLabel(ev, ev.doseMg);
+  return ev.use === 'prn'
+    ? `${medicine} · As needed — ${ev.prnIndication ?? 'prescribed indication'}`
+    : medicine;
 }

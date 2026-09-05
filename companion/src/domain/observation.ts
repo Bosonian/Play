@@ -86,6 +86,7 @@ export function buildObservationStudy(input: {
     regimenSnapshot: input.regimen.map((item) => ({
       ...item,
       times: item.times.map((time) => ({ ...time })),
+      ...(item.prn ? { prn: { ...item.prn } } : {}),
     })),
   };
 }

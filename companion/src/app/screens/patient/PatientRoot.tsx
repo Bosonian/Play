@@ -8,7 +8,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, addEvent, deleteEvent, getRegimenForPatient } from '../../db/store';
 import { usePatient } from '../../patient/usePatient';
 import { buildMotorEvent, buildMealEvent, refineDyskinesia, shiftEventTime, eventLabel, formatTimeHM } from '../../patient/log';
-import { buildDoseEvent, extraDoseChoices, doseLabel, type DoseChoice } from '../../patient/doses';
+import { buildDoseEvent, buildPrnDoseEvent, extraDoseChoices, doseLabel, type DoseChoice, type PrnDoseChoice } from '../../patient/doses';
 import { logEvent } from '../../activity/activityLog';
 import type { PrimaryTap, DyskinesiaRefinement } from '../../../domain/motor';
 import type { MotorEvent, PatientEvent } from '../../../domain/types';
@@ -151,6 +151,14 @@ export function PatientRoot({ onSetupObservation }: { onSetupObservation: () => 
     setLastAction({ kind: 'logged', event: ev, label: 'Dose logged' });
   }
 
+  async function logPrnDose(choice: PrnDoseChoice) {
+    if (!patient) return;
+    const ev = buildPrnDoseEvent(patient.code, choice, new Date().toISOString());
+    await addEvent(db, ev);
+    void logEvent('dose', `Logged as-needed dose: ${eventLabel(ev)}`);
+    setLastAction({ kind: 'logged', event: ev, label: 'Dose logged' });
+  }
+
   async function undo() {
     if (!lastAction) return;
     // Both branches are idempotent at the Dexie layer: deleteEvent on a
@@ -210,6 +218,7 @@ export function PatientRoot({ onSetupObservation }: { onSetupObservation: () => 
           onLogMeal={() => setScreen({ name: 'meal' })}
           onOpenEvent={(id) => setScreen({ name: 'detail', eventId: id })}
           onTakeDose={(slot) => withDebounce(() => logDose(slot, slot.time))}
+          onTakePrnDose={(choice) => withDebounce(() => logPrnDose(choice))}
           onLogAnotherDose={() => setScreen({ name: 'dose' })}
           onReportProblem={() => setScreen({ name: 'report' })}
         />

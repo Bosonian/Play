@@ -15,7 +15,7 @@ import { ObservationPlan } from './doctor/ObservationPlan';
 
 type DoctorScreen =
   | { name: 'list' }
-  | { name: 'add' }
+  | { name: 'add'; returnTo?: 'observation' }
   | { name: 'edit'; item: RegimenItem }
   | { name: 'activityLog' }
   | { name: 'settings' }
@@ -27,9 +27,17 @@ type DoctorScreen =
 // presentational components (props in, callbacks out, no DB imports) per the
 // module spec, so the persistence and StrictMode-safety story lives in one
 // place.
-export function DoctorHome() {
+export function DoctorHome({
+  initialScreen = 'home',
+  onOpenPatient = () => undefined,
+}: {
+  initialScreen?: 'home' | 'observation';
+  onOpenPatient?: () => void;
+}) {
   const patient = usePatient();
-  const [screen, setScreen] = useState<DoctorScreen>({ name: 'list' });
+  const [screen, setScreen] = useState<DoctorScreen>(
+    initialScreen === 'observation' ? { name: 'observation' } : { name: 'list' },
+  );
   // Mirrors PatientRoot's lastAction/Undo pattern (RESEARCH §1): persists
   // until the next write or an explicit Undo, no timer. There's no confirm
   // dialog on Remove — Undo is the safety net, not a modal.
@@ -62,6 +70,7 @@ export function DoctorHome() {
       updatedAt: new Date().toISOString(),
       ...(draft.strengthMg !== undefined ? { strengthMg: draft.strengthMg } : {}),
       ...(draft.freeText !== undefined ? { freeText: draft.freeText } : {}),
+      ...(draft.prn !== undefined ? { prn: draft.prn } : {}),
     };
     if (draft.drug === 'custom') {
       await putRegimenWithCustomMedication(db, item, {
@@ -73,7 +82,7 @@ export function DoctorHome() {
       await putRegimenItem(db, item);
     }
     void logEvent('regimen', `${isEdit ? 'Updated' : 'Added'} regimen item: ${sigLine(item)}`);
-    setScreen({ name: 'list' });
+    setScreen(screen.name === 'add' && screen.returnTo === 'observation' ? { name: 'observation' } : { name: 'list' });
     setLastRemoved(null);
   }
 
@@ -102,7 +111,7 @@ export function DoctorHome() {
         initial={null}
         savedMedications={savedMedications ?? []}
         onSave={(draft) => void saveItem(draft)}
-        onCancel={() => setScreen({ name: 'list' })}
+        onCancel={() => setScreen(screen.returnTo === 'observation' ? { name: 'observation' } : { name: 'list' })}
       />
     );
   }
@@ -132,13 +141,21 @@ export function DoctorHome() {
 
   if (screen.name === 'observation') {
     return (
-      <ObservationPlan patientCode={patient.code} regimen={sortRegimenItems(items ?? [])}
+      <ObservationPlan patientCode={patient.code}
+        regimen={items === undefined ? undefined : sortRegimenItems(items)}
+        onAddMedication={() => setScreen({ name: 'add', returnTo: 'observation' })}
+        onOpenPatient={onOpenPatient}
         onBack={() => setScreen({ name: 'list' })} />
     );
   }
 
   return (
     <>
+      <button type="button" onClick={() => setScreen({ name: 'observation' })}
+        className="mb-4 min-h-[88px] w-full rounded-md border border-accent bg-surface p-4 text-left">
+        <span className="block text-title font-medium text-fg">Finger tapping setup</span>
+        <span className="mt-1 block text-body text-fg-muted">Set up or review the 14/28-day observation study.</span>
+      </button>
       <RegimenList
         patientCode={patient.code}
         items={sortRegimenItems(items ?? [])}

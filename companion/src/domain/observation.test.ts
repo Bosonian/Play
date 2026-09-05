@@ -24,4 +24,22 @@ describe('observation study', () => {
     });
     expect(observationProgress(study, new Date('2026-09-20T00:00:00.000Z')).percent).toBe(100);
   });
+
+  it('deep-copies nested when-needed instructions in the regimen snapshot', () => {
+    const regimen = [{
+      id: 'prn-1', patient: 'P-01', drug: 'levodopa' as const, times: [],
+      prn: { doseMg: 0.088, indication: 'OFF symptoms', instructions: 'Wait two hours.' },
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    }];
+    const study = buildObservationStudy({
+      id: 's-prn', patient: 'P-01', durationDays: 14,
+      startedAt: '2026-09-01T00:00:00.000Z', regimen,
+    });
+    regimen[0].prn.instructions = 'mutated';
+    expect(study.regimenSnapshot[0].prn).toEqual({
+      doseMg: 0.088,
+      indication: 'OFF symptoms',
+      instructions: 'Wait two hours.',
+    });
+  });
 });
