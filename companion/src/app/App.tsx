@@ -51,7 +51,12 @@ export function App() {
       </header>
       <UpdateBanner />
       <main className="flex-1 p-4">
-        {mode === 'patient' && <PatientRoot />}
+        {mode === 'patient' && (
+          <PatientRoot onSetupObservation={() => {
+            setDoctorUnlocked(false);
+            setMode('doctor');
+          }} />
+        )}
         {mode === 'doctor' && !doctorUnlocked && (
           <DoctorGate onUnlock={() => setDoctorUnlocked(true)} onBack={() => setMode('patient')} />
         )}

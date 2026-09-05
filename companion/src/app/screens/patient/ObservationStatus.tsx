@@ -2,15 +2,42 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, getActiveObservationStudy } from '../../db/store';
 import { observationProgress, type ObservationStudy } from '../../../domain/observation';
 
-export function ObservationStatus({ patientCode, onStart }: {
-  patientCode: string; onStart: (study: ObservationStudy) => void;
+export function ObservationStatus({ patientCode, onStart, onSetupObservation }: {
+  patientCode: string;
+  onStart: (study: ObservationStudy) => void;
+  onSetupObservation: () => void;
 }) {
   const study = useLiveQuery(
-    () => getActiveObservationStudy(db, patientCode),
+    async () => (await getActiveObservationStudy(db, patientCode)) ?? null,
     [patientCode],
   );
 
-  if (!study) return null;
+  if (study === undefined) return null;
+  return <ObservationStatusView study={study} onStart={onStart} onSetupObservation={onSetupObservation} />;
+}
+
+export function ObservationStatusView({ study, onStart, onSetupObservation }: {
+  study: ObservationStudy | null;
+  onStart: (study: ObservationStudy) => void;
+  onSetupObservation: () => void;
+}) {
+  if (study === null) {
+    return (
+      <section className="mb-8 rounded-md border border-line bg-surface-soft p-4"
+        aria-label="Finger tapping setup">
+        <p className="text-body-lg font-medium text-fg">Finger tapping</p>
+        <p className="mt-2 text-body text-fg-muted">
+          In Doctor mode, add your prescribed regimen, then open Observation and start a 14- or
+          28-day observation period before you can use this check.
+        </p>
+        <button type="button" onClick={onSetupObservation}
+          className="mt-4 min-h-[56px] w-full rounded-md border border-line bg-surface text-body-lg text-fg">
+          Set up in Doctor mode
+        </button>
+      </section>
+    );
+  }
+
   const progress = observationProgress(study);
   return (
     <section className="mb-8 rounded-md border border-line bg-surface-soft p-4"

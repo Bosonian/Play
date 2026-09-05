@@ -110,8 +110,8 @@ export function DoctorGate({ onUnlock, onBack }: DoctorGateProps) {
       <div className="rounded-md border border-line bg-surface p-4">
         <h1 className="text-title font-medium">Set a doctor passcode</h1>
         <p className="mt-2 text-body text-fg-muted">
-          Doctor mode is protected by a passcode stored only on this device. There is no recovery
-          if it is forgotten.
+          Choose your own passcode of at least 6 characters. No username or account is needed.
+          The passcode is stored only on this device, with no recovery if it is forgotten.
         </p>
         <form onSubmit={handleSetSubmit} className="mt-4 space-y-3">
           <div>
@@ -167,6 +167,9 @@ export function DoctorGate({ onUnlock, onBack }: DoctorGateProps) {
   return (
     <div className="rounded-md border border-line bg-surface p-4">
       <h1 className="text-title font-medium">Doctor mode is locked</h1>
+      <p className="mt-2 text-body text-fg-muted">
+        Enter the passcode set on this device. There is no default passcode or username.
+      </p>
       <form onSubmit={handleVerifySubmit} className="mt-4 space-y-3">
         <div>
           <label htmlFor="doctor-passcode" className="block text-label text-fg-muted">

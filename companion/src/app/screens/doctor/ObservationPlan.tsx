@@ -71,9 +71,9 @@ export function ObservationPlan({
     <div className="flex flex-col">
       <button type="button" onClick={onBack}
         className="self-start text-label text-fg-muted underline underline-offset-2">Back</button>
-      <h1 className="mt-6 text-title font-medium text-fg">Observation period</h1>
+      <h1 className="mt-6 text-title font-medium text-fg">Observation period and finger tapping</h1>
       <p className="mt-2 text-body text-fg-muted">
-        Collect dose, symptom and assessment data for the next consultation.
+        Start an observation period to collect dose, symptom and finger-tapping data for the next consultation.
       </p>
       {error && <p className="mt-4 text-body text-warn" role="alert">{error}</p>}
 

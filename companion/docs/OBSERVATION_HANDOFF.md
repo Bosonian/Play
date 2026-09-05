@@ -7,6 +7,7 @@ Status: implemented locally on `codex/observation-review`; release packaging and
 ### Study lifecycle
 
 - A doctor can start a 14- or 28-day study from the current regimen. The study stores a deep regimen snapshot and the device timezone at start.
+- When no study exists, Patient mode shows a Finger tapping setup card. Its action opens the existing locked Doctor mode; first use asks the user to choose a passcode of at least six characters with no username, and later use asks for that device-local passcode with no default. After adding the prescribed regimen, the setup route is Doctor mode → Observation → start a 14- or 28-day period.
 - Only a newly active study cancels another active study for the same patient. Writing completed or cancelled history does not change the current active study.
 - Repeated start, complete, and cancel taps are guarded synchronously. Writes show disabled controls while busy and a visible retryable error on failure.
 - Reaching the planned end date does not close the study. Collection continues until the doctor explicitly completes or cancels it.
@@ -31,9 +32,9 @@ Status: implemented locally on `codex/observation-review`; release packaging and
 
 ## Automated acceptance
 
-The focused tapping, acquisition, persistence, and migration suites pass 32/32. TypeScript passes. The final full suite passes 236/236 across 22 test files in 18.26 seconds with one worker and a 30-second runner timeout appropriate to this constrained proot environment; the 3,000-row activity-log pruning test completed in 1.97 seconds. The test implementation and its assertions were not changed. Astra review accepted the final domain, store, migration, and UI behavior with no blocking findings.
+The focused tapping, acquisition, persistence, and migration suites pass 32/32. TypeScript passes. After the discovery follow-up, the final full suite passes 238/238 across 23 test files in 21.96 seconds with one worker and a 30-second runner timeout appropriate to this constrained proot environment. The test implementation and its assertions were not weakened. Astra review accepted the final domain, store, migration, and UI behavior with no blocking findings.
 
-The final Android rebuild and lint completed successfully in 46 seconds with zero errors and 16 existing dependency/template warnings. All three packaged public assets were byte-equal to the final web `dist` files. The local debug APK is `android/app/build/outputs/apk/debug/app-debug.apk` (4,294,176 bytes), SHA-256 `6217520ecab36d0dae4c550d2caa8327d27d1e2418e6080f2056d0f7c569efd7`.
+The final version-code-2 Android build and lint completed successfully in 44 seconds with zero lint errors and 16 existing dependency/template warnings. All three packaged public assets were byte-equal to the final web `dist` files. The APK uses the same signing certificate as the previous local build, certificate SHA-256 `c3b8e9dcc82357158ba815dbf6d5c6c021a1008c5c32337bc01cf9b93af85930`. The verified artifact is `/storage/emulated/0/Download/Companion-observation-setup-fix.apk` (4,175,747 bytes), SHA-256 `2ca4970671265ba71aeed839cb03c4a93674aa35027ef73f141dc9db5b98d4f4`; its copied bytes match the Gradle output.
 
 Use the Linux Node runtime inside this Termux/proot environment so Rollup loads the Linux native package rather than the Android namespace-blocked binary:
 
@@ -53,7 +54,8 @@ JAVA_HOME=/usr/lib/jvm/java-21-openjdk-arm64 \
 ANDROID_HOME=/root/android-sdk \
 ./gradlew --no-daemon --max-workers=2 assembleDebug lintDebug \
   -Pandroid.aapt2FromMavenOverride=/data/data/com.termux/files/usr/bin/aapt2 \
-  -PcompanionVersionName=0.11.0-observation-local
+  -PcompanionVersionName=0.11.0-observation-local \
+  -PcompanionVersionCode=2
 ```
 
 The npm package version remains `0.10.0`. The Android version name above is a local validation label, not a release version bump. The APK is debug-signed for local validation, has not been installed or released, and is not a compatible update for release-signed installations.

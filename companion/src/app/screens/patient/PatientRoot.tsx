@@ -36,7 +36,7 @@ type PatientScreen =
 // Patient-mode router. Plain useState switch, no routing library — this app
 // has four screens and no deep-linking need, so a library would be pure
 // overhead.
-export function PatientRoot() {
+export function PatientRoot({ onSetupObservation }: { onSetupObservation: () => void }) {
   const patient = usePatient();
   const [screen, setScreen] = useState<PatientScreen>({ name: 'home' });
   // Undo display rule (RESEARCH §1: no timeouts, no auto-dismiss under 8s).
@@ -190,7 +190,8 @@ export function PatientRoot() {
   return (
     <div className="flex h-full flex-col overflow-y-auto">
       {screen.name === 'home' && (
-        <ObservationStatus patientCode={patient.code} onStart={(study) => void startTapping(study)} />
+        <ObservationStatus patientCode={patient.code} onStart={(study) => void startTapping(study)}
+          onSetupObservation={onSetupObservation} />
       )}
       {screen.name === 'home' && (
         <Home
