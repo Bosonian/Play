@@ -1,10 +1,13 @@
 # Medication-response build plan
 
+Roadmap, not a shipped-feature inventory. Current implementation and checkpoint: [PROJECT_HANDOVER.md](PROJECT_HANDOVER.md). Next active proposal: [NEXT_SESSION_PLAN.md](NEXT_SESSION_PLAN.md); camera implementation still awaits approval.
+
 ## Product boundary
 
 Companion collects a 14- or 28-day, dose-linked record of symptoms and objective
-measurements. It presents the doctor with explainable evidence and constrained
-treatment options. It does not change medication autonomously.
+measurements. A future validated increment would present explainable evidence and constrained
+treatment options; that recommendation workflow is not implemented today. The app
+does not change medication autonomously.
 
 Every recommendation must identify its inputs, missing data, confidence,
 applicable clinical constraints, expected benefit, and important risks. The
@@ -96,17 +99,17 @@ Exit gate: threat-model review and tested data migration from existing installs.
 
 Exit gate: a simulated 14/28-day study produces a complete, inspectable timeline.
 
-### 4. Finger tapping
+### 4. Finger tapping — implemented core plus future validation
 
-- Bilateral ten-second self-paced alternating-target test (measurement protocol v3).
-- Both targets remain fixed and visually identical; either target may be tapped first.
+- Bilateral ten-second self-paced alternating-target test (measurement protocol v4).
+- Both targets remain fixed and equal in geometry; either target may be tapped first. Protocol v4 adds a 100 ms reactive tint and system-controlled Android haptic request after a recorded in-target touch.
 - One index finger per hand, with separate left and right records.
 - Pre-test ON/OFF/dyskinesia/uncertain state links atomically to both hand records.
 - Doctor-configured reminders combine state logging with the bilateral test.
 - Historical color-cued protocol v2 results retain their recorded protocol version.
 - Capture touch time, position, target and tested side.
-- Derive rate, interval variability, errors, decrement and asymmetry.
-- Add practice trials and device/screen metadata.
+- Implemented: rate, interval variability, errors and first/last-third temporal rate change. No movement-amplitude decrement or validated asymmetry interpretation.
+- Device/screen and feedback metadata are implemented; practice trials and physical calibration remain future work.
 - Reject poor-quality sessions rather than imputing clinical results.
 
 Exit gate: repeatability and manually verified synthetic-sequence tests.

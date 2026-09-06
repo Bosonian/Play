@@ -1,5 +1,7 @@
 # Head-in
 
+For the separate **Parkinson Companion** Android app, start at [companion/README.md](companion/README.md) and its [next-session plan](companion/docs/NEXT_SESSION_PLAN.md). The instructions below concern Head-in.
+
 A game for learning the anatomy of the brain and spinal cord — in depth, from
 orientation to expert clinical localization — by travelling the neuraxis the way
 a signal does. Offline-first PWA.

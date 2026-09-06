@@ -1,5 +1,7 @@
 # Doctor workspace and medicine-photo import
 
+Current checkpoint: [PROJECT_HANDOVER.md](PROJECT_HANDOVER.md). The tapping discussion below describes the v3 acquisition foundation; current v4 adds reactive target colour/haptic feedback, with the same fixed-target task and unchanged feature schema. Remote PWA remains future work.
+
 Status: the single-patient Android app now contains a doctor-reviewed Google Cloud Vision
 medicine-photo import. A multi-patient doctor PWA, cloud patient database, and device sync remain
 future stages.

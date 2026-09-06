@@ -1,15 +1,19 @@
 # Android app updates
 
+Current checkpoint: 0.16.2 / build 21, 2026-09-06. See [PROJECT_HANDOVER.md](PROJECT_HANDOVER.md) for current artifacts and unresolved device acceptance.
+
 The 0.16.1 update fixes two independent problems: the public release was built
 from an old branch, and locally installed APKs had a different signing identity
 and version-number sequence from GitHub release APKs.
 
 ## Existing installations
 
-The first upgrade from a local 0.16.0-or-earlier build needs the direct
-`companion-legacy.apk` link for build 20. Install it over the existing app; do not
-uninstall or clear app storage. Its signing certificate is the same as the recent
-local builds. Android still requires the user to confirm installation.
+An installation signed with the known local legacy key needs the matching
+`companion-legacy.apk`; a release-signed installation needs `companion.apk`.
+Do not choose based only on app version or filename. The actual installed signer
+on the user's phone has NOT been verified. Direct build-21 links are in the project
+handover. Do not uninstall or clear app storage to fix an update. Android still
+requires the user to confirm installation.
 
 Existing release-signed installations use `companion.apk`. That filename retains
 its original release signer permanently. One ordinary APK cannot update both
@@ -59,7 +63,7 @@ not advertise a partially uploaded build.
 Automated verification can establish package/version/signature and update
 selection behavior. It does not establish that Android installation preserves the
 actual patient's records on this phone; that requires an installed-app upgrade
-check. No patient data or shared Android storage was accessed for this fix.
+check. No patient database was accessed. A later, explicitly requested screenshot inspection showed only generic “App not installed”; it did not establish the cause. Android blocked direct installed-package queries. Later working-download confirmation does not establish a successful data-preserving installation.
 
 ## Validation for 0.16.1 / build 20
 
@@ -74,9 +78,12 @@ match. The release publisher verifies uploaded bytes again before advertising th
 Signing certificate SHA-256 values:
 
 - Release: `f8ae5a2403c53b65fdf2ab471da67706bc58cfcb87cba3c9c04750ba15604c43`
-- Recent local installation: `c3b8e9dcc82357158ba815dbf6d5c6c021a1008c5c32337bc01cf9b93af85930`
+- Known local APK artifacts (installed phone identity unconfirmed): `c3b8e9dcc82357158ba815dbf6d5c6c021a1008c5c32337bc01cf9b93af85930`
 
-The bootstrap publication is performed locally with the reviewed publisher; its
-commit skips automatic CI to prevent a concurrent release. The updated GitHub
-workflow has been reviewed and its shell blocks syntax-checked, but a complete
-GitHub-hosted execution of the new workflow has not yet been observed.
+Build 20 was bootstrapped locally with the reviewed publisher and a skip-CI commit.
+The updated GitHub workflow subsequently completed end-to-end for build 21:
+[run 34039944542](https://github.com/Bosonian/Play/actions/runs/34039944542).
+Both signed release APKs were built and publicly verified before updating latest.
+Build 21 passed 340 JavaScript tests, TypeScript/web build, Android release tests,
+lint and packaging. Anonymous direct downloads were also checked locally against
+published hashes. Physical installation/data-retention acceptance is still open.

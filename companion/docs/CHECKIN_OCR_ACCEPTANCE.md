@@ -1,5 +1,7 @@
 # Fixed-target check-in and medicine OCR acceptance
 
+> Device checklist originally written for 0.16.0 / tapping v3. Current application: 0.16.2 / build 21, tapping v4 with feedback. Read [PROJECT_HANDOVER.md](PROJECT_HANDOVER.md) and [TAPPING_FEEDBACK.md](TAPPING_FEEDBACK.md) for current status. Historical build commands, test counts and release status below are not current release instructions. Outstanding device checks remain outstanding unless later evidence is recorded.
+
 ## Implemented increment
 
 - Tapping protocol v3: ten seconds per hand, fixed equal targets, self-paced

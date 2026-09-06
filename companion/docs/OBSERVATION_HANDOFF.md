@@ -1,5 +1,7 @@
 # Observation study implementation handoff
 
+> Historical observation-foundation checkpoint. Current application: 0.16.2 / build 21, tapping v4 with feedback. Read [PROJECT_HANDOVER.md](PROJECT_HANDOVER.md) and [TAPPING_FEEDBACK.md](TAPPING_FEEDBACK.md) for current status. Historical build commands, test counts and release status below are not current release instructions. Outstanding device checks remain outstanding unless later evidence is recorded.
+
 Status: implemented locally on `codex/observation-review`; release packaging and physical-device acceptance remain pending.
 
 ## Implemented in this increment

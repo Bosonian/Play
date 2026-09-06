@@ -1,5 +1,7 @@
 # Companion 0.16.0 delivery — local build 6
 
+> Historical 0.16.0 / build-6 delivery record. Current application: 0.16.2 / build 21, tapping v4 with feedback. Read [PROJECT_HANDOVER.md](PROJECT_HANDOVER.md) and [TAPPING_FEEDBACK.md](TAPPING_FEEDBACK.md) for current status. Historical build commands, test counts and release status below are not current release instructions. Outstanding device checks remain outstanding unless later evidence is recorded.
+
 The finished increment adds fixed-target bilateral touch tapping, linked subjective
 state, doctor-configured Android check-in reminders and optional reviewed medicine
 OCR using the doctor's Google Cloud Vision EU project/API key. Gemini is not used.
