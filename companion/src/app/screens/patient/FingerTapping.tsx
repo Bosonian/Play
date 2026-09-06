@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import {
   TAPPING_FEATURE_VERSION,
+  TAPPING_FEEDBACK_PROTOCOL_VERSION,
+  TAPPING_VISUAL_FEEDBACK,
   TAPPING_PROTOCOL_VERSION,
   type HandSide,
   type TapTarget,
@@ -26,6 +28,8 @@ import { logEvent } from '../../activity/activityLog';
 import { StatePicker, type StateSelection } from './StatePicker';
 import { motorStateLabel } from '../../../domain/motor';
 import type { MotorEvent } from '../../../domain/types';
+import { createTappingFeedbackController, type TappingFeedbackController, type TappingFlashState } from '../../tappingFeedback/feedback';
+import { tapFeedbackNative } from '../../tappingFeedback/native';
 
 type HandResult = {
   side: HandSide;
@@ -39,6 +43,9 @@ type HandResult = {
     viewportHeight: number;
     devicePixelRatio: number;
     orientation: string;
+    feedbackProtocolVersion: number;
+    visualFeedback: typeof TAPPING_VISUAL_FEEDBACK;
+    hapticFeedback: 'requested-android' | 'unsupported-web';
   };
 };
 
@@ -86,9 +93,48 @@ export function FingerTapping({
   const resolvedSidesRef = useRef(new Set<HandSide>());
   const savingRef = useRef(false);
   const metadataRef = useRef<HandResult['metadata'] | null>(null);
+  const [tapFlash, setTapFlash] = useState<TappingFlashState>({ a: false, b: false });
+  const feedbackSessionRef = useRef<string | null>(null);
+  const feedbackRef = useRef<TappingFeedbackController | null>(null);
+
+  function beginFeedbackSession() {
+    endFeedbackSession();
+    if (!feedbackRef.current) {
+      feedbackRef.current = createTappingFeedbackController({
+        setFlash: setTapFlash,
+        setTimer: (callback, delayMs) => window.setTimeout(callback, delayMs),
+        clearTimer: (timer: number) => window.clearTimeout(timer),
+        requestHaptic: (requestedAtEpochMs) => {
+          const token = feedbackSessionRef.current;
+          if (token) tapFeedbackNative.performTap(token, requestedAtEpochMs);
+        },
+      });
+    }
+    const token = safeUuid();
+    feedbackSessionRef.current = token;
+    tapFeedbackNative.beginSession(token);
+  }
+
+  function endFeedbackSession() {
+    feedbackRef.current?.reset();
+    const token = feedbackSessionRef.current;
+    feedbackSessionRef.current = null;
+    if (token) tapFeedbackNative.endSession(token);
+  }
+
+  useEffect(() => () => {
+    feedbackRef.current?.dispose();
+    feedbackRef.current = null;
+    const token = feedbackSessionRef.current;
+    feedbackSessionRef.current = null;
+    if (token) tapFeedbackNative.endSession(token);
+  }, []);
 
   function readDisplayMetadata(): HandResult['metadata'] {
     return {
+      feedbackProtocolVersion: TAPPING_FEEDBACK_PROTOCOL_VERSION,
+      visualFeedback: TAPPING_VISUAL_FEEDBACK,
+      hapticFeedback: tapFeedbackNative.isAvailable() ? 'requested-android' : 'unsupported-web',
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
       devicePixelRatio: window.devicePixelRatio,
@@ -204,6 +250,7 @@ export function FingerTapping({
     if (!finished) return;
 
     runningRef.current = false;
+    endFeedbackSession();
     if (resolvedSidesRef.current.has(acquisition.side)) return;
     resolvedSidesRef.current.add(acquisition.side);
     acquisitionRef.current = null;
@@ -271,6 +318,7 @@ export function FingerTapping({
     startedAtRef.current = new Date().toISOString();
     metadataRef.current = readDisplayMetadata();
     activePointersRef.current.clear();
+    beginFeedbackSession();
     runningRef.current = true;
     setRemaining(10);
     setSide(hand);
@@ -313,13 +361,16 @@ export function FingerTapping({
     event.currentTarget.setPointerCapture(event.pointerId);
     const target = (event.target as HTMLElement).closest<HTMLElement>('[data-tap-target]');
     const actualTarget = (target?.dataset.tapTarget as TapTarget | undefined) ?? 'outside';
+    const touchAtMs = performance.now();
+    const feedbackRequestedAtEpochMs = Date.now();
     const captureResult = recordTappingTouch(acquisition, {
-      atMs: performance.now(),
+      atMs: touchAtMs,
       x: event.clientX,
       y: event.clientY,
       actualTarget,
       pointerCount: event.isPrimary ? activePointersRef.current.size : 2,
     });
+    feedbackRef.current?.acknowledge(captureResult, actualTarget, feedbackRequestedAtEpochMs);
     if (captureResult === 'interrupted') {
       finishCurrent('multiple-pointers');
     }
@@ -434,7 +485,7 @@ export function FingerTapping({
         onPointerDown={capture} onPointerUp={releasePointer} onPointerCancel={releasePointer}>
         {(['a', 'b'] as TapTarget[]).map((target) => (
           <button key={target} type="button" data-tap-target={target}
-            className="touch-none rounded-full border-4 border-accent bg-surface"
+            className={`touch-none rounded-full border-4 border-accent ${tapFlash[target] ? 'bg-accent-soft' : 'bg-surface'}`}
             aria-label={target === 'a' ? 'Left tap target' : 'Right tap target'} />
         ))}
       </div>

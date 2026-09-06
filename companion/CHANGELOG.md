@@ -1,3 +1,10 @@
+# 0.16.2 — tapping feedback
+
+- Each recorded touch inside a target briefly changes that target's colour.
+- Android requests a gentle haptic tick, respecting system touch-feedback settings.
+- Targets stay fixed; feedback acknowledges contact rather than cueing the next target.
+- Tapping acquisition protocol v4 records feedback configuration; feature schema stays v2.
+
 # 0.16.1 — compatible Android updates
 
 - Select updates using the installed Android version and signing certificate.

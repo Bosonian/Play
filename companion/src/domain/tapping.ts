@@ -1,7 +1,10 @@
-// v3 is self-paced fixed-target alternation. v2 used a changing visual cue,
-// which added reaction/choice latency to the primary motor measurement.
-export const TAPPING_PROTOCOL_VERSION = 3;
+// v4 adds a brief, non-directional acknowledgement on recorded in-target
+// touches. v3 was the same fixed-target acquisition without touch feedback.
+// v2 used a changing cue that added reaction/choice latency.
+export const TAPPING_PROTOCOL_VERSION = 4;
 export const TAPPING_FEATURE_VERSION = 2;
+export const TAPPING_FEEDBACK_PROTOCOL_VERSION = 1;
+export const TAPPING_VISUAL_FEEDBACK = 'actual-target-accent-100ms' as const;
 export const TAPPING_DURATION_MS = 10_000;
 export type HandSide = 'left' | 'right';
 export type TapTarget = 'a' | 'b';

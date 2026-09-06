@@ -12,6 +12,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(MedicineOcrPlugin.class);
         registerPlugin(AppUpdateIdentityPlugin.class);
         registerPlugin(ObservationRemindersPlugin.class);
+        registerPlugin(TapFeedbackPlugin.class);
         ObservationReminderManager.captureOpenIntent(this, getIntent());
         super.onCreate(savedInstanceState);
     }
