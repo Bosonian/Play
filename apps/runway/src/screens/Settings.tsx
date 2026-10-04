@@ -33,6 +33,8 @@ import {
   type BondedDevice,
 } from '../native/bluetooth';
 import { carChooserMessage } from '../lib/transit';
+import { usePruefungEnabled } from '../hooks/usePruefungEnabled';
+import { PRUEFUNG_ENABLED_KEY } from '../lib/onboarding';
 import { APP_VERSION, APP_VERSION_CODE } from '../lib/appVersion';
 import { AVAILABLE_UPDATE_SETTING, checkForUpdate, parseAvailableUpdate } from '../lib/updateCheck';
 
@@ -104,6 +106,14 @@ export function Settings({ onNavigate }: SettingsProps) {
   // doc comment. Turning OFF never revokes the OS permission (Android has
   // no API for an app to do that to itself); it only stops Home from
   // reading it.
+  // Prüfung visibility (0.52.0). Writes an explicit 'true'/'false' — never
+  // deletes the row — so a choice made here is never reinterpreted by the
+  // "absent row + existing exam = enabled" fallback (isPruefungEnabled).
+  const pruefungEnabled = usePruefungEnabled();
+  async function togglePruefung() {
+    await db.settings.put({ key: PRUEFUNG_ENABLED_KEY, value: pruefungEnabled ? 'false' : 'true' });
+  }
+
   const calendarEnabledSetting = useLiveQuery(() => db.settings.get(CALENDAR_ENABLED_SETTING), []);
   const calendarEnabled = calendarEnabledSetting?.value === 'true';
 
@@ -537,6 +547,23 @@ export function Settings({ onNavigate }: SettingsProps) {
         <p className="text-sm text-slate-500">
           Reads your device calendar to suggest departures for upcoming appointments. Runway never
           writes to your calendar.
+        </p>
+      </section>
+
+      <section className="flex flex-col gap-2 rounded-xl border border-slate-800/60 bg-surface p-4">
+        <label className="flex items-center gap-3">
+          <input
+            type="checkbox"
+            checked={pruefungEnabled}
+            onChange={() => void togglePruefung()}
+            className="size-6 shrink-0 rounded-md accent-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+          />
+          <span className="flex-1 text-slate-100">Show Prüfung on Home</span>
+        </label>
+        <p className="text-sm text-slate-500">
+          Prüfung is for exam preparation: topics, timed study sprints, milestones and an exam
+          window. Turning it off hides it from Home and keeps anything already entered. Study-block
+          reminders you already scheduled still fire.
         </p>
       </section>
 

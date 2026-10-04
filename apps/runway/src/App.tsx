@@ -16,6 +16,10 @@ import { ReportProblem } from './screens/ReportProblem';
 import { TaskSetup } from './screens/TaskSetup';
 import { TaskRun } from './screens/TaskRun';
 import { ActivityLog } from './screens/ActivityLog';
+import { Onboarding } from './screens/Onboarding';
+import { db } from './db/db';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { ONBOARDING_DONE_KEY, SEED_TEMPLATE_ID, shouldBackfillOnboardingDone, shouldShowOnboarding, type FreshnessFacts } from './lib/onboarding';
 import { setNavigationRef } from './lib/navigationRef';
 import { registerBackGesture } from './native/backGesture';
 import { refreshDayGauge } from './lib/dayGaugeRefresh';
@@ -146,7 +150,10 @@ export type Screen =
   // Activity-log increment: the on-device event viewer, reached from
   // Settings' "View activity log" TextAction — a pure read-only view, no
   // create/prefill props of its own, same shape as `learning` above.
-  | { name: 'activityLog' };
+  | { name: 'activityLog' }
+  // First-run onboarding (0.52.0). No props: it is entered only by App's
+  // own first-run decision below and always exits to home.
+  | { name: 'onboarding' };
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'home' });
@@ -246,6 +253,41 @@ export default function App() {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
+  // First-run onboarding (0.52.0). The decision is made ONCE per app launch
+  // and then held as ordinary screen state, so data created by onboarding
+  // itself (step 2 adds a departure, which makes the database "not fresh")
+  // cannot pull the screen out from under the person.
+  //
+  // flag: undefined = loading, null = loaded and absent (the `?? null`
+  // sentinel — see onboarding.ts's shouldShowOnboarding for why).
+  // facts: counts only, no rows loaded.
+  const onboardingFlag = useLiveQuery(
+    async () => (await db.settings.get(ONBOARDING_DONE_KEY)) ?? null,
+    [],
+  );
+  const freshnessFacts = useLiveQuery<FreshnessFacts>(async () => ({
+    departureCount: await db.departures.count(),
+    taskCount: await db.tasks.count(),
+    hasExam: (await db.exams.count()) > 0,
+    nonSeedTemplateCount: await db.templates.where('id').notEqual(SEED_TEMPLATE_ID).count(),
+  }), []);
+  const onboardingDecided = useRef(false);
+
+  useEffect(() => {
+    if (onboardingDecided.current) return;
+    if (onboardingFlag === undefined || freshnessFacts === undefined) return;
+    onboardingDecided.current = true;
+    if (shouldShowOnboarding(onboardingFlag, freshnessFacts)) {
+      // Only take over if nothing else navigated first (a notification tap
+      // that landed before this resolved wins; a fresh install has none).
+      setScreen((current) => (current.name === 'home' ? { name: 'onboarding' } : current));
+    } else if (shouldBackfillOnboardingDone(onboardingFlag, freshnessFacts)) {
+      // Existing install, seen once: record it, so deleting everything
+      // later does not make the app greet its owner as a stranger.
+      void db.settings.put({ key: ONBOARDING_DONE_KEY, value: 'true' });
+    }
+  }, [onboardingFlag, freshnessFacts]);
+
   function renderScreen() {
     switch (screen.name) {
       case 'home':
@@ -301,6 +343,8 @@ export default function App() {
         return <TaskRun taskId={screen.taskId} onNavigate={setScreen} />;
       case 'activityLog':
         return <ActivityLog onNavigate={setScreen} />;
+      case 'onboarding':
+        return <Onboarding onNavigate={setScreen} />;
     }
   }
 

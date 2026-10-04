@@ -91,6 +91,10 @@ describe('backTarget', () => {
     expect(backTarget(screen)).toEqual({ name: 'home' });
   });
 
+  it('onboarding has nowhere to go back to', () => {
+    expect(backTarget({ name: 'onboarding' })).toBeNull();
+  });
+
   it('activityLog backs to settings', () => {
     expect(backTarget({ name: 'activityLog' })).toEqual({ name: 'settings' });
   });

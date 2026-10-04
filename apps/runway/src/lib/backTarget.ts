@@ -25,6 +25,13 @@ export function backTarget(screen: Screen): Screen | null {
     case 'home':
       return null;
 
+    // Onboarding (0.52.0): nowhere to go back TO — it replaces Home on first
+    // run, and sending back to Home would skip it without writing the done
+    // flag, so the person would be asked again next launch. null minimizes
+    // the app instead; the screen's own Back moves between its steps.
+    case 'onboarding':
+      return null;
+
     // Every one of these five mirrors an onBack that always returns to
     // home, regardless of how the screen itself was reached (create vs.
     // edit, prefilled vs. blank) — none of their props change where back

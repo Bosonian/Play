@@ -11,6 +11,13 @@ import type {
   Topic,
   WorkTask,
 } from './types';
+import {
+  DEFAULT_BUFFER_MINUTES,
+  DEFAULT_TRAVEL_MINUTES,
+  SEED_TEMPLATE_ID,
+  SEED_TEMPLATE_NAME,
+  STARTER_STEPS,
+} from '../lib/onboarding';
 
 // Dexie's index string only lists the fields we actually query by
 // (`id` is the implicit primary key for both tables). `appointmentAt` and
@@ -138,17 +145,28 @@ class RunwayDB extends Dexie {
 
 export const db = new RunwayDB();
 
-// Seed data: ships once, on first run, so the app is never empty. The
-// "Standard" template mirrors the example routine in RUNWAY_PLAN.md §5.1
-// (shower / dress / pack bag / shoes & door) with an empty destination —
-// destination is inherently personal, so we leave it for the user to fill
-// in rather than guessing one.
+// Seed data: ships once, on first run, so the app is never empty. One
+// template, a short generic routine for leaving home, with an empty
+// destination — destination is inherently personal, so we leave it for the
+// user to fill in rather than guessing one.
+//
+// 0.52.0 changed this seed (name "Standard" -> "Leaving home"; steps
+// shower/dress/pack/shoes -> get dressed/pack bag/shoes and keys, shared
+// with onboarding via STARTER_STEPS). Blast radius, checked: this handler
+// runs only when the database is CREATED, so it touches no existing
+// install — every template an existing user has (including an edited
+// "Standard", still id seed-standard-template) is left exactly as it was.
+// Backup restore does not re-run it either (restoreBackup.ts clears and
+// bulk-adds on an already-open database). The id is deliberately unchanged
+// so onboarding.ts's "seed alone is not data" rule recognises both the old
+// and the new seed. Tradeoff: two installs can now carry differently named
+// seeds; nothing in the code keys on the name.
 //
 // Prüfung's tables (exams, topics, sprints, milestones) deliberately get no
 // equivalent seed row: an exam is Deepak's specific exam, not a generic
 // example, so ExamSetup's empty state does the work a seed would do
 // elsewhere — see RUNWAY_PRUFUNG_PLAN.md's "not a fake-urgency machine" §1.
-const SEED_TEMPLATE_ID = 'seed-standard-template';
+// (SEED_TEMPLATE_ID now lives in lib/onboarding.ts.)
 
 // `on('populate', ...)` fires exactly once — the first time the database is
 // created — so this can't accidentally re-seed after the user deletes the
@@ -160,16 +178,11 @@ db.on('populate', async () => {
   const now = new Date().toISOString();
   await db.templates.add({
     id: SEED_TEMPLATE_ID,
-    name: 'Standard',
+    name: SEED_TEMPLATE_NAME,
     destination: '',
-    travelMinutes: 20,
-    bufferMinutes: 10,
-    steps: [
-      { id: crypto.randomUUID(), name: 'Shower', minutes: 15 },
-      { id: crypto.randomUUID(), name: 'Dress', minutes: 10 },
-      { id: crypto.randomUUID(), name: 'Pack bag', minutes: 5 },
-      { id: crypto.randomUUID(), name: 'Shoes and door', minutes: 5 },
-    ],
+    travelMinutes: DEFAULT_TRAVEL_MINUTES,
+    bufferMinutes: DEFAULT_BUFFER_MINUTES,
+    steps: STARTER_STEPS.map((step) => ({ id: crypto.randomUUID(), name: step.name, minutes: step.minutes })),
     createdAt: now,
     updatedAt: now,
     schedule: null,

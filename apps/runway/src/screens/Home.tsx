@@ -43,6 +43,7 @@ import { refreshDayGauge } from '../lib/dayGaugeRefresh';
 import { logEvent } from '../lib/eventLog';
 import { APP_VERSION, APP_VERSION_CODE } from '../lib/appVersion';
 import { AVAILABLE_UPDATE_SETTING, parseAvailableUpdate } from '../lib/updateCheck';
+import { usePruefungEnabled } from '../hooks/usePruefungEnabled';
 import { findDuplicateTemplates } from '../lib/duplicateTemplates';
 
 /** Cap on "From your calendar" cards shown at once (E1; CLAUDE.md's
@@ -222,6 +223,8 @@ export function Home({ onNavigate }: HomeProps) {
   // real exam instead of creating a duplicate, so nothing here needs to be
   // more careful than that.
   const exam = useLiveQuery(() => db.exams.toCollection().first(), []);
+  // Whether the Prüfung link shows at all (0.52.0) — see usePruefungEnabled.
+  const pruefungEnabled = usePruefungEnabled();
 
   // db.settings.get() resolves to undefined for a missing row — the same
   // value useLiveQuery yields while the query is still loading. Left as-is,
@@ -1534,7 +1537,11 @@ export function Home({ onNavigate }: HomeProps) {
 
       <div className="flex items-center justify-center gap-6">
         <TextAction onClick={() => onNavigate({ name: 'history' })}>History</TextAction>
-        <TextAction onClick={() => onNavigate(exam ? { name: 'exam' } : { name: 'examSetup' })}>Prüfung</TextAction>
+        {/* Hidden unless enabled (0.52.0). An existing install with an exam
+            keeps it — see isPruefungEnabled in lib/onboarding.ts. */}
+        {pruefungEnabled && (
+          <TextAction onClick={() => onNavigate(exam ? { name: 'exam' } : { name: 'examSetup' })}>Prüfung</TextAction>
+        )}
         <TextAction onClick={() => onNavigate({ name: 'settings' })}>Settings</TextAction>
         <TextAction onClick={() => onNavigate({ name: 'report', fromScreen: 'home' })}>Report a problem</TextAction>
       </div>
