@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widget increment (0.9.0): the Tide home-screen widget's layout — the
+     smoothed weight trend as the large, dominant number (TIDE_PLAN.md §2's
+     north star), the trend's own sentence underneath it (smaller, dimmer),
+     then up to two daily-shape lines (smallest, quietest — TIDE_PLAN.md §5
+     ranks daily shape strictly below the trend, and this widget's own
+     hierarchy must not quietly invert that ranking the way a same-size,
+     same-weight shape line would). Rendered by TideWidgetProvider.java;
+     every piece of text and every colour is set programmatically there —
+     nothing here is ever shown on a real, placed widget (see this file's
+     own "m1-style" note below for the one exception: the widget PICKER's
+     preview).
+
+     Ported from apps/runway's widget_pruefung.xml's overall shape (a plain
+     vertical stack of TextViews on a rounded dark card, no progress bar or
+     icon — Tide's widget needs neither of those Prüfung-specific elements),
+     not a line-for-line copy: Tide's own hierarchy (one dominant number,
+     one line under it, then subordinate shape lines) is its own thing, not
+     Prüfung's ready-by/week-progress/anchor stack.
+
+     No previewImage/previewLayout is declared in widget_tide_info.xml (see
+     that file's own comment for why, matching Runway's own choice exactly)
+     — the widget picker falls back to rendering this initialLayout as-is,
+     which is why the android:text values below are realistic-looking
+     placeholder copy rather than empty strings: that placeholder IS the
+     picker preview. TideWidgetProvider.onUpdate ALWAYS overwrites every one
+     of these views the moment the widget is actually placed on a home
+     screen. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="start|center_vertical"
+    android:background="@drawable/widget_bg"
+    android:padding="14dp">
+
+    <!-- The trend value — Home's own headline number, same role here.
+         android:visibility is set at render time (GONE, not just empty
+         text, whenever there's no smoothed trend yet — see
+         TideWidgetProvider.renderSnapshot) so the widget never reserves a
+         blank slot where a number belongs when it has none to show. -->
+    <TextView
+        android:id="@+id/widget_trend_value"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        android:textColor="#F1F5F9"
+        android:maxLines="1"
+        android:text="98.4 kg" />
+
+    <TextView
+        android:id="@+id/widget_trend_line"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:textSize="12sp"
+        android:textColor="#94A3B8"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:text="Trend: −0.4 kg/week over 6 weigh-ins." />
+
+    <!-- Daily-shape lines — smallest text size on the widget, on purpose
+         (see this file's own header comment on the hierarchy this
+         enforces). Coloured programmatically: slate-500 (unmet) or
+         emerald-300 (met, TIDE_PLAN.md §2's one quiet accent, never a
+         celebration) — see TideWidgetProvider's own colour constants for
+         why slate-500 here, not the slightly brighter slate-300 the live
+         app's own daily-shape card uses in ITS context. -->
+    <TextView
+        android:id="@+id/widget_shape_line1"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:textSize="11sp"
+        android:textColor="#64748B"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:text="2 of 3 check-ins." />
+
+    <TextView
+        android:id="@+id/widget_shape_line2"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:textSize="11sp"
+        android:textColor="#64748B"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:text="4,120 of 6,000 steps." />
+
+</LinearLayout>

@@ -1,0 +1,711 @@
+import { useEffect, useRef, useState } from 'react';
+import type { DepartureStep } from '../db/types';
+import { elapsedSecondsSince } from '../lib/currentStepElapsed';
+import { isSecondTap } from '../lib/doubleTap';
+import { focusTone } from '../lib/focusTone';
+import type { FocusTone } from '../lib/focusTone';
+import { formatCountdown, formatFocusEta, formatTime } from '../lib/format';
+import { usePipMode } from '../hooks/usePipMode';
+import { setPipAutoEnter } from '../native/pip';
+
+/** How long the "Double-tap to check off." hint stays on screen after a
+ * first tap, in milliseconds. Long enough to read at a glance, short
+ * enough that it's gone well before it could be mistaken for a permanent
+ * label sitting next to the countdown. */
+const HINT_VISIBLE_MS = 1400;
+
+interface StepFocusProps {
+  step: DepartureStep;
+  /** Whether `step` is the departure's current (first unchecked) step. Only
+   * the current step has an honest anchor to count from - see the header
+   * comment below. */
+  isCurrentStep: boolean;
+  /** currentStepAnchor(departure)'s result - the ISO instant the CURRENT
+   * step started from. Passed in rather than recomputed here so this stays
+   * a dumb presentational component with no Dexie/departure knowledge of
+   * its own; meaningless (and unused) when `isCurrentStep` is false. */
+  anchorIso: string | null;
+  now: Date;
+  /**
+   * Step-focus-eta increment: the live projected arrival for the WHOLE
+   * departure (computeProjection's `projectedArrival`), not anything
+   * specific to this one step — while the countdown answers "how is this
+   * step going", this answers "what does that cost the whole plan", which
+   * is the reason someone would want it while staring at an overrun.
+   *
+   * Passed as the already-computed `Date` rather than the raw `departure`
+   * (mirroring `anchorIso` above, and for the same reason its own comment
+   * gives: this stays a dumb presentational component with no Dexie/
+   * projection knowledge of its own — Runway.tsx already calls
+   * computeProjection every tick for its own centerpiece figure, so this
+   * is that same value handed down, not a second computation). `undefined`
+   * for callers with no HONEST departure-level projection to state, of
+   * which there are two: TaskRun.tsx, whose task focus has a deadline
+   * (`bottomLine`) but no "arrival" concept at all, and Runway.tsx's
+   * arrival-phase overlay, which omits it for a different reason —
+   * computeProjection's figure is honest there now (post-departure fix,
+   * 0.45.2), but that overlay's own `bottomLine` already reads "Appointment
+   * HH:MM" for the same endpoint, and the arrival-phase screen one level up
+   * already shows the projected arrival as its centerpiece. A third reading
+   * of the same endpoint under a third label wouldn't add information, so
+   * that call site still omits it — see its own comment for the full
+   * reasoning. See this prop's render guard below, which also
+   * withholds it whenever `isCurrentStep` is false, same "no honest live
+   * reading for a step that hasn't started" reasoning as the countdown
+   * itself (see `remainingSeconds` below).
+   */
+  projectedArrival?: Date;
+  /**
+   * The bottom line's time and its label — different callers, different
+   * honest readings of "when this all needs to land":
+   *   - prep phase (Runway.tsx's main view): `{ label: 'Leave by',
+   *     time: projection.leaveBy }` — live, from computeProjection.
+   *   - arrival phase (Runway.tsx's arrival-steps branch, ward-station
+   *     increment): `{ label: 'Appointment', time: appointmentAt }` —
+   *     "Leave by" would be actively wrong copy once you've already left;
+   *     the true target left to name at that point is the appointment
+   *     itself, not a door that's already behind you.
+   *   - task focus (TaskRun.tsx, tasks increment): `{ label: 'Deadline',
+   *     time: deadline }` when the task has one, `undefined` when it
+   *     doesn't — a task genuinely has nothing to land against without a
+   *     deadline, unlike a departure, which always has an appointment. The
+   *     prop stays a single pair (not two independently-optional fields)
+   *     for the reason below whenever it IS supplied; it's the whole pair
+   *     that's optional, not just the time.
+   * A single prop pair (rather than two optional fields) so a caller can't
+   * accidentally supply a time with no label or vice versa.
+   */
+  bottomLine?: { label: string; time: Date };
+  onBack: () => void;
+  /** Whole-screen tap-to-check-and-advance - called only on a confirmed
+   * DOUBLE-tap (field report #14: a single-tap version of this let a
+   * pocket brush falsely finish a real departure step). The gating itself
+   * lives inside this component (see the container's `onClick` below,
+   * `handleTap`); this prop is invoked exactly where the old single-tap
+   * version invoked it, so callers (Runway.tsx/TaskRun.tsx) are unchanged
+   * - the haptic they fire from inside their own check+advance handler
+   * still happens, just one confirmed double-tap later than before. Only
+   * ever provided by the caller when `isCurrentStep` is true - a step that
+   * hasn't started yet has no "done" action, so there's nothing to wire up
+   * here for it. */
+  onTap?: () => void;
+  /** Backdating increment: "the step already finished, a while ago" — a
+   * small, quiet escape hatch beside the back chevron, deliberately NOT
+   * part of the whole-screen tap zone `onTap` owns (same "excluded from
+   * the tap-to-check zone" treatment the back chevron itself already
+   * gets, for the same reason: a stray tap here must never silently
+   * check the step off at `now`). Rendered only when `isCurrentStep` is
+   * also true - see this prop's own render guard below and `onTap`'s
+   * comment above for why a step that hasn't started can't honestly be
+   * "done earlier" either. The caller (Runway.tsx/TaskRun.tsx) owns what
+   * happens next; this component only ever fires the callback, never
+   * opens anything itself - see those callers' own comments on the
+   * close-focus-then-open-the-card's-dialog handoff. */
+  onBackdate?: () => void;
+  /** Ad-hoc-step increment: "this step is running, but there's a step my
+   * template doesn't have" (Deepak's own example: shaving) - a small,
+   * quiet escape hatch beside "Done earlier", deliberately NOT part of
+   * the whole-screen tap zone `onTap` owns (same exclusion, same reason
+   * as `onBackdate` above: a stray tap here must never silently check the
+   * step off at `now`). Rendered only when `isCurrentStep` is also true -
+   * see `onBackdate`'s own comment above for why a step that hasn't
+   * started can't honestly take over a clock that isn't running either.
+   * The caller owns what happens next; this component only ever fires
+   * the callback, never renders the add-step form itself - that form
+   * stays where it already lived before this increment, on the checklist
+   * card underneath, via the same close-focus-then-open-the-card handoff
+   * `onBackdate` already uses (see that prop's own comment).
+   *
+   * Only ever supplied by Runway.tsx's PREP-phase overlay. Two other
+   * StepFocus callers exist and neither passes this: Runway.tsx's
+   * arrival-phase overlay has a separate steps list with no add-step
+   * panel of its own (arrival steps were explicit non-scope for the
+   * add-step feature), and TaskRun.tsx's task focus has units, not
+   * steps, so there is nothing here to add one to. The optional-prop-
+   * plus-`isCurrentStep`-guard shape makes both omissions automatic
+   * rather than something each caller has to remember - same reasoning
+   * `projectedArrival`'s own comment above gives for why `undefined` is
+   * itself information here, not a gap. */
+  onAddStep?: () => void;
+  /** Skip increment (0.51.0): "some mornings he does not take a bath" — a
+   * small, quiet escape hatch beside "Done earlier" and "Add a step", same
+   * exclusion from the whole-screen tap zone `onTap` owns and same reason:
+   * a stray tap here must never silently check the step off. Rendered only
+   * when `isCurrentStep` is also true, same guard as `onBackdate`/
+   * `onAddStep` — but unlike `onAddStep` (running-only) or `onBackdate`
+   * (gated on `departure.startedAt` by its own caller), this one is NOT
+   * gated by Runway.tsx on either: `skipStep` carries its own forgivable-
+   * shortcut 'planned' -> 'running' transition (mirroring `toggleStep`'s),
+   * so skipping the very first step of a still-'planned' departure is a
+   * real, honest action with nothing to wait for. The caller owns the
+   * actual write; this component only ever fires the callback. */
+  onSkip?: () => void;
+}
+
+const DIGIT_COLOR: Record<FocusTone['phase'], string> = {
+  // #F8FAFC is Tailwind's slate-50 - true white would fight the pure-black
+  // background at this size; slate-50 reads as white without vibrating
+  // against #000000 the way #FFFFFF can on OLED panels.
+  calm: 'text-slate-50',
+  closing: 'text-amber-400',
+  critical: 'text-red-400',
+  overrun: 'text-red-400',
+};
+
+/**
+ * Full-screen focus countdown for a single departure step (step-focus
+ * increment). Rendered as an overlay INSIDE Runway.tsx, not a routed
+ * screen — see Runway.tsx's own comment on `focusStepId` for why: this is
+ * a lens over the live departure, not a place with its own identity.
+ *
+ * Background is pure #000000 (true OLED black), deliberately NOT the app's
+ * usual `bg-slate-950` (#020617) — the whole point of this view is a
+ * countdown that's legible across a room with the lights low, and an OLED
+ * panel only truly turns pixels off at pure black. #020617 is dark enough
+ * to look black in the rest of the app but still measurably lit here.
+ */
+export function StepFocus({
+  step,
+  isCurrentStep,
+  anchorIso,
+  now,
+  projectedArrival,
+  bottomLine,
+  onBack,
+  onTap,
+  onBackdate,
+  onAddStep,
+  onSkip,
+}: StepFocusProps) {
+  const plannedSeconds = step.plannedMinutes * 60;
+
+  // A step that hasn't started yet has no real "time since it began" - any
+  // countdown here would be fiction (the increment spec's own phrase).
+  // Non-current steps show their full planned box instead, static, and
+  // never go into a warning phase (there's nothing running to warn about).
+  const remainingSeconds = isCurrentStep && anchorIso ? plannedSeconds - elapsedSecondsSince(now, anchorIso) : plannedSeconds;
+  const tone = focusTone(remainingSeconds, plannedSeconds);
+  const phase: FocusTone['phase'] = isCurrentStep ? tone.phase : 'calm';
+
+  // Double-tap check-off guard (field report #14: a pocket brush falsely
+  // finished a real departure step when ANY tap checked it off). This ref
+  // - not state - holds the timestamp of the last unconfirmed tap:
+  // `isSecondTap` (doubleTap.ts) is the whole debounce, comparing this
+  // value against the next tap's own `Date.now()`, so no timer is needed
+  // to "arm" or "expire" it. A tap that arrives too late to count just
+  // fails the check and becomes the new stored timestamp itself (see
+  // `handleTap` below) - that's what makes a tap 10s after the last one
+  // read as a fresh first tap with no extra bookkeeping. A ref rather than
+  // state because writing it must never trigger a re-render on its own;
+  // only the hint (below) needs one.
+  const lastTapAtRef = useRef<number | null>(null);
+
+  // The "Double-tap to check off." hint IS state, because it has to
+  // re-render the hint text in and out. `hintTimeoutRef` holds the
+  // setTimeout id that hides it again ~1.4s after a first tap - this is
+  // the one place in this file that genuinely needs a timer, unlike the
+  // tap-window debounce above.
+  const [hintVisible, setHintVisible] = useState(false);
+  const hintTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Belt-and-braces cleanup: if StepFocus unmounts (back chevron, or the
+  // caller clearing focusStepId after a confirmed check-off) while a hint
+  // is still showing, don't leave a stray timeout trying to setState on an
+  // unmounted component.
+  useEffect(() => {
+    return () => {
+      if (hintTimeoutRef.current) clearTimeout(hintTimeoutRef.current);
+    };
+  }, []);
+
+  // Picture-in-picture increment (0.46.0): whether the app is currently
+  // rendering as the small floating pill, not the full screen — see
+  // usePipMode's own doc comment. Read unconditionally, before the compact-
+  // layout branch below, so this hook's position in the call order never
+  // depends on `isCurrentStep`/`isInPip` themselves (React's rule that every
+  // hook runs on every render, in the same order).
+  const isInPip = usePipMode();
+
+  // Arms auto-enter-PiP for exactly as long as this overlay has a LIVE
+  // countdown to show off-app: mounted AND `isCurrentStep`. A step that
+  // hasn't started yet (`isCurrentStep` false — see `remainingSeconds`'
+  // own comment above) has nothing honest to keep visible in a pill, so it
+  // must not arm. The cleanup disarms unconditionally, and runs whether
+  // this effect is re-running because `isCurrentStep` just flipped false,
+  // or because the whole component unmounted (back chevron, a confirmed
+  // double-tap advancing focus, or the caller clearing focusStepId out from
+  // under it) — React guarantees the cleanup fires either way, which is
+  // exactly what "disarm reliably" needs here; there's no separate teardown
+  // path this could miss.
+  useEffect(() => {
+    if (!isCurrentStep) return;
+    void setPipAutoEnter(true);
+    return () => {
+      void setPipAutoEnter(false);
+    };
+  }, [isCurrentStep]);
+
+  const handleTap = () => {
+    if (!onTap) return;
+    const nowMs = Date.now();
+
+    if (isSecondTap(lastTapAtRef.current, nowMs)) {
+      // Confirmed double-tap: run the existing check-and-advance path
+      // unchanged, haptic included (it lives inside `onTap` itself - see
+      // that prop's own doc comment). Reset the ref so a stray third tap
+      // right after can't chain into a false second double-tap.
+      lastTapAtRef.current = null;
+      setHintVisible(false);
+      if (hintTimeoutRef.current) clearTimeout(hintTimeoutRef.current);
+      onTap();
+      return;
+    }
+
+    // First tap (or the window since the last one expired): store the
+    // timestamp and show the teaching hint. Deliberately NO haptic here -
+    // a pocket brush must produce zero feedback, not even a buzz that
+    // could tip someone off mid-pocket that something happened. Only a
+    // CONFIRMED double-tap above ever fires haptic feedback.
+    lastTapAtRef.current = nowMs;
+    setHintVisible(true);
+    if (hintTimeoutRef.current) clearTimeout(hintTimeoutRef.current);
+    hintTimeoutRef.current = setTimeout(() => setHintVisible(false), HINT_VISIBLE_MS);
+  };
+
+  // Picture-in-picture increment: the compact pill layout, rendered instead
+  // of the full screen below for as long as `isInPip` is true. Exactly two
+  // things — the step name and the countdown digits — no back chevron, no
+  // "Done earlier", no ETA line, no bottom line, no double-tap hint, no tap
+  // handler: at pill size every one of those is noise, and the tap itself is
+  // owned by Android (tapping the pill reopens the app — the OS's own
+  // default behaviour, nothing this component does).
+  //
+  // Same pure-black background and the same DIGIT_COLOR phase colours the
+  // full screen uses below, reusing `phase`/`remainingSeconds` computed
+  // above — this is meant to read as the same object shrunk down, not a
+  // different screen.
+  //
+  // Deliberately drops the full screen's rising red overrun fill (see the
+  // `phase === 'overrun'` block in the main return below): at pill size the
+  // digit colour alone already carries the same signal, and CLAUDE.md's
+  // "defaults lean toward less, not more" rule picks the smaller of two
+  // honest options when both say the same thing.
+  //
+  // SIZING: viewport-relative units (vw/vh) for the digits, not the full
+  // screen's fixed rem sizes. A PiP window is small and Deepak can resize
+  // it, so a fixed rem size is either unreadable at the smallest window or
+  // overflows at the largest — vw/vh instead track whatever size the pill
+  // actually is, the same way this whole file's landscape sizing already
+  // tracks the rotated viewport rather than assuming one fixed size (see
+  // that comment further down for the same shown-the-arithmetic discipline
+  // this one follows).
+  //
+  // Arithmetic, same worst case string as the landscape comment below
+  // ("+88:88" — overrun sign + unpadded minutes that happen to land on two
+  // digits + ":" + two-digit seconds — 6 characters):
+  //   - this compact view fills the ENTIRE PiP window (fixed inset-0), and
+  //     MainActivity/PipBridgePlugin fix that window's aspect to 16:9
+  //     (setAspectRatio), so sizing against vw (the window's own width) is
+  //     sizing against a KNOWN proportion of the window's height too, with
+  //     no separate portrait/landscape case to handle the way the full
+  //     screen's rem sizing does.
+  //   - tabular-nums digits advance at ~0.6em per character (same estimate
+  //     the landscape comment below uses), so 6ch * 0.6em/ch = 3.6em of
+  //     width at font-size F — i.e. the string's pixel width is 3.6 * F.
+  //   - target: stay comfortably under the window's own width, leaving room
+  //     on both sides AND leaving vertical room above the digits for the
+  //     step-name row, rather than maxing out either axis: 3.6F <= 0.72 *
+  //     100vw, i.e. F <= 20vw.
+  //   - `min(20vw, 50vh)` — the vw figure computed above, clamped by a vh
+  //     ceiling too. The aspect is what the OS is ASKED to hold, not a hard
+  //     guarantee this file can rely on for every OEM (see this increment's
+  //     own report for the Samsung One UI resize risk flagged there); a
+  //     window resized shorter than requested would let 20vw alone overflow
+  //     the available height, and the vh clamp is the cheap defensive floor
+  //     against exactly that.
+  //   - the vh figure has to be re-derived every time the requested aspect
+  //     changes, which is the trap this line has already fallen into once.
+  //     It first shipped as 24vh against a 16:9 window: height = 0.5625 *
+  //     width there, so 24vh = 0.135 * width against 20vw = 0.2 * width —
+  //     the clamp won at EVERY window size, making the vw arithmetic above
+  //     it dead code and the digits a third smaller than intended. A clamp
+  //     that binds in the ordinary case is not a defensive floor, it is the
+  //     real value wearing a misleading comment.
+  //   - now 50vh, re-derived for the 2.39:1 window this increment requests
+  //     (PipBridgePlugin.PILL_ASPECT): height = width / 2.39 = 0.418 *
+  //     width, so 50vh = 0.209 * width against 20vw = 0.2 * width. vw
+  //     governs by a hair while the aspect holds — which is the point — and
+  //     vh only takes over on a window squashed shorter than requested,
+  //     where it is genuinely needed.
+  //   - vertical headroom at 2.39:1, the tightest axis now that the window
+  //     is roughly half as tall as the 16:9 one: name row (10px) + gap +
+  //     digits (~1.0 line-height at 0.2 * width) + gap + the "left" row
+  //     (10px) sums to about 0.34 * width, inside the 0.418 * width
+  //     available. Three rows still fit; a fourth would not.
+  //
+  // UNVERIFIED (no device in this environment — see this increment's own
+  // report): whether Android's WebView inside a resized PiP Activity window
+  // actually reports vw/vh relative to the PILL's shrunk bounds rather than
+  // the phone's full physical screen. This is the same inference
+  // AndroidManifest.xml's own PiP comment on `configChanges` rests on (the
+  // window genuinely resizes rather than the Activity being recreated), but
+  // "the WebView's CSS viewport resizes with it" is reasoned from that, not
+  // separately observed.
+  if (isInPip) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-1 bg-black px-2 text-center">
+        <p className="w-full truncate text-[10px] uppercase tracking-widest text-slate-500">{step.name || 'Step'}</p>
+        <p
+          className={`font-bold tabular-nums motion-safe:transition-colors motion-safe:duration-1000 ${DIGIT_COLOR[phase]}`}
+          style={{ fontSize: 'min(20vw, 50vh)' }}
+        >
+          {formatCountdown(remainingSeconds)}
+        </p>
+        {/* "left" / "over" (0.46.1, from looking at the pill on the phone —
+            the only way this was ever going to be caught). formatCountdown
+            renders "15:43", and Runway's own convention EVERYWHERE else —
+            the ETA line, "Leave by", the appointment line — is a 24-hour
+            clock time in exactly that shape. On the full screen the huge
+            digits and the bottom line make the difference obvious. Stripped
+            down to a bare pill sitting on the home screen, next to a status
+            bar showing a genuinely different real time, "TOILET 15:43"
+            reads just as easily as "toilet AT 15:43". One word fixes it.
+
+            Lowercase, unlike the uppercase step name above: the name is an
+            identity, this is a unit. Different case keeps them from reading
+            as one two-line title.
+
+            "over" rather than "left" in overrun, where formatCountdown
+            already prefixes a "+" — "+00:12 left" would be actively wrong,
+            and this line exists precisely because approximate copy on this
+            surface gets misread. */}
+        <p className="text-[10px] tracking-widest text-slate-500">{phase === 'overrun' ? 'over' : 'left'}</p>
+      </div>
+    );
+  }
+
+  // Closing the PiP window via its own [x] control finishes the Activity
+  // outright (Android's documented PiP behaviour, not something this app
+  // configures) — the same MainActivity instance is gone, not just
+  // backgrounded. Nothing is lost by that: every piece of state this screen
+  // reads (the departure/task row, `startedAt`, each step's `checkedAt`)
+  // already lives in Dexie, not in memory here, so reopening the app is a
+  // fresh read of the same durable record, same as any other cold start.
+  // Stated plainly per CLAUDE.md's own rule rather than left as an assumed
+  // "should be fine": this is REASONED from where the data lives, not
+  // something this increment could observe on a real device closing a real
+  // pill.
+  return (
+    <div
+      // pb-safe-bottom here, pb-8 on the inner wrapper below (not both on
+      // one element) - same split as Runway.tsx's own pt-safe-top
+      // (container) / pt-8 (inner) pairing, so the two spacing concerns
+      // (safe-area inset vs. visual breathing room) stay on separate
+      // elements instead of two padding-bottom utilities silently
+      // clobbering each other on the same one.
+      className="fixed inset-0 z-50 flex flex-col bg-black pb-safe-bottom"
+      // The wet-hands case: mid-shower, hands full of toothpaste, whatever
+      // - a single small "done" button is a bad target when you're not
+      // free to aim carefully. The entire screen (minus the back chevron
+      // and "Done earlier", both excluded below) is the tap target instead,
+      // so a clumsy, distracted, or one-handed tap still lands - but as of
+      // field report #14, landing once only shows a hint, never checks the
+      // step off. A CONFIRMED DOUBLE-tap is what actually checks off and
+      // advances (`handleTap` above) - still aim-free (any two taps
+      // anywhere on the glass within the window count), just no longer
+      // single-touch-fireable by an undeliberate brush. Only wired when
+      // `onTap` is provided (current step only) - see that prop's own doc
+      // comment.
+      onClick={onTap ? handleTap : undefined}
+      role={onTap ? 'button' : undefined}
+      tabIndex={onTap ? 0 : undefined}
+      onKeyDown={
+        onTap
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                handleTap();
+              }
+            }
+          : undefined
+      }
+    >
+      {/* Overrun fill: a slow rise from the bottom, growing with how deep
+          the overrun goes (focusTone's fillFraction). Per-second growth at
+          this transition speed reads as a slow, ambient rise rather than a
+          snap - CLAUDE.md's "no theatrics" rule is sanctioned to bend here
+          on purpose (per the increment spec): this is distance-legibility
+          INFORMATION, not decoration - the same reason the digits below are
+          the largest text anywhere in this app. */}
+      {phase === 'overrun' && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 bg-red-950/60 motion-safe:transition-[height] motion-safe:duration-1000 motion-safe:ease-linear"
+          style={{ height: `${tone.fillFraction * 100}%` }}
+        />
+      )}
+
+      {/* Backdating increment: the back chevron and "Done earlier" now
+          share one top row rather than the chevron sitting alone - both are
+          "excluded from the tap-to-check zone" escape hatches, so they read
+          as one family of quiet controls at the top of the screen. Doesn't
+          touch the landscape name/digits/bottom-line pinning below, which
+          is absolutely positioned independent of this row's height either
+          way.
+
+          Both stay SINGLE-tap even after field report #14's double-tap
+          change to the whole-glass surface above - the double-tap gate
+          exists because the glass is a large, unaimed, aim-free target a
+          pocket brush can land on by accident. These two buttons are the
+          opposite: small, deliberately AIMED targets (a 44px chevron, a
+          short text button) that a stray brush is unlikely to hit at all,
+          so the extra confirmation step would only slow down a genuinely
+          deliberate tap without buying any real accidental-touch
+          protection.
+
+          Ad-hoc-step increment: "Add a step" joins "Done earlier" in a
+          shared group on the right, same reasoning and same single-tap
+          treatment as above - it's a third small, aimed, quiet escape
+          hatch, not a fourth kind of thing. Grouped in its own wrapper
+          (rather than a third `justify-between` child) so the two text
+          buttons stay visually paired at the row's right edge instead of
+          `justify-between` spreading three items evenly across the row.
+
+          Width check for a 412px-wide phone viewport (S25 Ultra portrait,
+          the narrowest case this row has to fit - landscape has roughly
+          2x that, see the digits' own sizing comment further down):
+            - chevron: fixed 48px (h-12 w-12).
+            - "Add a step" (10 chars) and "Done earlier" (13 chars) at
+              text-sm font-medium: proportional sans-serif text averages
+              ~0.5em/char, i.e. ~7px/char at a 14px root - call it 8px/char
+              to stay pessimistic. 10*8=80px, 13*8=104px.
+            - each button adds px-2 padding (8px each side, 16px total).
+              80+16=96px, 104+16=120px.
+            - gap-1 between the two buttons (4px) plus mr-2 on the wrapper
+              (8px) at the row's right edge: 96+4+120+8=228px.
+            - total row content: 48 (chevron) + 228 (right group) = 276px,
+              leaving ~136px of the 412px viewport for `justify-between`'s
+              own gap between the two ends - comfortable room to spare,
+              not a tight fit. "Add a step" reuses the checklist screen's
+              own wording rather than a shortened alternative because the
+              arithmetic says it fits; no truncation needed.
+
+          Skip increment (0.51.0): a THIRD button joining this same group,
+          re-running the exact width check above rather than assuming a
+          fourth control obviously fits or obviously doesn't - CLAUDE.md's
+          "name tradeoffs honestly" rule applies as much to layout
+          arithmetic as to anything else this codebase does:
+            - "Skip" (4 chars) at the same pessimistic 8px/char: 4*8=32px,
+              +16px padding = 48px.
+            - three buttons now share the group: 2 internal gap-1s (4px
+              each = 8px) instead of 1, plus the same mr-2 (8px) at the
+              row's right edge: 96 ("Add a step") + 120 ("Done earlier") +
+              48 ("Skip") + 8 (two gaps) + 8 (mr-2) = 280px.
+            - total row content: 48 (chevron) + 280 (right group) = 328px,
+              leaving 412-328=84px of spare `justify-between` room - down
+              from 136px with two buttons, but still comfortably positive
+              (roughly two 44px touch targets' worth of slack, not a hair's
+              margin) with NO wrapping and NO truncation needed. Verdict:
+              fits. A longer label was tried and rejected on this same
+              arithmetic - "Skip step" (9 chars, 88px) drops spare room to
+              44px, barely one touch-target width, which reads as cramming
+              rather than a comfortable fit; "Skip" alone is unambiguous
+              here anyway, sitting directly under the step name it applies
+              to, the same way "Done earlier" never restates which step. */}
+      <div className="relative z-10 mt-safe-top flex items-center justify-between">
+        <button
+          type="button"
+          onClick={(e) => {
+            // Excluded from the tap-to-check zone: without this, tapping
+            // "back" would also bubble to the container's onClick above and
+            // silently check the step off on the way out.
+            e.stopPropagation();
+            onBack();
+          }}
+          aria-label="Back"
+          className="flex h-12 w-12 shrink-0 items-center justify-center self-start text-2xl text-slate-500 transition-colors hover:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+        >
+          ‹
+        </button>
+        {/* Only the CURRENT step gets any of these - see onBackdate's,
+            onAddStep's and onSkip's own doc comments above for why a step
+            that hasn't started can't honestly have finished "earlier" or
+            take over a clock that isn't running (onSkip has no such
+            restriction of its own - see its doc comment - but still only
+            makes sense for the step actually on screen, i.e. the current
+            one, same as the other two). */}
+        {isCurrentStep && (onAddStep || onBackdate || onSkip) && (
+          <div className="mr-2 flex shrink-0 items-center gap-1">
+            {onAddStep && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  // Same exclusion as the back chevron above, same reason.
+                  e.stopPropagation();
+                  onAddStep();
+                }}
+                className="min-h-11 shrink-0 rounded-lg px-2 text-sm font-medium text-slate-500 transition-colors hover:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+              >
+                Add a step
+              </button>
+            )}
+            {onBackdate && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  // Same exclusion as the back chevron above, same reason.
+                  e.stopPropagation();
+                  onBackdate();
+                }}
+                className="min-h-11 shrink-0 rounded-lg px-2 text-sm font-medium text-slate-500 transition-colors hover:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+              >
+                Done earlier
+              </button>
+            )}
+            {onSkip && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  // Same exclusion as the back chevron above, same reason.
+                  e.stopPropagation();
+                  onSkip();
+                }}
+                className="min-h-11 shrink-0 rounded-lg px-2 text-sm font-medium text-slate-500 transition-colors hover:text-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+              >
+                Skip
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="relative z-10 flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
+        {/* landscape (landscape focus increment): the step name moves out of
+            this flex column entirely and pins to the true top of the
+            (rotated) viewport instead - freeing the whole flex-1 middle for
+            the digits alone, which is the point of going landscape here at
+            all. `top-safe-top`/`inset-x-0` use the same `safe-top` spacing
+            token pt-safe-top/mt-safe-top already use elsewhere in this file
+            (tailwind.config.ts) - env(safe-area-inset-top) correctly
+            reports the ROTATED top inset in landscape, not the physical
+            portrait-top, so this stays correct on a cutout/notch device.
+            landscape:pt-3 is a fixed nudge below that inset for devices
+            (like the S25 Ultra, no notch) where the env() value is 0. */}
+        <p className="text-sm uppercase tracking-widest text-slate-500 landscape:absolute landscape:inset-x-0 landscape:top-safe-top landscape:pt-3">
+          {step.name || 'Step'}
+        </p>
+        {/* text-7xl/8xl in portrait (not the app's usual text-huge) - this
+            screen is meant to be read from further away than anything else
+            in the app, so it earns the largest digits anywhere here. Sized
+            to stay inside a phone-width viewport even at "+12:34" (the
+            longest possible string: overrun sign + two digit minutes +
+            seconds).
+
+            landscape:text-[11rem] - landscape has ~2x the width to work
+            with (915px on the S25 Ultra vs. ~412px in portrait), so the
+            digits jump to the largest size that still comfortably fits the
+            widest possible string, computed rather than guessed:
+              - worst case string is "+88:88" (formatCountdown's overrun
+                sign + unpadded minutes that happen to land on two digits +
+                ":" + two-digit seconds) = 6 characters.
+              - tabular-nums digits advance at ~0.6em per character (a
+                standard estimate for monospaced/tabular figures in a
+                sans-serif face - there's no narrower "1" to throw the
+                estimate off since tabular-nums fixes every digit to the
+                same width).
+              - 6ch * 0.6em/ch = 3.6em of width at font-size F, so the
+                string's pixel width is 3.6 * F.
+              - target: stay under ~92vw of the 915px landscape viewport,
+                i.e. 3.6F <= 0.92 * 915 = 841.8px, so F <= 233.8px = 14.6rem
+                at the browser's 16px root.
+              - 11rem (176px) is chosen well inside that ceiling (3.6 *
+                176px = 633.6px = ~69% of 915px, not 92%) rather than
+                maxed-out, because the actual on-screen box also has to
+                clear the px-6 side padding (48px) and the absolutely
+                positioned name/leave-by lines above/below it - 11rem is
+                the largest round Tailwind arbitrary value that leaves
+                comfortable headroom for all of that rather than landing
+                exactly on the computed ceiling.
+              - amended by the step-focus-eta increment: the ETA line below
+                adds 36px (its h-9 wrapper) plus 16px (this column's gap-4)
+                to this stack in landscape. Computed, not rendered: digits
+                ~176px + 16 + 36 = 228px in a ~360-412px landscape viewport,
+                leaving comfortable room against the absolutely pinned name
+                and bottom lines (~35px total). Tightest case — browser
+                chrome visible AND the double-tap hint showing — leaves
+                roughly 13px, crowded but not overlapping. UNVERIFIED on a
+                real device; landscape cannot be rendered here. */}
+        <p
+          className={`text-7xl font-bold tabular-nums motion-safe:transition-colors motion-safe:duration-1000 sm:text-8xl landscape:text-[11rem] ${DIGIT_COLOR[phase]}`}
+        >
+          {formatCountdown(remainingSeconds)}
+        </p>
+        {/* Step-focus-eta increment: the live ETA line. Current step only —
+            `projectedArrival` render-guards itself here rather than at the
+            call site, matching `bottomLine`'s own "omitted entirely, not a
+            blank" discipline for the deadline-less-task case above. Fixed
+            height wrapper (h-9), not a fixed FONT size, is what prevents
+            reflow here: the two states below share the exact same string
+            LENGTH always ("Arrive " + zero-padded HH:mm never varies, see
+            formatFocusEta's own comment for why that rules out an "+88:88"-
+            style width reservation) but deliberately do NOT share a font
+            size - overrun needs to visibly gain weight (the whole point of
+            this increment) - so it's the vertical space that has to be
+            reserved instead, sized to fit text-2xl (the taller of the two
+            states) with room to spare, and centred inside via flex so
+            neither state's shorter line-height nudges anything below it up
+            or down as phase flips back and forth.
+
+            Size and brightness carry the escalation, NOT a third red: the
+            digits above already turn red in overrun (DIGIT_COLOR) and the
+            red fill is already rising behind everything. A red line here
+            would add a third simultaneous alarm in the same hue while
+            saying nothing the other two don't — and the colour was never
+            the point. What this line contributes is the COST (where the
+            plan now lands), which weight and brightness state perfectly
+            well. slate-100 stays legible against the red-950/60 fill. */}
+        {isCurrentStep && projectedArrival && (
+          <div className="flex h-9 items-center justify-center">
+            <p
+              className={`tabular-nums motion-safe:transition-colors motion-safe:duration-1000 ${
+                phase === 'overrun' ? 'text-2xl font-semibold text-slate-100' : 'text-sm text-slate-500'
+              }`}
+            >
+              {formatFocusEta(projectedArrival)}
+            </p>
+          </div>
+        )}
+        {!isCurrentStep && <p className="text-sm text-slate-500">Starts when the steps before it are done.</p>}
+        {/* Double-tap hint (field report #14): shares the same slot/style
+            the "Starts when..." line above uses (`text-sm text-slate-500`,
+            centered under the digits) rather than inventing a second
+            instruction spot - the two are mutually exclusive anyway (this
+            one only ever shows for the current step, which is exactly the
+            case the line above excludes itself from). Small and
+            slate-toned on purpose: it must read as a quiet aside, never as
+            something that could be mistaken for the countdown itself. */}
+        {isCurrentStep && hintVisible && <p className="text-sm text-slate-500">Double-tap to check off.</p>}
+      </div>
+
+      {/* landscape: same "pin to the true edge of the rotated viewport"
+          treatment as the step name above, mirrored to the bottom -
+          `bottom-safe-bottom` is the same `safe-bottom` spacing token the
+          outer container's own `pb-safe-bottom` already uses. Pinning this
+          absolutely (rather than trusting flex-col's normal end-of-column
+          placement, which is what portrait relies on) keeps it exactly
+          bottom-center regardless of how tall the name/digits stack above
+          it ends up being on a 412px-tall landscape viewport. */}
+      {/* Tasks increment: omitted entirely for a deadline-less task — see
+          `bottomLine`'s own doc comment above for why there's honestly
+          nothing to show here in that case, rather than a blank or
+          placeholder line. */}
+      {bottomLine && (
+        <div className="relative z-10 pb-8 landscape:absolute landscape:inset-x-0 landscape:bottom-safe-bottom landscape:pb-3">
+          <p className="text-center text-sm tabular-nums text-slate-500">
+            {bottomLine.label} {formatTime(bottomLine.time)}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}

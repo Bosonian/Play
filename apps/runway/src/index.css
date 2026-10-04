@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Dark-only app (see tailwind.config.ts) — set the background at the root
+   so there's never a flash of white before React mounts. */
+html {
+  @apply bg-slate-950;
+}
+
+body {
+  @apply bg-slate-950 text-slate-100;
+  /* System font stack, same reasoning as head-in: instant first paint,
+     works fully offline, covers the S25 Ultra's default fonts. */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans', sans-serif;
+}
+
+/* Note: big time displays use Tailwind's built-in `tabular-nums` utility
+   class (font-variant-numeric: tabular-nums) so digits don't jiggle in
+   width as they change, e.g. "9:59" -> "10:00". No custom CSS needed —
+   it ships with Tailwind v3. */
+
+/* UI-polish increment: the motion vocabulary (screen-mount fade, inline
+   panel fade-in, colour-state crossfades) is implemented entirely with
+   Tailwind utilities — `animate-fade-in` (keyframe in tailwind.config.ts)
+   and `transition-colors`/`transition-opacity` — always behind the
+   `motion-safe:` variant. That variant already compiles to
+   `@media (prefers-reduced-motion: no-preference)` with no config needed,
+   so there's nothing to add here; a reduced-motion user simply never
+   receives the animation/transition utility class and sees the end state
+   immediately. */

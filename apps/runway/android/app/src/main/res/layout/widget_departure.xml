@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widgets increment W2 (Runway 0.11.0): the departure widget's layout.
+     Same "plain TextViews, no bars" shape as widget_pruefung.xml (see that
+     file's own comment) and the same widget_bg background. Three lines —
+     nameLine (bold, smaller), appointmentLine (the centerpiece — bold,
+     larger, tabular so digits don't jitter), planLine (dim, smallest) — or,
+     when there's no eligible departure, DepartureWidgetProvider collapses
+     this to a single "No departure planned." line in widget_name and
+     blanks the other two (see that class's renderFallback).
+
+     m1: same "picker-preview only" reasoning as widget_pruefung.xml's own
+     comment — the android:text values below render ONLY in the widget
+     picker (no previewImage set — see widget_departure_info.xml), and
+     DepartureWidgetProvider.onUpdate ALWAYS overwrites them once the widget
+     is actually placed. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_departure_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="start|center_vertical"
+    android:background="@drawable/widget_bg"
+    android:padding="14dp">
+
+    <TextView
+        android:id="@+id/widget_name_line"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:textColor="#F1F5F9"
+        android:maxLines="1"
+        android:text="Klinik" />
+
+    <TextView
+        android:id="@+id/widget_appointment_line"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:fontFeatureSettings="tnum"
+        android:textColor="#F1F5F9"
+        android:maxLines="1"
+        android:text="14:30" />
+
+    <TextView
+        android:id="@+id/widget_plan_line"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:textSize="13sp"
+        android:textColor="#94A3B8"
+        android:maxLines="1"
+        android:text="Leave by 14:10 · start by 13:35" />
+
+</LinearLayout>

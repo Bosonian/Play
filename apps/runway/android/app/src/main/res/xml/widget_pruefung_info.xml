@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widgets increment: metadata for the Prüfung widget
+     (PruefungWidgetProvider.java), referenced from the <receiver>
+     meta-data in AndroidManifest.xml.
+
+     minWidth/minHeight: sized for a nominal 3-cell-wide, 1-cell-tall
+     placement. The standard cell-size formula ((70 × n) − 30 dp) gives
+     180dp × 40dp for 3×1, but 40dp was already tight for three stacked
+     text lines and got bumped to 64dp (see git history for the original
+     3-line reasoning). Progress bar polish (0.40.0) adds a fourth row (the
+     6dp bar plus its own top margin) between line1 and the two remaining
+     text lines, so minHeight is bumped again here, to 84dp, using the same
+     "give every row room, real launcher grids tend to be a bit more
+     generous than the strict formula anyway" reasoning — still a judgment
+     call, not a spec number, and still untested against a real launcher
+     (no Android SDK/emulator available in this environment; see the
+     increment's own "CI will prove" list).
+
+     0.41.0 (daily shape): a fifth row (widget_line_today, 12sp text plus
+     6dp top margin — see widget_pruefung.xml's own comment) lands between
+     the bar and the former widget_line3, so minHeight is bumped again, by
+     the same rough per-row allowance as before, 84dp -> 98dp. Same
+     "judgment call, not a spec number" caveat as the 0.40.0 bump above —
+     still untested against a real launcher grid.
+
+     updatePeriodMillis: 6 hours. The widget's whole display is a 1:1
+     calendar slide (m3: readyDayEpochMs slid forward by however many whole
+     calendar days have passed since generatedDayEpochMs — see
+     PruefungWidgetProvider.updateOne) off data that itself only changes
+     when Deepak logs a sprint or edits the exam/topics — none of which need
+     a redraw faster than a few times a day just to keep "today" current;
+     refreshWidgets() (src/native/widgets.ts) already pushes an immediate
+     redraw the moment any of that actually changes.
+
+     previewImage intentionally omitted (increment brief: "acceptable;
+     note it") — the widget picker falls back to rendering the
+     initialLayout itself when none is set, which is why widget_pruefung.xml
+     carries static placeholder text (m1) rather than empty TextViews: that
+     placeholder IS the picker preview.
+
+     android:description (m1, API 31+): a one-line summary shown under
+     android:label in the picker on Android 12+; silently ignored on older
+     API levels (this app's minSdk is 23), so no compatibility branch is
+     needed for it. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="180dp"
+    android:minHeight="98dp"
+    android:updatePeriodMillis="21600000"
+    android:initialLayout="@layout/widget_pruefung"
+    android:description="@string/widget_pruefung_description"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />

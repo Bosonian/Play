@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widget increment (0.9.0): metadata for the Tide widget
+     (TideWidgetProvider.java), referenced from the <receiver> meta-data in
+     AndroidManifest.xml.
+
+     minWidth/minHeight: 180x110dp is EXACTLY a 3x2 cell by the (70n-30)
+     formula below, not the "2x1-ish" the original brief asked for — four
+     stacked lines genuinely need two rows, so the larger footprint is
+     deliberate. Naming it plainly here (review fix, 0.9.1) rather than
+     leaving a comment that says 2x1 above a value that is 3x2. The standard
+     cell-size formula ((70 × n) − 30 dp) gives 110dp × 40dp for a strict
+     2×1 — but this widget can render up to four stacked lines (the bold
+     trend value, the trend sentence, and up to two daily-shape lines), and
+     40dp is nowhere near enough room for that stack even at these small
+     text sizes. 180dp × 110dp is a judgment call sized the same way
+     Runway's own Prüfung widget's minHeight bump was reasoned about (see
+     that app's widget_pruefung_info.xml) — "give every row real room,
+     real launcher grids tend to be a bit more generous than the strict
+     formula anyway" — not a spec number, and, per this increment's own
+     constraint, UNTESTED against a real launcher grid (no Android
+     SDK/emulator in this environment).
+
+     updatePeriodMillis: 6 hours, same value and same reasoning as Runway's
+     own widgets — Android silently CLAMPS any updatePeriodMillis below 30
+     minutes up to 30 minutes regardless of what's declared here, so this
+     number is a distant backstop, not the app's real update mechanism.
+     src/lib/widgets.ts's refreshWidgets() already pushes an immediate
+     redraw the moment a weigh-in, plate, skipped meal, health sync, or
+     daily-shape target actually changes — this periodic update exists only
+     to eventually self-heal a widget that somehow missed one of those
+     explicit pushes (e.g. the app was force-stopped mid-write).
+
+     No previewImage/previewLayout — matching Runway's own Prüfung widget
+     exactly (see its widget_pruefung_info.xml's own comment: "acceptable;
+     note it"). The widget picker falls back to rendering this
+     initialLayout itself when neither is set, which is why
+     widget_tide.xml carries realistic static placeholder text rather than
+     empty TextViews — that placeholder IS the picker preview. Tide's
+     minSdk (26) is below API 31 (previewLayout's floor) anyway, so
+     declaring one would only ever take effect on a fraction of Android
+     versions this app can even install on.
+
+     android:description (API 31+): a one-line summary shown under
+     android:label in the picker on Android 12+; silently ignored on older
+     API levels, so no compatibility branch is needed for it. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="180dp"
+    android:minHeight="110dp"
+    android:updatePeriodMillis="21600000"
+    android:initialLayout="@layout/widget_tide"
+    android:description="@string/widget_tide_description"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />

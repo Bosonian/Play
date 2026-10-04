@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widget increment (0.9.0), ported from apps/runway's own widget_bg.xml —
+     same shape (rounded rectangle, one flat colour), but #0B1220 rather than
+     Runway's #020617: that's Tide's own `surface` design token
+     (tailwind.config.ts), the colour a card sits on throughout this app
+     (Home.tsx's weigh-in history rows, the daily-shape card), not the
+     page-background slate-950 Runway's widget matches. The widget reads as
+     one more card on Home, so it should sit on the same surface colour
+     Home's own cards do. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#0B1220" />
+    <corners android:radius="16dp" />
+</shape>

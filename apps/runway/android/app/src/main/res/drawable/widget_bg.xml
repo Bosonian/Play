@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widgets increment: dark rounded background shared by all three
+     home-screen widgets (Prüfung, departure, and — anti-rot increment 3,
+     0.39.0 — tasks), #020617 to match the app's own slate-950 canvas
+     (assets/icon-background.svg / index.css). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#020617" />
+    <corners android:radius="16dp" />
+</shape>

@@ -1,0 +1,38 @@
+ext {
+    // Health Connect bridge increment (0.3.0): bumped from 23 -> 26.
+    // androidx.health.connect:connect-client declares its OWN minSdk floor
+    // in its packaged manifest (Health Connect's general documented
+    // requirement is Android 9/API 28 for the built-in path, Android 8.0/
+    // API 26 via the standalone Health Connect app) — a manifest merge
+    // against Tide's OWN manifest fails outright if Tide's minSdk is lower
+    // than the library's. 26 is the conservative choice for that floor,
+    // matching Health Connect's oldest supported OS version; UNVERIFIED
+    // against the exact number connect-client 1.1.0's own manifest
+    // declares (this environment can't run a Gradle manifest merge to
+    // confirm it precisely — see this increment's report). Real
+    // consequence, not just a number: this drops support for Android 7.x
+    // devices below API 26. Acceptable here — Deepak's only device (a
+    // Galaxy S25 Ultra) runs a current Android version far above this
+    // floor — but a real reduction in what this app COULD run on, worth
+    // naming plainly rather than treating as a free change.
+    minSdkVersion = 26
+    // compileSdk 36 required by androidx.health.connect:connect-client:1.1.0
+    // (v0.3.0 CI's checkReleaseAarMetadata failed on compileSdk 35). This only
+    // lets the compiler SEE the Android 16 / API 36 symbols the library links
+    // against; it does NOT change runtime behavior. targetSdk stays at 35 on
+    // purpose: raising it opts the app into API-36 runtime behavior changes,
+    // which is a separate, on-device-only decision, not needed to compile.
+    compileSdkVersion = 36
+    targetSdkVersion = 35
+    androidxActivityVersion = '1.9.2'
+    androidxAppCompatVersion = '1.7.0'
+    androidxCoordinatorLayoutVersion = '1.2.0'
+    androidxCoreVersion = '1.15.0'
+    androidxFragmentVersion = '1.8.4'
+    coreSplashScreenVersion = '1.0.1'
+    androidxWebkitVersion = '1.12.1'
+    junitVersion = '4.13.2'
+    androidxJunitVersion = '1.2.1'
+    androidxEspressoCoreVersion = '3.6.1'
+    cordovaAndroidVersion = '10.1.1'
+}

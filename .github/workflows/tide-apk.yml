@@ -1,0 +1,140 @@
+name: Tide APK
+
+on:
+  push:
+    branches:
+      - claude/adhd-time-perception-app-9v0uj4
+      - main
+    paths:
+      - 'apps/tide/**'
+      - '.github/workflows/tide-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# A stale in-progress APK build is worthless once a newer push exists, unlike
+# the Pages deploy (which we let finish so the live site is never half-built).
+# Own group from runway-apk.yml's `runway-apk` — a Tide push must never be
+# cancelled by (or cancel) an in-flight Runway build, and vice versa.
+concurrency:
+  group: tide-apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # A healthy run takes ~2 minutes; the GitHub default timeout is 6 hours.
+    # Runner-side flakes (job cancelled by the platform, no failed steps —
+    # seen on Runway's own workflow) can leave a run dangling far longer than
+    # any real build, so cap it well above healthy but far below the default
+    # — same reasoning and same value as runway-apk.yml.
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/tide/package-lock.json
+
+      - name: Install dependencies
+        working-directory: apps/tide
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: apps/tide
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: apps/tide
+        run: npm run test
+
+      - name: Build web app
+        working-directory: apps/tide
+        run: npm run build
+
+      - name: Sync Capacitor Android project
+        working-directory: apps/tide
+        run: npx cap sync android
+
+      - name: Make gradlew executable
+        working-directory: apps/tide/android
+        run: chmod +x gradlew
+
+      - name: Build release APK
+        working-directory: apps/tide/android
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tide-apk
+          path: apps/tide/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+
+      # Filename is a fixed constant (tide-latest.apk), not versioned per
+      # build — same reasoning as runway-apk.yml's own "Compute release
+      # metadata" step: softprops/action-gh-release overwrites an existing
+      # asset of the same name on the same tag, so each rebuild REPLACES the
+      # one release asset instead of accumulating a new sha-named file every
+      # push. Version + commit identity move to the release body instead.
+      - name: Compute release metadata
+        id: vars
+        run: |
+          # Anchored to the line START (allowing leading whitespace only) so a
+          # comment MENTIONING versionName/versionCode higher up in the file
+          # can never be the -m1 match — this is the exact fix Runway's own
+          # workflow needed after its first stamped release (v0.42.0) grabbed
+          # a LOUD NOTE comment instead of the field. Carried over verbatim;
+          # do not regress to an unanchored grep here.
+          VERSION_NAME=$(grep -m1 -E '^[[:space:]]*versionName "' apps/tide/android/app/build.gradle | sed -E 's/.*versionName "([^"]+)".*/\1/')
+          VERSION_CODE=$(grep -m1 -E '^[[:space:]]*versionCode [0-9]' apps/tide/android/app/build.gradle | sed -E 's/.*versionCode ([0-9]+).*/\1/')
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
+          echo "version_code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Rename APK for release
+        run: |
+          cp apps/tide/android/app/build/outputs/apk/release/app-release.apk \
+             apps/tide/android/app/build/outputs/apk/release/tide-latest.apk
+
+      # `name` is not just cosmetic — src/lib/updateCheck.ts's parseReleaseName
+      # parses this exact string ("Tide v{versionName} ({versionCode})") to
+      # decide whether a newer build exists. Every release is unconditionally
+      # stamped this way from Tide's very first APK (unlike Runway, which had
+      # pre-existing unstamped releases to stay compatible with) — there is no
+      # legacy "Tide (latest build)" release name to worry about.
+      - name: Publish / refresh tide-latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: tide-latest
+          name: Tide v${{ steps.vars.outputs.version_name }} (${{ steps.vars.outputs.version_code }})
+          prerelease: true
+          files: apps/tide/android/app/build/outputs/apk/release/tide-latest.apk
+          body: |
+            Build: v${{ steps.vars.outputs.version_name }} (${{ steps.vars.outputs.short_sha }})
+
+            Automatically rebuilt release APK for Tide, refreshed on every push
+            to `apps/tide/`. This is not a Play Store release — it is a
+            personal sideloaded build, signed with the keystore committed at
+            `apps/tide/signing/runway.keystore` (shared with Runway's own
+            keystore — see `apps/tide/README.md` for the signing tradeoff).
+
+            **Install on the S25 Ultra:**
+            1. Open this page in Chrome on the phone.
+            2. Download `tide-latest.apk`.
+            3. Open the downloaded file; Chrome will ask permission to install
+               unknown apps the first time — allow it for Chrome.
+            4. Install. Updates install over the existing app; Dexie data
+               survives updates (not uninstalls).

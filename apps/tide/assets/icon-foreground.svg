@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Tide adaptive-icon foreground layer: the motif alone, transparent
+  background, no text — same brief as Runway's own icon-foreground.svg
+  (apps/runway/assets/icon-foreground.svg).
+
+  MOTIF: two gently descending, PARALLEL lines — a bold one above a fainter
+  one. It reads two ways at once, which is the point: a tide (the app's
+  name) and a trend coming down (the app's north star, TIDE_PLAN.md §2).
+
+  This is the second version. The first drew one steeply descending curve
+  CROSSING a flatter one, and was replaced after rendering it and looking at
+  it under a launcher's circular mask (the only way to judge an icon — see
+  scripts/generate-icons.mjs on why the SVGs are the source of truth). Three
+  real faults, all invisible in code:
+    1. Top-heavy — the motif sat in the upper half, leaving dead space at the
+       bottom of the circle.
+    2. The two curves crossed, tangling into an X on the right rather than
+       reading as one calm line above a quieter one.
+    3. The steep dive and hooked right end read as a fitness "swoosh" — the
+       exact cliché this increment's brief ruled out.
+  Parallel lines fix all three: balanced, never tangling, and calm rather
+  than athletic. The gentle (not steep) descent is what keeps the meaning
+  without the swoosh.
+
+  Canvas is the standard 108x108 adaptive-icon viewBox. Launcher masks
+  (circle, squircle, rounded square, teardrop) can clip anything outside the
+  inner 66% "safe zone" — a 66dp-diameter circle centered on this canvas,
+  i.e. everything within radius 33 of (54, 54).
+
+  SAFE-ZONE PROOF: a cubic Bezier always lies within the CONVEX HULL of its
+  four control points, and a disk is convex — so if all four control points
+  sit inside the radius-33 disk, every point the curve draws does too, with
+  no need to sample along it. Distances from (54,54), plus half the stroke
+  width (a stroke straddles its path, and round caps extend it by that much
+  again), must stay under 33:
+    Bold  (28,44) 27.9+3=30.9   (42,40) 18.4   (58,49) 6.4    (80,48) 26.7+3=29.7
+    Faint (28,62) 27.2+2=29.2   (42,58) 12.6   (58,67) 13.6   (80,66) 28.6+2=30.6
+  Worst case 30.9 < 33. Vertical extent 40..67 centres on 53.5, within half
+  a unit of the canvas centre — the balance the first version lacked.
+
+  Single accent, #38bdf8 (sky-400) — the app's one interactive colour
+  (src/ui/Button.tsx, every focus ring, and src/ui/TrendChart.tsx's own
+  line). The lower line reuses the identical colour at reduced opacity
+  rather than a second hue: "fainter", not "different".
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <!-- The quieter lower line. Drawn first so the bold line sits above it in
+       paint order, though they are parallel and never overlap. -->
+  <path
+    d="M28,62 C42,58 58,67 80,66"
+    fill="none"
+    stroke="#38bdf8"
+    stroke-opacity="0.4"
+    stroke-width="4"
+    stroke-linecap="round"
+  />
+
+  <!-- The confident line — the one mark this icon exists to be. -->
+  <path
+    d="M28,44 C42,40 58,49 80,48"
+    fill="none"
+    stroke="#38bdf8"
+    stroke-width="6"
+    stroke-linecap="round"
+  />
+</svg>

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Anti-rot increment 3 (Runway 0.39.0): metadata for the tasks widget
+     (TaskWidgetProvider.java), referenced from the <receiver> meta-data in
+     AndroidManifest.xml. Sizing/period/preview reasoning is identical to
+     widget_pruefung_info.xml/widget_departure_info.xml (see either file's
+     own comment) — same nominal 3-cell-wide, 1-cell-tall placement, same
+     bumped 64dp minHeight for three stacked lines, same untested-against-a-
+     real-launcher caveat (no Android SDK/emulator in this environment),
+     same m1 android:description note (API 31+ only, silently ignored
+     below it).
+
+     updatePeriodMillis: 6 hours, same reasoning as the other two widgets'.
+     Unlike the departure widget, this one has no expiry check that runs on
+     that timer at all (TaskWidgetProvider deliberately shows a past
+     deadline rather than hiding it — see widgetSnapshot.ts's
+     selectWidgetTask doc comment) — the timer here exists purely so a
+     redraw eventually happens even if nothing was explicitly written
+     (refreshWidgets()) in the last 6 hours, same "keep it from going
+     completely silent" reasoning the other two widgets' timers already
+     have, not a staleness check of its own. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="180dp"
+    android:minHeight="64dp"
+    android:updatePeriodMillis="21600000"
+    android:initialLayout="@layout/widget_task"
+    android:description="@string/widget_task_description"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />
