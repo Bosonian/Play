@@ -94,7 +94,7 @@ Video is a bonus.**
 |---|---|---|---|
 | 0 | Panel + FAST-ED over a WebRTC data channel | < 1 KB per update | Still works when voice won't |
 | 1 | Voice (Opus, mono, ~8 kbps, FEC on) | ~8–12 kbps | Speech assessment possible |
-| 2 | On-demand stills: face, both arms, eyes | ~5–15 KB each (WebP, 320×240) | **Candidate slot for H-DDCM** (§6) |
+| 2 | On-demand stills: face, both arms, eyes | ~5–15 KB each (WebP, 320×240) | Pluggable codec slot; H-DDCM later, clinic-only, after validation (§6.4) |
 | 3 | Live video 160×120 → 320×240, 8–15 fps | ~40–150 kbps | VP8/VP9/H.264, whichever the device encodes in hardware |
 
 All rates are **estimates from codec specs, not measurements**. Step 4 of the build
@@ -135,35 +135,108 @@ Room codes: 6 digits, single-use, expire after 10 minutes unjoined, and the room
 closes when either side leaves. Guessable in principle, which is acceptable only
 because nothing sensitive flows through signaling.
 
-## 6. H-DDCM — pending the paper
+## 6. H-DDCM
 
-Deepak pointed to *H-DDCM: Hadamard Codebooks for Fast Generative Image and
-Video Compression* (arXiv 2610.18125). **The paper couldn't be read from the
-build environment** (network policy blocks arxiv.org), so this section
-deliberately makes no claims about its bitrates, speed, or hardware needs.
+Source: Ronai, Kulikov, Michaeli (Technion), *H-DDCM: Hadamard Codebooks for
+Fast Generative Image and Video Compression*, arXiv 2610.18125v1 (13 Oct 2026),
+read from the Markdown conversion Deepak supplied. The figures weren't included,
+so numbers that appear only in plots (notably video encode/decode FPS) are
+**not** quoted here. Anything marked *(inferred)* is my reasoning, not the
+paper's.
 
-What the paper has to answer before any H-DDCM design:
-1. Encode and decode time per frame, and on what hardware. Can the encoder run on a
-   phone, or must it run on a server?
-2. Bitrate at clinically usable resolution, and whether video is coded per frame,
-   on keyframes only, or with temporal conditioning.
-3. Must the encoder and decoder share the exact model and seed? That decides how
-   it ships to field devices.
-4. Code and weights availability, and the license.
-5. Any evaluation on **faces and fine detail**.
+### 6.1 What it is, in one paragraph
 
-Design principle that holds whatever the paper says: **a generative decoder
-reconstructs plausible detail, so it can invent or erase a facial droop, a gaze
-deviation, or arm drift.** That is the clinical failure mode that matters. So any
-H-DDCM image or frame will:
-- be labelled **"AI-reconstructed"** on the Hub screen, never silently
-- come with a one-tap **"send conventional still"** fallback (level 2 WebP)
-- never be the sole basis for a FAST-ED item; the item's source records it.
+A pretrained image or video generator (a diffusion or flow model) is kept frozen.
+Instead of feeding it random noise at each generation step, the sender chooses
+noise that steers the output toward the real image, and transmits only *which*
+noise it chose: a few hundred indices per step. The receiver runs the same model
+with the same seed and the same chosen noise, and regenerates the image. DDCM
+picked from a stored random (Gaussian) codebook, and Turbo-DDCM combined several
+atoms per step. H-DDCM replaces the stored codebook with a **randomized Hadamard
+transform**, which is generated on the fly from the seed, exactly orthogonal, and
+fast (O(d log d)). That removes the 128–167 GiB codebooks that otherwise make
+large image and video models impractical.
 
-Likely placement, to confirm after reading: **level 2 stills** (an extremely low
-bitrate makes a still of a face cheap to send on bad links) with decoding on the
-hub side. Real-time level-3 video via H-DDCM only if the paper shows real-time
-speed on realistic hardware.
+### 6.2 Numbers the paper reports
+
+| Setting | Backbone / resolution | Rate | Time | Hardware |
+|---|---|---|---|---|
+| Image | SD 2.1, 512×512, 30 steps | 0.027 bpp ≈ **7,100 bits ≈ 0.9 KB per image** | **1.3 s round trip** (encode + decode) | NVIDIA A6000 |
+| Image | FLUX, 1024×1024, 30 steps | swept | **44 s round trip** (Turbo-DDCM: 66 s) | NVIDIA A6000 |
+| Video | Causal-Forcing (CF), **832×480 fixed**, 4 consistency steps, chunks of 3 latent frames | swept ~10⁻³–10⁻² bpp; examples at 0.01 bpp ≈ **4,000 bits ≈ 0.5 KB per frame** | "close to real-time"; FPS only in figures | **NVIDIA H200** |
+
+The per-image and per-frame byte figures are my arithmetic from bpp ×
+resolution. Converting to kbps needs the video frame rate, which the text doesn't
+give.
+
+How it compares: on video, HEVC, VVC and DCVC-UF achieve **higher PSNR** (more
+pixel-accurate) but weaker *perceptual* scores (DOVER, FVMD). H-DDCM wins on
+"looks right," not on "is pixel-exact."
+
+### 6.3 What this means for telestroke
+
+1. **The encoder needs a GPU on the sending side.** Encoding *runs the
+   generative model* at every step to compute the residual (Alg. H). So compression
+   happens where the camera is (ambulance or clinic), on A6000- or H200-class
+   hardware. A phone can't do it, and a server can't do it for the field device
+   without first receiving the uncompressed video over the very link we're trying
+   to spare. *(Inferred from the algorithm; the paper doesn't discuss edge
+   devices.)*
+2. **Both ends need the identical model weights, seed and sampler.** The decoder
+   regenerates the encoder's trajectory exactly. *(Inferred risk:)* small
+   floating-point differences between GPU models or driver versions could make the
+   trajectories diverge. The paper doesn't test cross-hardware decoding, so this
+   needs its own test before trusting it.
+3. **Optimised for plausibility, not fidelity.** The paper says it outright:
+   "reconstructing perceptually plausible content can be preferable to preserving
+   every pixel accurately." For stroke assessment the opposite is true. A facial
+   droop, a gaze deviation or a pronator drift is exactly the kind of fine,
+   patient-specific detail a generative prior can smooth away or invent. The
+   evaluation sets (Kodak, DIV2K, CLIC, UVG, MCL-JCV, HEVC classes) are general
+   scenes. **There is no face-specific or clinical evaluation.** The ethics
+   statement itself warns outputs "could be misinterpreted or misused in sensitive
+   applications."
+4. **No released code is mentioned.** The reproducibility statement says results
+   can be reproduced "by implementing the method" from the pseudo-code and
+   appendices, and there's a project site (h-ddcm.github.io). Backbone licences
+   (SD 2.1, FLUX, CF) must be checked before any use. *(Inferred:)* some FLUX
+   variants are non-commercial.
+
+### 6.4 Placement decision (proposed)
+
+| Scenario | H-DDCM fit |
+|---|---|
+| Ambulance → hub, live video | **Not in scope.** Needs an H200-class GPU in the vehicle. Keep conventional codecs (level 3). |
+| Ambulance → hub, stills | **Not in scope** for the same reason (A6000-class GPU on board). |
+| Rural clinic with a GPU workstation → hub, stills | **Plausible later.** ~0.9 KB per 512×512 still in ~1.3 s, versus ~5–15 KB for WebP. Worth it only on links where 10 KB is genuinely too much. |
+| Any scenario | **Gated on §6.5.** No clinical use of reconstructions until they're shown to preserve FAST-ED signs. |
+
+So the app ships v1 **without** H-DDCM, and leaves a codec interface at level 2
+(`encodeStill(image) → bytes`, `decodeStill(bytes) → image`) so an H-DDCM
+implementation can plug in without touching the call logic.
+
+Whatever codec fills that slot, these rules hold:
+- any generative reconstruction is labelled **"AI-reconstructed"** on the Hub
+  screen, never silently
+- a one-tap **"send conventional still"** fallback (WebP) is always available
+- a reconstruction is never the sole basis for a FAST-ED item; the item's
+  "assessed by" field records it.
+
+### 6.5 The validation question H-DDCM needs first (bench study, no patients)
+
+*Does an H-DDCM reconstruction preserve the signs a neurologist scores?* Proposed
+design:
+- **Inputs:** face and upper-body images with and without facial palsy, gaze
+  deviation and arm drift, from public datasets with suitable licences (to be
+  identified) or staged recordings of consenting volunteers.
+- **Arms:** original vs WebP at a matched byte budget vs H-DDCM at 1–2 bitrates.
+- **Readers:** blinded neurologists score the F, A and E items of FAST-ED.
+- **Outcome:** agreement with the original (weighted κ). Key failure counts:
+  signs **erased** (false negatives) and signs **invented** (false positives).
+- **Also test:** decoding on a different GPU model from the encoder (§6.3 point 2).
+
+This is self-contained, needs no app, and could stand alone as a research
+question. Whether it belongs in the thesis is Deepak's call.
 
 ## 7. Repository layout and deployment
 
@@ -201,15 +274,18 @@ camera access, so phone testing waits for the deploy step.
 4. **Levels 2 + 3 + adaptation**, measured on throttled links (Chrome DevTools
    network throttling) with the real kbps recorded in this doc.
 5. **Deploy** (workflow change, MODERATE, own approval).
-6. **H-DDCM integration**, scoped once the paper has been read.
+6. **H-DDCM**: not an app step yet. First the bench validation (§6.5), which
+   runs independently of the app and needs a GPU (A6000-class) plus an
+   implementation from the paper's pseudo-code. App integration only if it passes.
 
 ## 9. Open decisions
 
 - **[DECIDE]** Hosting: option A (Cloudflare) or B (Fly.io Frankfurt).
 - **[DECIDE]** GFAP: raw values only, or a validated formula (please send source).
 - **[DECIDE]** Stack: confirm the Head-in stack.
-- **[DECIDE]** H-DDCM: share the PDF or allow arxiv.org in the environment's
-  network settings so §6 can be completed.
+- **[DECIDE]** H-DDCM: agree to the §6.4 placement (v1 ships without it; clinic
+  stills later, gated on the §6.5 bench study)? And is GPU access available
+  (hospital, university cluster, cloud) for the bench study?
 - Repo fit: `CLAUDE.md` describes this repo as the personal-layer app and says
   the stroke work lives elsewhere. Telestroke goes in its own folder here at
   Deepak's request. If it grows, moving it to its own repo later is a folder
